@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import EditorHost from './components/EditorHost.vue'
+import MenuBar from './components/MenuBar.vue'
 import SideBar from './components/SideBar.vue'
 import TabBar from './components/TabBar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -80,6 +81,7 @@ onMounted(async () => {
     refreshWorkspace,
     activeTab: () => getActiveTab(),
     tabs: () => state.tabs,
+    settings: () => settings,
     persistSession,
     loadSession,
     notice: null as null | { text: string },
@@ -177,6 +179,7 @@ async function tryQuit(): Promise<void> {
 
 <template>
   <div class="app-shell">
+    <MenuBar />
     <TabBar />
     <div class="app-body">
       <SideBar @refresh="refreshWorkspace" />

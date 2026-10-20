@@ -882,6 +882,98 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 中英文切换 OK: 界面文案随语言改变并正确还原')
 
+  // 5d. 验证顶部菜单栏：菜单项齐全、子菜单存在、且能打开
+  const menuCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const labels = [...document.querySelectorAll('.menu-label')].map((b) => b.textContent.trim())
+
+      // 打开「编辑」菜单看条目
+      const editBtn = [...document.querySelectorAll('.menu-label')].find((b) => /编辑|Edit/.test(b.textContent))
+      editBtn && editBtn.click()
+      await wait(300)
+      const items = [...document.querySelectorAll('.menu-panel .menu-item-label')].map((s) => s.textContent.trim())
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      await wait(250)
+
+      // 「最近打开」子菜单在文件菜单里
+      const fileBtn = [...document.querySelectorAll('.menu-label')].find((b) => /文件|File/.test(b.textContent))
+      fileBtn && fileBtn.click()
+      await wait(300)
+      const hasRecentSub = !!document.querySelector('.menu-sub')
+      const fileItems = [...document.querySelectorAll('.menu-panel .menu-item-label')].map((s) => s.textContent.trim())
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      await wait(200)
+
+      return { labels, itemCount: items.length, items: items.slice(0, 20), hasRecentSub, fileItems }
+    })()
+  `)
+  if (menuCheck.labels.length < 5) {
+    console.error('[selfcheck] FAIL: 菜单栏未渲染:', JSON.stringify(menuCheck))
+    return false
+  }
+  if (!menuCheck.hasRecentSub) {
+    console.error('[selfcheck] FAIL: 文件菜单缺少「最近打开」子菜单:', JSON.stringify(menuCheck.fileItems))
+    return false
+  }
+  if (menuCheck.itemCount < 8) {
+    console.error('[selfcheck] FAIL: 编辑菜单条目不足:', JSON.stringify(menuCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 菜单栏 OK: ${menuCheck.labels.length} 个菜单（${menuCheck.labels.join('/')}），编辑菜单 ${menuCheck.itemCount} 项，含最近打开子菜单`
+  )
+
+  // 5e. 验证段落操作与换行符设置
+  const paraCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const muya = window.__inkdownMuya
+      const app = window.__inkdownApp
+
+      // 段落复制：一段变两段
+      window.__inkdownLoad('第一段内容\\n')
+      await wait(600)
+      muya.setCursorByOffset({ anchor: { line: 0, ch: 2 }, focus: { line: 0, ch: 2 } })
+      await wait(300)
+      await c.execute('edit:duplicate')
+      await wait(500)
+      const afterDuplicate = muya.getMarkdown()
+
+      // 插入段落
+      window.__inkdownLoad('唯一段落\\n')
+      await wait(600)
+      muya.setCursorByOffset({ anchor: { line: 0, ch: 2 }, focus: { line: 0, ch: 2 } })
+      await wait(300)
+      await c.execute('edit:insertParagraph')
+      await wait(500)
+      const afterInsert = muya.getMarkdown()
+
+      // 换行符：切到 CRLF
+      await c.execute('edit:lineEnding', 'crlf')
+      await wait(400)
+      const crlfSetting = app.settings().lineEnding
+      // 切回 LF
+      await c.execute('edit:lineEnding', 'lf')
+      await wait(400)
+      const lfSetting = app.settings().lineEnding
+
+      return { afterDuplicate, afterInsert, crlfSetting, lfSetting }
+    })()
+  `)
+  // 复制后段落数应增加
+  const dupCount = (paraCheck.afterDuplicate.match(/第一段内容/g) || []).length
+  if (dupCount < 2) {
+    console.error('[selfcheck] FAIL: 复制段落未生效:', JSON.stringify(paraCheck.afterDuplicate))
+    return false
+  }
+  if (paraCheck.crlfSetting !== 'crlf' || paraCheck.lfSetting !== 'lf') {
+    console.error('[selfcheck] FAIL: 换行符设置未生效:', JSON.stringify(paraCheck))
+    return false
+  }
+  console.log('[selfcheck] 段落操作与换行符 OK: 复制段落生效，LF/CRLF 可切换')
+
   // 清理自检用的临时目录（所有依赖它的用例都已执行完）。
   // 先停掉该目录下文件的监听器：fs.watch 持有句柄时删除会失败或挂住。
   await win.webContents

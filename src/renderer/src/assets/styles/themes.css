@@ -1,8 +1,18 @@
-/* Inkdown 主题。每个主题只覆盖变量，编辑器结构样式由 muya 提供。 */
+/*
+ * Inkdown 主题。
+ *
+ * 两套变量都要设：
+ *   --ty-*   应用外壳（标签栏、侧边栏、状态栏、提示条）
+ *   --editor-*  编辑器内容，由 muya 内核消费
+ *
+ * 内核在 :root 里定义了浅色的 --editor-color / --editor-bg-color 等，
+ * 若主题不覆盖它们，深色主题下正文仍会是浅色的 #4d4d4d，在深背景上发暗。
+ */
 
-/* 默认浅色（接近 Typora 的 Github 主题） */
+/* 浅色（接近 Typora 的 Github 主题） */
 :root,
 body.theme-light {
+  /* 外壳 */
   --ty-bg: #ffffff;
   --ty-text: #24292f;
   --ty-muted: #6e7781;
@@ -19,28 +29,69 @@ body.theme-light {
   --ty-code-bg: #f6f8fa;
   --ty-quote-border: #d0d7de;
   --ty-selection: rgba(9, 105, 218, 0.22);
+
+  /* 编辑器内容 */
+  --editor-color: #24292f;
+  --editor-color-80: #1f2328;
+  --editor-color-50: #57606a;
+  --editor-color-30: #8c959f;
+  --editor-color-10: #d8dee4;
+  --editor-color-04: #f6f8fa;
+  --editor-bg-color: #ffffff;
+  --code-block-bg-color: rgba(0, 0, 0, 0.04);
+  --table-border-color: #d0d7de;
+  --blockquote-text-color: #57606a;
+  --blockquote-border-color: #d0d7de;
+  --hr-color: #d8dee4;
+  --theme-color: #0969da;
+  --selection-color: rgba(9, 105, 218, 0.25);
 }
 
 body.theme-dark {
+  /* 外壳 */
   --ty-bg: #1e1e1e;
-  --ty-text: #d4d4d4;
-  --ty-muted: #8a8a8a;
+  --ty-text: #e0e0e0;
+  --ty-muted: #9a9a9a;
   --ty-border: #333333;
-  --ty-hover: rgba(255, 255, 255, 0.06);
-  --ty-hover-strong: rgba(255, 255, 255, 0.12);
-  --ty-active: rgba(86, 156, 214, 0.18);
-  --ty-accent: #569cd6;
+  --ty-hover: rgba(255, 255, 255, 0.07);
+  --ty-hover-strong: rgba(255, 255, 255, 0.13);
+  --ty-active: rgba(86, 156, 214, 0.2);
+  --ty-accent: #6cb6ff;
   --ty-sidebar-bg: #252526;
   --ty-tabbar-bg: #252526;
   --ty-statusbar-bg: #252526;
-  --ty-scrollbar: rgba(255, 255, 255, 0.2);
-  --ty-scrollbar-hover: rgba(255, 255, 255, 0.34);
+  --ty-scrollbar: rgba(255, 255, 255, 0.22);
+  --ty-scrollbar-hover: rgba(255, 255, 255, 0.36);
   --ty-code-bg: #2d2d2d;
-  --ty-quote-border: #444444;
-  --ty-selection: rgba(86, 156, 214, 0.3);
+  --ty-quote-border: #4a4a4a;
+  --ty-selection: rgba(86, 156, 214, 0.35);
+
+  /*
+   * 编辑器内容：正文提到 #e8e8e8（原先沿用内核的 #4d4d4d，在深背景上明显偏暗）。
+   * 灰阶由亮到暗排列，保证层级差异清晰。
+   */
+  --editor-color: #e8e8e8;
+  --editor-color-80: #ffffff;
+  --editor-color-50: #b8b8b8;
+  --editor-color-30: #8a8a8a;
+  --editor-color-10: #4a4a4a;
+  --editor-color-04: #2d2d2d;
+  --editor-bg-color: #1e1e1e;
+  --code-block-bg-color: rgba(255, 255, 255, 0.07);
+  --table-border-color: #454545;
+  --blockquote-text-color: #b8b8b8;
+  --blockquote-border-color: #4a4a4a;
+  --hr-color: #4a4a4a;
+  --theme-color: #6cb6ff;
+  --selection-color: rgba(86, 156, 214, 0.35);
+  /* 代码块语法高亮：内核的浅色 Prism 主题在深背景上不可读，这里换一套 */
+  --code-new-inline-diff-background-color: #2d4a35;
+  --code-old-inline-diff-background-color: #4a2d33;
+  --icon-color: #9a9a9a;
 }
 
 body.theme-github {
+  /* 外壳 */
   --ty-bg: #ffffff;
   --ty-text: #1f2328;
   --ty-muted: #656d76;
@@ -57,10 +108,27 @@ body.theme-github {
   --ty-code-bg: #f6f8fa;
   --ty-quote-border: #d0d7de;
   --ty-selection: rgba(9, 105, 218, 0.2);
+
+  /* 编辑器内容 */
+  --editor-color: #1f2328;
+  --editor-color-80: #1f2328;
+  --editor-color-50: #656d76;
+  --editor-color-30: #8c959f;
+  --editor-color-10: #d0d7de;
+  --editor-color-04: #f6f8fa;
+  --editor-bg-color: #ffffff;
+  --code-block-bg-color: rgba(0, 0, 0, 0.04);
+  --table-border-color: #d0d7de;
+  --blockquote-text-color: #656d76;
+  --blockquote-border-color: #d0d7de;
+  --hr-color: #d0d7de;
+  --theme-color: #0969da;
+  --selection-color: rgba(9, 105, 218, 0.22);
 }
 
 /* 报刊：偏暖的纸张底色，适合长文阅读 */
 body.theme-newsprint {
+  /* 外壳 */
   --ty-bg: #fbfaf7;
   --ty-text: #2f2a24;
   --ty-muted: #7a7266;
@@ -77,63 +145,103 @@ body.theme-newsprint {
   --ty-code-bg: #f1ede4;
   --ty-quote-border: #d5cfc2;
   --ty-selection: rgba(160, 110, 40, 0.22);
+
+  /* 编辑器内容 */
+  --editor-color: #2f2a24;
+  --editor-color-80: #221e19;
+  --editor-color-50: #6b6357;
+  --editor-color-30: #9a9184;
+  --editor-color-10: #ddd8cd;
+  --editor-color-04: #f4f1ea;
+  --editor-bg-color: #fbfaf7;
+  --code-block-bg-color: rgba(120, 100, 60, 0.08);
+  --table-border-color: #ddd8cd;
+  --blockquote-text-color: #6b6357;
+  --blockquote-border-color: #d5cfc2;
+  --hr-color: #ddd8cd;
+  --theme-color: #a06e28;
+  --selection-color: rgba(160, 110, 40, 0.24);
 }
 
 /* 夜间：低饱和深色，减少蓝光 */
 body.theme-night {
+  /* 外壳 */
   --ty-bg: #16161a;
-  --ty-text: #c9c7c3;
-  --ty-muted: #7d7b78;
+  --ty-text: #d0cec9;
+  --ty-muted: #8a8782;
   --ty-border: #2b2b30;
-  --ty-hover: rgba(255, 255, 255, 0.05);
-  --ty-hover-strong: rgba(255, 255, 255, 0.1);
-  --ty-active: rgba(200, 170, 120, 0.16);
-  --ty-accent: #c8aa78;
+  --ty-hover: rgba(255, 255, 255, 0.06);
+  --ty-hover-strong: rgba(255, 255, 255, 0.11);
+  --ty-active: rgba(200, 170, 120, 0.18);
+  --ty-accent: #d8bd8a;
   --ty-sidebar-bg: #1c1c20;
   --ty-tabbar-bg: #1c1c20;
   --ty-statusbar-bg: #1c1c20;
-  --ty-scrollbar: rgba(255, 255, 255, 0.16);
-  --ty-scrollbar-hover: rgba(255, 255, 255, 0.3);
+  --ty-scrollbar: rgba(255, 255, 255, 0.18);
+  --ty-scrollbar-hover: rgba(255, 255, 255, 0.32);
   --ty-code-bg: #1f1f24;
-  --ty-quote-border: #34343a;
-  --ty-selection: rgba(200, 170, 120, 0.26);
+  --ty-quote-border: #3a3a40;
+  --ty-selection: rgba(200, 170, 120, 0.28);
+
+  /* 编辑器内容 */
+  --editor-color: #d8d4cd;
+  --editor-color-80: #f0ece4;
+  --editor-color-50: #a8a49c;
+  --editor-color-30: #7d7a74;
+  --editor-color-10: #3a3a40;
+  --editor-color-04: #1f1f24;
+  --editor-bg-color: #16161a;
+  --code-block-bg-color: rgba(255, 255, 255, 0.06);
+  --table-border-color: #3a3a40;
+  --blockquote-text-color: #a8a49c;
+  --blockquote-border-color: #3a3a40;
+  --hr-color: #3a3a40;
+  --theme-color: #d8bd8a;
+  --selection-color: rgba(200, 170, 120, 0.3);
+  --code-new-inline-diff-background-color: #2a3d2e;
+  --code-old-inline-diff-background-color: #40292e;
+  --icon-color: #8a8782;
 }
 
-/* 编辑器内容随主题着色：muya 自身使用较中性的颜色 */
+/* 编辑器内容随主题着色（外壳变量与内核变量都已在上面设好） */
 .muya-container {
   color: var(--ty-text);
   background: var(--ty-bg);
 }
 
 .muya-container .muya-editor {
-  background: var(--ty-bg);
-  color: var(--ty-text);
+  background: var(--editor-bg-color);
+  color: var(--editor-color);
 }
 
 .muya-container ::selection {
   background: var(--ty-selection);
 }
 
-/* 标题与正文继承主题前景色 */
+/* 正文与标题用内核变量，确保深色下层级清晰 */
+.muya-container .mu-content {
+  color: var(--editor-color);
+}
+
 .muya-container h1,
 .muya-container h2,
 .muya-container h3,
 .muya-container h4,
 .muya-container h5,
 .muya-container h6 {
-  color: var(--ty-text);
+  color: var(--editor-color-80);
 }
 
 .muya-container blockquote {
-  border-left-color: var(--ty-quote-border);
-  color: var(--ty-muted);
+  border-left-color: var(--blockquote-border-color);
+  color: var(--blockquote-text-color);
 }
 
 .muya-container pre,
-.muya-container .muya-code-block {
-  background: var(--ty-code-bg);
+.muya-container .mu-fence-code {
+  background: var(--code-block-bg-color);
 }
 
 .muya-container a {
-  color: var(--ty-accent);
+  color: var(--theme-color);
 }

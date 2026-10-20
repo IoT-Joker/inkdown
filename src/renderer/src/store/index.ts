@@ -133,6 +133,8 @@ export const settings = reactive({
   autoSave: true,
   /** 自动保存防抖延迟（毫秒） */
   autoSaveDelay: 1500,
+  /** 存盘时使用的行尾符 */
+  lineEnding: 'lf' as 'lf' | 'crlf',
   autoPairBracket: true,
   autoPairMarkdownSyntax: true,
   autoPairQuote: true,
@@ -213,6 +215,16 @@ export function loadRecent(): void {
   try {
     const raw = localStorage.getItem('inkdown-recent')
     if (raw) recentFiles.value = JSON.parse(raw)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 清除最近打开记录。 */
+export function clearRecent(): void {
+  recentFiles.value = []
+  try {
+    localStorage.removeItem('inkdown-recent')
   } catch {
     /* ignore */
   }

@@ -1,5 +1,12 @@
-import { getActiveTab, state, persistView, createTab, closeTab } from '../store'
+import { getActiveTab, state, persistView, createTab, closeTab, settings, persistSettings, clearRecent } from '../store'
 import { useFile } from './useFile'
+import { translate } from '../../../shared/i18n'
+import { currentLocale } from './useI18n'
+
+/** 取当前语言的文案（命令中心不在组件上下文里）。 */
+function t(key: string, params?: Record<string, string | number>): string {
+  return translate(currentLocale.value, key, params)
+}
 
 type CommandHandler = (payload?: unknown) => void | Promise<void>
 
@@ -68,10 +75,25 @@ export function registerGlobalCommands(): void {
       persistView()
     },
     'view:devtools': () => window.inkdown.toggleDevTools(),
+    // 全屏切换：先问主进程当前状态，再取反设置
+    'view:fullscreen': async () => {
+      const wasFull = await window.inkdown.isFullScreen()
+      await window.inkdown.setFullScreen(!wasFull)
+    },
     'app:preferences': () => {
       state.preferencesVisible = true
     },
     'app:quit': () => window.inkdown.quit(),
+    // 最近打开：由菜单传文件路径进来
+    'file:openRecent': async (payload?: unknown) => {
+      const filePath = typeof payload === 'string' ? payload : ''
+      if (!filePath) return
+      const { openPath } = useFile()
+      await openPath(filePath)
+    },
+    'file:clearRecent': () => {
+      clearRecent()
+    },
     'file:new': () => {
       createTab({ content: '' })
     },
@@ -119,6 +141,26 @@ export function registerGlobalCommands(): void {
     'edit:replace': () => {
       state.findMode = 'replace'
       state.findVisible = true
+    },
+    // 换行符：只改存盘与显示用的行尾，不影响编辑器内部（编辑器统一用 \n）
+    'edit:lineEnding': async (payload?: unknown) => {
+      const mode = payload === 'crlf' ? 'crlf' : 'lf'
+      settings.lineEnding = mode
+      persistSettings()
+      // 立刻按新行尾写盘一次，让磁盘文件与设置一致
+      const tab = getActiveTab()
+      if (tab?.filePath) {
+        const { saveTab } = useFile()
+        await saveTab(tab)
+      }
+      state.notice = { text: t('notice.lineEndingChanged', { mode: mode.toUpperCase() }) }
+    },
+    // 插入当前时间（marktext 的 Insert Current Time）
+    'edit:insertTime': () => {
+      const now = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const text = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+      window.dispatchEvent(new CustomEvent('inkdown:insert-text', { detail: { text } }))
     }
   })
 }

@@ -284,7 +284,11 @@ function registerEditorCommands(): void {
     'edit:pastePlain': () => void muya?.pasteAsPlainText(),
     'view:focusEditor': () => focus(),
     'file:exportHtml': () => void exportHtml(),
-    'file:exportPdf': () => void exportPdf()
+    'file:exportPdf': () => void exportPdf(),
+    // 段落操作（对齐 marktext 的 Edit 菜单）
+    'edit:duplicate': () => muya?.duplicate(),
+    'edit:insertParagraph': () => muya?.insertParagraph('after'),
+    'edit:deleteParagraph': () => muya?.deleteParagraph()
   }
 
   for (const [id, type] of Object.entries(paragraphMap)) {
@@ -400,6 +404,19 @@ function onSettingsChanged(): void {
   suppress = false
 }
 
+/**
+ * 在光标处插入文本（用于「插入当前时间」）。
+ * 内核没有公开的「插入文本」API，这里通过剪贴板粘贴路径实现：
+ * 写入剪贴板 → 触发 pasteAsPlainText，光标处即出现该文本。
+ */
+async function onInsertText(e: Event): Promise<void> {
+  const text = (e as CustomEvent).detail?.text
+  if (typeof text !== 'string' || !text || !muya) return
+  await window.inkdown.writeClipboardText(text)
+  focus()
+  await muya.pasteAsPlainText()
+}
+
 /* ------------------------------ 拖入打开 ------------------------------ */
 
 /** 拖拽状态：用于显示投放提示层。 */
@@ -482,12 +499,14 @@ onMounted(() => {
   window.addEventListener('inkdown:find', onFind)
   window.addEventListener('inkdown:find-close', onFindClose)
   window.addEventListener('inkdown:settings-changed', onSettingsChanged)
+  window.addEventListener('inkdown:insert-text', onInsertText as EventListener)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('inkdown:find', onFind)
   window.removeEventListener('inkdown:find-close', onFindClose)
   window.removeEventListener('inkdown:settings-changed', onSettingsChanged)
+  window.removeEventListener('inkdown:insert-text', onInsertText as EventListener)
   muya?.destroy()
   muya = null
 })

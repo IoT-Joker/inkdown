@@ -203,6 +203,49 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   }
   console.log(`[filetest] 导出 PDF OK: ${pdfBytes.length} bytes, 头部 ${header}`)
 
+  // 6b. 换行符设置必须真的影响磁盘文件（不只是设置值）
+  const crlfFile = join(workDir, 'crlf-test.md')
+  await fsp.writeFile(crlfFile, '# 第一行\n\n第二行\n', 'utf8')
+  await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+      await app.openPath(${JSON.stringify(crlfFile)})
+      await wait(500)
+      await c.execute('edit:lineEnding', 'crlf')
+      await wait(600)
+      return true
+    })()
+  `)
+  const crlfText = (await fsp.readFile(crlfFile)).toString('utf8')
+  if (!crlfText.includes('\r\n')) {
+    console.error('[filetest] FAIL: CRLF 设置后磁盘文件仍是 LF:', JSON.stringify(crlfText.slice(0, 80)))
+    return false
+  }
+  console.log('[filetest] 换行符 CRLF OK: 磁盘文件含 \\r\\n')
+
+  // 切回 LF 再存一次，磁盘应不再含 \r
+  await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+      const tab = app.tabs().find((t) => t.filePath === ${JSON.stringify(crlfFile)})
+      await c.execute('edit:lineEnding', 'lf')
+      await wait(500)
+      await app.saveTab(tab)
+      await wait(400)
+      return true
+    })()
+  `)
+  const lfText = (await fsp.readFile(crlfFile)).toString('utf8')
+  if (lfText.includes('\r')) {
+    console.error('[filetest] FAIL: 切回 LF 后磁盘文件仍含 \\r:', JSON.stringify(lfText.slice(0, 80)))
+    return false
+  }
+  console.log('[filetest] 换行符 LF OK: 磁盘文件无 \\r')
+
   // 7. 文件树只显示 Markdown：目录保留，非 Markdown 文件必须被过滤掉
   const mixedDir = join(workDir, 'tree-mixed')
   await fsp.mkdir(join(mixedDir, '子目录'), { recursive: true })

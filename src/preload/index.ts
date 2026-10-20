@@ -41,6 +41,7 @@ const api = {
 
   setTitle: (title: string) => ipcRenderer.invoke('window:setTitle', title),
   setFullScreen: (flag: boolean) => ipcRenderer.invoke('window:setFullScreen', flag),
+  isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
   toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools'),
 
   exportPdf: (filePath: string, html: string, options?: { landscape?: boolean }) =>

@@ -291,6 +291,8 @@ export function registerIpc(): void {
     return getMainWindow()?.isFullScreen() ?? false
   })
 
+  ipcMain.handle('window:isFullScreen', () => getMainWindow()?.isFullScreen() ?? false)
+
   ipcMain.handle('window:toggleDevTools', () => {
     getMainWindow()?.webContents.toggleDevTools()
   })

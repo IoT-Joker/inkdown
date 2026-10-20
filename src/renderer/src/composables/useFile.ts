@@ -1,5 +1,5 @@
 import { state, type Tab } from '../store'
-import { getActiveTab, isDirty, pushRecent } from '../store'
+import { getActiveTab, isDirty, pushRecent, settings } from '../store'
 import { translate } from '../../../shared/i18n'
 import { currentLocale } from './useI18n'
 
@@ -53,7 +53,10 @@ export function useFile() {
     // 显式判空，让类型收窄到 string
     if (!target) return false
     const finalPath: string = target
-    const { mtimeMs } = await window.inkdown.writeFile(finalPath, tab.content)
+    // 按设置的行尾符写盘（编辑器内部统一用 \n，仅在存盘时转换）
+    const content =
+      settings.lineEnding === 'crlf' ? tab.content.replace(/\r?\n/g, '\r\n') : tab.content
+    const { mtimeMs } = await window.inkdown.writeFile(finalPath, content)
     tab.filePath = finalPath
     tab.title = baseName(finalPath)
     tab.savedContent = tab.content
