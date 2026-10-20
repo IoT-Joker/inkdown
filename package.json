@@ -37,15 +37,51 @@
       "out/**/*",
       "build/icon.png"
     ],
+    "extraMetadata": {
+      "main": "./out/main/index.js"
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown",
+          "mdown",
+          "mkd",
+          "mkdn",
+          "mdx"
+        ],
+        "name": "Markdown Document",
+        "description": "Markdown 文档",
+        "role": "Editor",
+        "icon": "build/icon.ico"
+      },
+      {
+        "ext": [
+          "txt"
+        ],
+        "name": "Text Document",
+        "description": "纯文本文档",
+        "role": "Editor",
+        "icon": "build/icon.ico"
+      }
+    ],
     "win": {
       "icon": "build/icon.ico",
       "target": [
-        "nsis"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "mac": {
       "icon": "build/icon.png",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg"
+      ]
     },
     "linux": {
       "icon": "build/icon.png",
@@ -57,11 +93,23 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Inkdown"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "IoT-Joker",
+        "repo": "inkdown"
+      }
+    ]
   },
   "dependencies": {
-    "@muyajs/core": "workspace:*"
+    "@muyajs/core": "workspace:*",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@types/katex": "^0.16.8",

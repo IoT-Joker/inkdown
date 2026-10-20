@@ -142,6 +142,36 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
     console.log(`[shot] 已写出 ${d.name}`)
   }
 
+  // 再截一张分栏预览
+  const splitInfo = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+      // 关掉对话框
+      document.querySelectorAll('.about-actions .primary, .sc-head .ty-btn').forEach((b) => b.click())
+      await wait(300)
+      // 载入演示文档并切到分栏
+      window.__inkdownLoad(${JSON.stringify(demo)})
+      await wait(1200)
+      for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(400)
+      }
+      await wait(600)
+      return {
+        mode: app.viewMode(),
+        hasPreview: !!document.querySelector('.split-preview-body')
+      }
+    })()
+  `)
+  console.log('[shot] 分栏信息:', JSON.stringify(splitInfo))
+  if (splitInfo.mode === 'split' && splitInfo.hasPreview) {
+    const shot = await win.webContents.capturePage()
+    await fsp.writeFile(join(outDir, '10-split-preview.png'), shot.toPNG())
+    console.log('[shot] 已写出 10-split-preview.png')
+  }
+
   console.log('[shot] PASS: 查找栏截图完成')
   return true
 }

@@ -10,8 +10,6 @@ Thumbs.db
 .vite/
 coverage/
 # 测试与截图产物
-.tmp-file-test/
-.tmp-selfcheck-tree/
-.tmp-pdf-render/
-.tmp-session-test/
+# 用通配覆盖所有 .tmp-* 目录，避免每新增一个测试就要改这里
+.tmp-*/
 screenshots/

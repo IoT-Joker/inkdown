@@ -188,6 +188,7 @@ export function buildAppMenu(): void {
         { label: t('menu.help.repo'), click: cmd('help:repo') },
         { label: t('menu.help.feedback'), click: cmd('help:feedback') },
         { type: 'separator' },
+        { label: t('menu.help.update'), click: cmd('help:checkUpdate') },
         { label: t('menu.help.about'), click: cmd('help:about') }
       ]
     }

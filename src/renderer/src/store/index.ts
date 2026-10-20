@@ -2,7 +2,7 @@ import { reactive, ref } from 'vue'
 import { translate } from '../../../shared/i18n'
 import { currentLocale } from '../composables/useI18n'
 
-export type ViewMode = 'wysiwyg' | 'source'
+export type ViewMode = 'wysiwyg' | 'source' | 'split'
 
 /** 源码模式坐标：行号与列号（与 muya 的 setCursorByOffset 一致）。 */
 export interface SourcePos {
@@ -117,6 +117,24 @@ export function closeTab(id: string): void {
 
 export function isDirty(tab: Tab | undefined): boolean {
   return !!tab && tab.content !== tab.savedContent
+}
+
+/**
+ * 把标签 fromId 移动到 toId 之前或之后（拖拽排序）。
+ * 移动后保持 fromId 仍为活动标签，避免拖拽导致焦点跳走。
+ */
+export function moveTab(fromId: string, toId: string, before: boolean): void {
+  const from = state.tabs.findIndex((t) => t.id === fromId)
+  const to = state.tabs.findIndex((t) => t.id === toId)
+  if (from === -1 || to === -1 || from === to) return
+
+  const [moved] = state.tabs.splice(from, 1)
+  // 移除后目标下标可能前移一位
+  let insertAt = state.tabs.findIndex((t) => t.id === toId)
+  if (!before) insertAt += 1
+  state.tabs.splice(insertAt, 0, moved)
+  // 拖拽不改变当前编辑的文档
+  state.activeId = fromId
 }
 
 /**

@@ -108,6 +108,22 @@ const zhCN: Dict = {
   'menu.help.shortcuts': '键盘快捷键',
   'menu.help.repo': '项目主页',
   'menu.help.feedback': '反馈问题',
+  'menu.help.update': '检查更新',
+
+  // 自动更新
+  'update.available': '发现新版本',
+  'update.availableDetail': '当前 {current}，最新 {version}。是否现在下载？',
+  'update.download': '下载',
+  'update.later': '稍后',
+  'update.ready': '更新已就绪',
+  'update.readyDetail': '版本 {version} 已下载完成，重启后生效。',
+  'update.restart': '立即重启',
+  'update.checkFailed': '检查更新失败',
+  'update.checkFailedDetail': '无法连接到更新服务器。可能是网络不通，或该仓库尚未发布任何版本。',
+  'update.devMode': '开发模式',
+  'update.devModeDetail': '开发模式下不检查更新，请安装打包后的版本再试。',
+  'update.busy': '正在处理中',
+  'update.ok': '知道了',
 
   // 关于对话框
   'about.title': '关于 Inkdown',
@@ -161,6 +177,8 @@ const zhCN: Dict = {
   'tree.errCreate': '创建失败：{msg}',
   'tree.errRename': '重命名失败：{msg}',
   'tree.errDelete': '删除失败：{msg}',
+  'tree.errExists': '目标位置已存在同名文件「{name}」',
+  'tree.errMove': '移动失败：{msg}',
 
   // 状态栏
   'status.notSavedToFile': '未保存到文件',
@@ -351,6 +369,22 @@ const en: Dict = {
   'menu.help.shortcuts': 'Keyboard Shortcuts',
   'menu.help.repo': 'Project Home',
   'menu.help.feedback': 'Report an Issue',
+  'menu.help.update': 'Check for Updates',
+
+  'update.available': 'New version available',
+  'update.availableDetail': 'Current {current}, latest {version}. Download now?',
+  'update.download': 'Download',
+  'update.later': 'Later',
+  'update.ready': 'Update ready',
+  'update.readyDetail': 'Version {version} downloaded. It will apply after restart.',
+  'update.restart': 'Restart Now',
+  'update.checkFailed': 'Update check failed',
+  'update.checkFailedDetail':
+    'Cannot reach the update server. The network may be blocked, or no release has been published yet.',
+  'update.devMode': 'Development mode',
+  'update.devModeDetail': 'Updates are not checked in development. Install a packaged build.',
+  'update.busy': 'In progress',
+  'update.ok': 'OK',
 
   'about.title': 'About Inkdown',
   'about.version': 'Version {version}',
@@ -399,6 +433,8 @@ const en: Dict = {
   'tree.errCreate': 'Create failed: {msg}',
   'tree.errRename': 'Rename failed: {msg}',
   'tree.errDelete': 'Delete failed: {msg}',
+  'tree.errExists': 'A file named "{name}" already exists there',
+  'tree.errMove': 'Move failed: {msg}',
 
   'status.notSavedToFile': 'Not saved to a file',
   'status.unsaved': 'Unsaved',

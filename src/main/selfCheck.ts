@@ -317,6 +317,26 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 命令中心 OK: 标题/列表/任务/加粗/表格均生效')
 
+  // 命令中心用例连续做了多次 setContent + setCursorByOffset，
+  // 每次都触发文档重建（内核内部两次 setContent）。这里等编辑器彻底稳定，
+  // 否则紧随其后的用例会读到重建中的中间状态。
+  await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const muya = window.__inkdownMuya
+      window.__inkdownLoad('稳定检查\\n')
+      for (let i = 0; i < 40; i++) {
+        if (document.querySelectorAll('.muya-container .mu-paragraph').length > 0) break
+        await wait(100)
+      }
+      // 等渲染队列与选区都安静下来
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      await wait(500)
+      return true
+    })()
+  `)
+  console.log('[selfcheck] 命令中心后的稳定等待完成')
+
   // 4b-3. 验证查找替换与专注模式
   const findResult = await win.webContents.executeJavaScript(`
     (async () => {
@@ -482,11 +502,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       window.__inkdownLoad('# 源码模式测试\\n\\n初始段落。\\n')
       await wait(500)
 
-      // 切到源码模式
-      await c.execute('view:toggleSource')
-      await wait(500)
+      // 切到源码模式。
+      // 注意 view:toggleSource 现在是三态循环（wysiwyg → split → source），
+      // 这里循环直到进入源码模式，避免依赖切换次数。
+      for (let i = 0; i < 4 && app.viewMode() !== 'source'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(400)
+      }
       const ta = document.querySelector('.source-editor')
-      if (!ta) return { error: '源码编辑器未渲染' }
+      if (!ta) return { error: '源码编辑器未渲染', mode: app.viewMode() }
       const sourceText = ta.value
 
       // 在源码里改内容（模拟用户输入）
@@ -495,9 +519,16 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       await wait(500)
       const tabAfterEdit = app.activeTab().content
 
-      // 切回所见即所得
-      await c.execute('view:toggleSource')
-      await wait(700)
+      // 切回所见即所得（同样循环，直到离开源码模式）
+      for (let i = 0; i < 4 && app.viewMode() === 'source'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(500)
+      }
+      // 若停在分栏，再切一次回到所见即所得
+      if (app.viewMode() === 'split') {
+        await c.execute('view:toggleSplit')
+        await wait(500)
+      }
       const backToWysiwyg = window.__inkdownMuya.getMarkdown()
       const isSourceVisible = !!document.querySelector('.source-editor')
 
@@ -521,6 +552,78 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   console.log('[selfcheck] 源码模式 OK: 双向同步且不丢改动')
+
+  // 4b-5b. 分栏预览：左侧编辑器 + 右侧静态预览，且内容随文档更新
+  const splitCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+
+      window.__inkdownLoad('# 分栏标题\\n\\n正文段落，含 **加粗** 与 ==高亮==。\\n\\n- 列表项\\n')
+      await wait(700)
+
+      // 三态循环，不依赖切换次数
+      for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(400)
+      }
+      const modeAfter = app.viewMode()
+      const hasPreview = !!document.querySelector('.split-preview')
+      const body = document.querySelector('.split-preview-body')
+      const html = body ? body.innerHTML : ''
+      const editorVisible = !!document.querySelector('.editor-scroll')
+
+      // 改内容，预览应跟着更新
+      window.__inkdownLoad('# 改后的标题\\n\\n新段落。\\n')
+      await wait(900)
+      const htmlAfter = document.querySelector('.split-preview-body')?.innerHTML || ''
+
+      // 切回所见即所得
+      await c.execute('view:toggleSplit')
+      await wait(500)
+      const modeBack = app.viewMode()
+
+      return {
+        modeAfter,
+        hasPreview,
+        editorVisible,
+        hasH1: /分栏标题/.test(html),
+        hasStrong: /<strong>/.test(html),
+        hasList: /<li>/.test(html),
+        // 高亮语法：内核默认不开，必须显式打开，否则 ==x== 会原样显示
+        hasMark: /<mark>/.test(html),
+        rawMarkLeft: /==高亮==/.test(html),
+        updated: /改后的标题/.test(htmlAfter),
+        modeBack
+      }
+    })()
+  `)
+  if (splitCheck.modeAfter !== 'split') {
+    console.error('[selfcheck] FAIL: 未切到分栏模式:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.hasPreview || !splitCheck.editorVisible) {
+    console.error('[selfcheck] FAIL: 分栏未同时显示编辑器与预览:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.hasH1 || !splitCheck.hasStrong || !splitCheck.hasList) {
+    console.error('[selfcheck] FAIL: 预览渲染不完整:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.hasMark || splitCheck.rawMarkLeft) {
+    console.error('[selfcheck] FAIL: 预览未渲染高亮语法:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.updated) {
+    console.error('[selfcheck] FAIL: 预览未随文档更新:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (splitCheck.modeBack !== 'wysiwyg') {
+    console.error('[selfcheck] FAIL: 未能切回所见即所得:', JSON.stringify(splitCheck))
+    return false
+  }
+  console.log('[selfcheck] 分栏预览 OK: 编辑器+预览并排，标题/加粗/列表渲染正确且实时更新')
 
   // 4b-6. 验证代码高亮、块级公式、Mermaid 图表真的渲染出来
   const renderCheck = await win.webContents.executeJavaScript(`
@@ -697,6 +800,54 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   console.log(
     `[selfcheck] 文件树 OK: ${treeCheck.childCount} 个条目（${treeCheck.names.slice(0, 6).join(', ')}）`
   )
+
+  // 4b-9b. 文件树拖拽移动：把文件移入子目录，验证移动链路
+  const moveDir = join(workDirForTree, '移动测试')
+  const moveSub = join(moveDir, '目标目录')
+  await fsp.mkdir(moveSub, { recursive: true })
+  const moveSrc = join(moveDir, '待移动.md')
+  const moveDst = join(moveSub, '待移动.md')
+  await fsp.writeFile(moveSrc, '# 待移动\n', 'utf8')
+
+  const dragCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const dir = await window.inkdown.readDir(${JSON.stringify(moveDir)}, 1)
+      app.setWorkspace(dir)
+      await wait(800)
+      const rows = [...document.querySelectorAll('.tree-row')]
+      return {
+        names: rows.map((r) => r.querySelector('.tree-name')?.textContent?.trim()),
+        draggable: rows.filter((r) => r.getAttribute('draggable') === 'true').length
+      }
+    })()
+  `)
+  if (!dragCheck.names?.includes('待移动.md') || !dragCheck.names?.includes('目标目录')) {
+    console.error('[selfcheck] FAIL: 拖拽测试的文件树未渲染:', JSON.stringify(dragCheck))
+    return false
+  }
+  if (!dragCheck.draggable) {
+    console.error('[selfcheck] FAIL: 文件树节点未开启拖拽:', JSON.stringify(dragCheck))
+    return false
+  }
+
+  // 直接驱动移动动作（合成 DragEvent 的 dataTransfer 在无头环境不可用）
+  const moveResult = await win.webContents.executeJavaScript(`
+    (async () => {
+      await window.inkdown.rename(${JSON.stringify(moveSrc)}, ${JSON.stringify(moveDst)})
+      await new Promise((r) => setTimeout(r, 400))
+      return {
+        moved: await window.inkdown.exists(${JSON.stringify(moveDst)}),
+        srcGone: !(await window.inkdown.exists(${JSON.stringify(moveSrc)}))
+      }
+    })()
+  `)
+  if (!moveResult.moved || !moveResult.srcGone) {
+    console.error('[selfcheck] FAIL: 文件移动未生效:', JSON.stringify(moveResult))
+    return false
+  }
+  console.log('[selfcheck] 文件树移动 OK: 节点可拖拽，文件已移入子目录')
 
   // 4b-10. 验证拖入打开：构造带文件的 drop 事件，检查是否真的打开了文档
   const dropFile = join(workDirForTree, 'dropped.md')
@@ -903,21 +1054,22 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const labels = [...document.querySelectorAll('.menu-label')].map((b) => b.textContent.trim())
 
-      // 打开「编辑」菜单看条目
+      // 打开「编辑」菜单看条目（点第二次会收起，所以先确保是收起状态）
       const editBtn = [...document.querySelectorAll('.menu-label')].find((b) => /编辑|Edit/.test(b.textContent))
       editBtn && editBtn.click()
-      await wait(300)
+      await wait(350)
       const items = [...document.querySelectorAll('.menu-panel .menu-item-label')].map((s) => s.textContent.trim())
-      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-      await wait(250)
 
-      // 「最近打开」子菜单在文件菜单里
+      // 「最近打开」子菜单在文件菜单里。直接切到文件菜单：
+      // 悬停会切换已打开的菜单，避免先收起再打开的时序问题。
       const fileBtn = [...document.querySelectorAll('.menu-label')].find((b) => /文件|File/.test(b.textContent))
-      fileBtn && fileBtn.click()
-      await wait(300)
+      if (fileBtn) fileBtn.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await wait(350)
       const hasRecentSub = !!document.querySelector('.menu-sub')
       const fileItems = [...document.querySelectorAll('.menu-panel .menu-item-label')].map((s) => s.textContent.trim())
-      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+
+      // 收起：再点一次文件菜单
+      fileBtn && fileBtn.click()
       await wait(200)
 
       return { labels, itemCount: items.length, items: items.slice(0, 20), hasRecentSub, fileItems }

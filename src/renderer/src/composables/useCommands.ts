@@ -47,8 +47,15 @@ export function registerGlobalCommands(): void {
       state.sidebarVisible = true
       state.sidebarTab = state.sidebarTab === 'outline' ? 'files' : 'outline'
     },
+    // 三种视图循环：所见即所得 → 分栏预览 → 纯源码 → 回到所见即所得
     'view:toggleSource': () => {
-      state.viewMode = state.viewMode === 'wysiwyg' ? 'source' : 'wysiwyg'
+      const order = ['wysiwyg', 'split', 'source'] as const
+      const i = order.indexOf(state.viewMode as (typeof order)[number])
+      state.viewMode = order[(i + 1) % order.length]
+    },
+    // 直接切到分栏预览（与源码模式互斥）
+    'view:toggleSplit': () => {
+      state.viewMode = state.viewMode === 'split' ? 'wysiwyg' : 'split'
     },
     'view:toggleFocus': () => {
       state.focusMode = !state.focusMode
@@ -95,6 +102,9 @@ export function registerGlobalCommands(): void {
     },
     'help:feedback': () => {
       void window.inkdown.openExternal('https://github.com/IoT-Joker/inkdown/issues')
+    },
+    'help:checkUpdate': () => {
+      void window.inkdown.checkForUpdates()
     },
     'app:quit': () => window.inkdown.quit(),
     // 最近打开：由菜单传文件路径进来

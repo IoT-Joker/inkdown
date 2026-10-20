@@ -2,7 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
 import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds } from '../composables/useCommands'
-import { exportHtml, exportPdf, buildHtmlForCheck } from '../composables/useExport'
+import { exportHtml, exportPdf, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
 import { useI18n } from '../composables/useI18n'
 
 // 供主进程端到端自检调用
@@ -22,6 +22,29 @@ const viewState = new Map<string, { cursor: Tab['cursor']; scrollTop: number }>(
 
 const activeTab = computed(() => getActiveTab())
 const isSource = computed(() => state.viewMode === 'source')
+/** 分栏预览：左侧所见即所得，右侧静态预览。 */
+const isSplit = computed(() => state.viewMode === 'split')
+/** 右侧预览容器。 */
+const previewRef = ref<HTMLElement | null>(null)
+
+/** 刷新分栏预览区的内容。 */
+function refreshPreview(): void {
+  if (!isSplit.value) return
+  const el = previewRef.value
+  if (!el) return
+  const tab = activeTab.value
+  el.innerHTML = tab ? renderPreviewHtml(tab.content) : ''
+}
+
+// 分栏模式下内容或视图变化时更新预览
+watch(
+  () => [state.viewMode, activeTab.value?.content, state.activeId],
+  () => {
+    if (!isSplit.value) return
+    nextTick(() => refreshPreview())
+  },
+  { flush: 'post' }
+)
 
 function updateCounts(markdown: string): void {
   const cjk = (markdown.match(/[\u4e00-\u9fa5]/g) || []).length
@@ -200,23 +223,29 @@ watch(
 
 watch(
   () => state.viewMode,
-  (mode) => {
+  (mode, prev) => {
     const tab = activeTab.value
     if (!tab) return
+
+    // 离开源码模式时，把源码里改动过的内容同步回标签
+    if (prev === 'source' && state.sourceContent !== tab.content) {
+      tab.content = state.sourceContent
+      updateCounts(tab.content)
+    }
+
     if (mode === 'source') {
+      // 进入源码模式：把当前内容交给 textarea
       state.sourceContent = tab.content
       nextTick(() => sourceRef.value?.focus())
-    } else {
-      // 源码模式改动过内容，切回所见即所得时同步
-      if (state.sourceContent !== tab.content) {
-        tab.content = state.sourceContent
-        updateCounts(tab.content)
-      }
-      nextTick(() => {
-        loadTab(tab)
-        focus()
-      })
+      return
     }
+
+    // 分栏与所见即所得都需要 muya 渲染最新内容
+    nextTick(() => {
+      loadTab(tab)
+      refreshPreview()
+      if (mode === 'wysiwyg') focus()
+    })
   }
 )
 
@@ -561,6 +590,8 @@ onMounted(() => {
   registerGlobalCommands()
   mountEditor()
   registerEditorCommands()
+  // 若启动时就处于分栏模式，渲染一次预览
+  nextTick(() => refreshPreview())
   // 暴露命令中心与已注册命令，供主进程自检核对
   ;(window as unknown as Record<string, unknown>).__inkdownCommands = {
     execute: executeCommand,
@@ -593,6 +624,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 <template>
   <div
     class="editor-host"
+    :class="{ 'is-split': isSplit && !isSource }"
     :style="{
       '--editor-zoom': state.zoom,
       '--editor-font-size': `${settings.fontSize}px`,
@@ -604,8 +636,13 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
-    <div v-show="!isSource" class="editor-scroll">
+    <div v-show="!isSource" class="editor-scroll" :class="{ 'split-left': isSplit }">
       <div ref="containerRef" class="muya-container" />
+    </div>
+    <!-- 分栏预览：右侧渲染当前 Markdown 的静态 HTML -->
+    <div v-if="isSplit && !isSource" class="split-preview">
+      <div class="split-preview-head">{{ t('view.splitPreview') }}</div>
+      <div ref="previewRef" class="split-preview-body markdown-body" />
     </div>
     <div v-show="isSource" class="source-scroll">
       <textarea
@@ -635,11 +672,110 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   height: 100%;
   overflow: hidden;
 }
+/* 分栏模式：左右并排 */
+.editor-host.is-split {
+  display: flex;
+  flex-direction: row;
+}
 .editor-scroll,
 .source-scroll {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+}
+/* 分栏模式：左侧编辑器与右侧预览各占一半 */
+.editor-scroll.split-left {
+  flex: 1 1 50%;
+  min-width: 0;
+  border-right: 1px solid var(--ty-border);
+}
+.split-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 50%;
+  min-width: 0;
+  height: 100%;
+  border-left: 1px solid var(--ty-border);
+  background: var(--ty-bg);
+  overflow: hidden;
+}
+.split-preview-head {
+  flex: none;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--ty-border);
+  background: var(--ty-tabbar-bg);
+  color: var(--ty-muted);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+}
+.split-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px 80px;
+  color: var(--editor-color);
+  font-size: calc(var(--editor-font-size) * var(--editor-zoom));
+  line-height: 1.7;
+  word-wrap: break-word;
+}
+/* 预览区的排版细节（与导出的样式保持接近） */
+.split-preview-body :deep(h1),
+.split-preview-body :deep(h2) {
+  border-bottom: 1px solid var(--editor-color-10);
+  padding-bottom: 0.3em;
+}
+.split-preview-body :deep(h1),
+.split-preview-body :deep(h2),
+.split-preview-body :deep(h3),
+.split-preview-body :deep(h4) {
+  margin: 1.3em 0 0.6em;
+  color: var(--editor-color-80);
+}
+.split-preview-body :deep(p) {
+  margin: 0.8em 0;
+}
+.split-preview-body :deep(code) {
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  background: var(--code-block-bg-color);
+  font-family: var(--editor-code-font);
+  font-size: 0.9em;
+}
+.split-preview-body :deep(pre) {
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--code-block-bg-color);
+  overflow-x: auto;
+}
+.split-preview-body :deep(pre code) {
+  padding: 0;
+  background: none;
+}
+.split-preview-body :deep(blockquote) {
+  margin: 1em 0;
+  padding: 0 1em;
+  border-left: 4px solid var(--blockquote-border-color);
+  color: var(--blockquote-text-color);
+}
+.split-preview-body :deep(table) {
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+.split-preview-body :deep(th),
+.split-preview-body :deep(td) {
+  border: 1px solid var(--table-border-color);
+  padding: 5px 10px;
+}
+.split-preview-body :deep(img) {
+  max-width: 100%;
+}
+.split-preview-body :deep(a) {
+  color: var(--theme-color);
+}
+.split-preview-body :deep(hr) {
+  border: 0;
+  border-top: 1px solid var(--hr-color);
+  margin: 1.4em 0;
 }
 .muya-container {
   min-height: 100%;

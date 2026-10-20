@@ -33,8 +33,19 @@ const cursorLabel = computed(() => {
       </span>
     </div>
     <div class="status-right">
-      <button class="status-btn" :class="{ on: state.viewMode === 'source' }" @click="executeCommand('view:toggleSource')">
-        {{ state.viewMode === 'source' ? t('status.source') : t('status.wysiwyg') }}
+      <button
+        class="status-btn"
+        :class="{ on: state.viewMode !== 'wysiwyg' }"
+        :title="t('view.splitHint')"
+        @click="executeCommand('view:toggleSource')"
+      >
+        {{
+          state.viewMode === 'source'
+            ? t('status.source')
+            : state.viewMode === 'split'
+              ? t('view.splitPreview')
+              : t('status.wysiwyg')
+        }}
       </button>
       <button class="status-btn" :class="{ on: state.focusMode }" :title="`${t('menu.view.toggleFocus')} F8`" @click="executeCommand('view:toggleFocus')">
         {{ t('status.focus') }}

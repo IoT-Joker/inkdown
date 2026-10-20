@@ -19,6 +19,94 @@ const expanded = ref(depth.value < 1)
 const renaming = ref(false)
 const renameValue = ref('')
 const menu = reactive({ visible: false, x: 0, y: 0 })
+/** 拖拽悬停到本节点时的状态：'into' 移入目录，'before'/'after' 调序（仅同级文件） */
+const dropMode = ref<'' | 'into' | 'before' | 'after'>('')
+
+/* ------------------------------ 拖拽移动 ------------------------------ */
+
+/** 被拖拽的路径放在 dataTransfer 上，跨组件共享（比全局变量更可靠）。 */
+const DRAG_MIME = 'application/x-inkdown-path'
+
+function onDragStart(e: DragEvent): void {
+  e.dataTransfer?.setData(DRAG_MIME, props.entry.path)
+  // 同时写纯文本，便于拖到外部程序时至少有个路径
+  e.dataTransfer?.setData('text/plain', props.entry.path)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+
+/** 判断拖拽源是否是本节点的子孙（禁止把目录拖进自己内部）。 */
+function isSelfOrDescendant(sourcePath: string): boolean {
+  const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+  const a = norm(sourcePath)
+  const b = norm(props.entry.path)
+  return a === b || b.startsWith(a + '/')
+}
+
+function onDragOver(e: DragEvent): void {
+  const source = e.dataTransfer?.getData(DRAG_MIME)
+  if (!source) return
+  // 不能拖到自己或自己的子孙上
+  if (isSelfOrDescendant(source)) {
+    dropMode.value = ''
+    return
+  }
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const ratio = (e.clientY - rect.top) / rect.height
+  if (props.entry.isDirectory) {
+    // 目录：上 1/4 调序、下 1/4 调序，中间移入
+    if (ratio < 0.25) dropMode.value = 'before'
+    else if (ratio > 0.75) dropMode.value = 'after'
+    else dropMode.value = 'into'
+  } else {
+    // 文件：上半插到前面，下半插到后面
+    dropMode.value = ratio < 0.5 ? 'before' : 'after'
+  }
+}
+
+function onDragLeave(): void {
+  dropMode.value = ''
+}
+
+async function onDrop(e: DragEvent): Promise<void> {
+  const source = e.dataTransfer?.getData(DRAG_MIME)
+  // 先取出投放意图再清空状态。注意必须显式标注类型：
+  // 清空 dropMode 后 TS 会把从它取出的值收窄成 ''，导致后续比较被判为永假。
+  const mode: '' | 'into' | 'before' | 'after' = dropMode.value
+  dropMode.value = ''
+  if (!source || isSelfOrDescendant(source)) return
+  e.preventDefault()
+
+  const sep = props.entry.path.includes('\\') ? '\\' : '/'
+  const baseName = source.split(/[\\/]/).pop() || ''
+
+  // 计算目标路径：移入目录 → 目录内；调序 → 与目标同级
+  let targetDir: string
+  if (mode === 'into' && props.entry.isDirectory) {
+    targetDir = props.entry.path
+  } else {
+    targetDir = parentDir()
+  }
+  const targetPath = `${targetDir}${sep}${baseName}`
+
+  if (targetPath === source) return
+
+  try {
+    if (await window.inkdown.exists(targetPath)) {
+      window.alert(t('tree.errExists', { name: baseName }))
+      return
+    }
+    await window.inkdown.rename(source, targetPath)
+    // 同步已打开标签的路径，避免保存时写回旧位置
+    const tab = state.tabs.find((t) => t.filePath === source)
+    if (tab) tab.filePath = targetPath
+    emit('refresh')
+  } catch (err) {
+    window.alert(t('tree.errMove', { msg: (err as Error).message }))
+  }
+}
 
 function toggle(): void {
   if (!props.entry.isDirectory) return
@@ -137,11 +225,22 @@ function revealInExplorer(): void {
   <div class="tree-node">
     <div
       class="tree-row"
-      :class="{ active: isActive, dir: entry.isDirectory }"
+      :class="{
+        active: isActive,
+        dir: entry.isDirectory,
+        'drop-into': dropMode === 'into',
+        'drop-before': dropMode === 'before',
+        'drop-after': dropMode === 'after'
+      }"
       :style="{ paddingLeft: `${8 + depth * 14}px` }"
       :title="entry.path"
+      draggable="true"
       @click="open"
       @contextmenu="openMenu"
+      @dragstart="onDragStart"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
     >
       <span class="tree-icon">{{ icon }}</span>
       <input
@@ -204,6 +303,17 @@ function revealInExplorer(): void {
 }
 .tree-row.dir {
   font-weight: 500;
+}
+/* 拖拽投放提示：移入用整行高亮，调序用上下指示线 */
+.tree-row.drop-into {
+  background: var(--ty-active);
+  box-shadow: inset 0 0 0 1px var(--ty-accent);
+}
+.tree-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--ty-accent);
+}
+.tree-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--ty-accent);
 }
 .tree-icon {
   flex: none;

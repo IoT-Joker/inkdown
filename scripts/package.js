@@ -61,7 +61,54 @@ function ensureShims() {
   console.log('垫片目录:', shimDir)
 }
 
+/**
+ * 结束残留的应用进程。
+ *
+ * 打包与测试会留下 Electron 进程，它们锁住 Chromium 缓存目录，
+ * 导致后续运行报「Unable to move the cache: 拒绝访问」。
+ */
+function killStrayProcesses() {
+  const names = ['Inkdown', 'electron']
+  for (const name of names) {
+    try {
+      // 用 taskkill 而不是 process.kill：能一次清掉同名全部进程
+      execFileSync('taskkill', ['/F', '/IM', `${name}.exe`, '/T'], { stdio: 'ignore' })
+      console.log(`已结束残留进程: ${name}.exe`)
+    } catch {
+      // 没有该进程时 taskkill 返回非零，属正常
+    }
+  }
+}
+
+/**
+ * 确认 electron 二进制存在；缺失则重新下载。
+ *
+ * @electron/rebuild 在打包过程中会清空 node_modules/electron/dist，
+ * 使开发环境随后无法启动（spawn ENOENT）。
+ */
+function ensureElectronBinary() {
+  const dist = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+  if (fs.existsSync(dist)) return
+  console.log('electron 二进制缺失，重新下载…')
+  try {
+    execFileSync(NODE_EXE, [path.join(root, 'node_modules', 'electron', 'install.js')], {
+      cwd: root,
+      env: {
+        ...process.env,
+        ELECTRON_MIRROR: 'https://registry.npmmirror.com/-/binary/electron/'
+      },
+      stdio: 'inherit'
+    })
+    console.log('已恢复 electron 二进制')
+  } catch (err) {
+    console.error('恢复 electron 二进制失败:', err.message)
+    console.error('请手动执行：node node_modules/electron/install.js')
+  }
+}
+
 ensureShims()
+// 打包前清掉可能锁住缓存的进程
+killStrayProcesses()
 
 const env = {
   ...process.env,
@@ -99,6 +146,10 @@ const child = spawn(NODE_EXE, [PNPM_MJS, 'exec', 'electron-builder', ...ebArgs],
 })
 
 child.on('exit', (code) => {
+  // 打包会留下运行中的进程，且可能清空 electron 二进制——两者都要复原
+  killStrayProcesses()
+  ensureElectronBinary()
+
   if (code === 0) {
     console.log('\n=== 打包成功 ===')
     const rel = path.join(root, 'release')
@@ -110,6 +161,7 @@ child.on('exit', (code) => {
         }
       }
     }
+    console.log('开发环境已复原，可直接 pnpm dev / pnpm smoke')
   }
   process.exit(code ?? 0)
 })

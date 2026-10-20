@@ -86,8 +86,14 @@ onMounted(async () => {
     setActive: (id: string) => {
       state.activeId = id
     },
+    /** 设置工作区目录（供端到端测试驱动文件树）。 */
+    setWorkspace: (ws: unknown) => {
+      state.workspace = ws as typeof state.workspace
+    },
     settings: () => settings,
     findVisible: () => state.findVisible,
+    /** 当前视图模式（供测试判断三态切换结果）。 */
+    viewMode: () => state.viewMode,
     persistSession,
     loadSession,
     clearNotice: () => {
@@ -115,9 +121,9 @@ onMounted(async () => {
     }
   })
 
-  // 支持命令行传入文件路径
-  const argv = (window as any).process?.argv as string[] | undefined
-  const fileArg = argv?.find((a) => /\.(md|markdown|txt)$/i.test(a))
+  // 文件关联：双击 .md 时系统把路径作为启动参数传给主进程，
+  // 主进程解析后由这里取用（不能读 window.process.argv —— 打包后渲染层是隔离的）
+  const fileArg = await window.inkdown.takePendingFile()
   // 自动化测试需要干净的初始状态，此时不恢复上次会话
   const skipRestore = !!window.inkdown.skipSessionRestore
   if (fileArg) {
@@ -143,6 +149,11 @@ onMounted(async () => {
     if (!state.tabs.length) createTab({ content: '' })
   }
 
+  // 应用已在运行时用户又双击了文件：主进程转发过来，直接打开
+  const offOpenFile = window.inkdown.onOpenFile((filePath) => {
+    void openPath(filePath)
+  })
+
   // 会话内容变化时记录，供下次启动恢复（测试可选择不记录，避免污染）
   if (!window.inkdown.skipSessionPersist) {
     watch(
@@ -155,6 +166,7 @@ onMounted(async () => {
   onBeforeUnmount(() => {
     off()
     offFs()
+    offOpenFile()
     window.removeEventListener('beforeunload', onBeforeUnload)
   })
 })

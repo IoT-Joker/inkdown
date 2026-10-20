@@ -6,6 +6,8 @@ import { getMainWindow } from './window'
 import { buildAppMenu } from './menu'
 import { getLocale, setLocale } from './locale'
 import { translate, type LocaleCode } from '../shared/i18n'
+import { takePendingFile } from './fileAssociation'
+import { checkForUpdatesManually } from './updater'
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
 const watchers = new Map<string, FSWatcher>()
@@ -342,6 +344,15 @@ export function registerIpc(): void {
     chromium: process.versions.chrome ?? '',
     node: process.versions.node ?? ''
   }))
+
+  /**
+   * 启动时由文件关联传入的待打开文件。
+   * 渲染层就绪后取一次；取走即清空，避免重复打开。
+   */
+  ipcMain.handle('app:takePendingFile', () => takePendingFile())
+
+  /** 手动检查更新（帮助菜单）。 */
+  ipcMain.handle('app:checkForUpdates', () => checkForUpdatesManually())
 
   ipcMain.handle('app:quit', () => app.quit())
 }

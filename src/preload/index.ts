@@ -60,6 +60,25 @@ const api = {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 
   /**
+   * 启动时由文件关联传入的待打开文件（双击 .md 触发）。
+   * 渲染层就绪后取一次，取走即清空，避免重复打开。
+   */
+  takePendingFile: () => ipcRenderer.invoke('app:takePendingFile'),
+
+  /**
+   * 应用已在运行时用户又双击了文件 —— 主进程转发过来。
+   * 返回取消订阅函数。
+   */
+  onOpenFile: (fn: (filePath: string) => void) => {
+    const listener = (_e: unknown, filePath: string) => fn(filePath)
+    ipcRenderer.on('app:openFile', listener)
+    return () => ipcRenderer.off('app:openFile', listener)
+  },
+
+  /** 手动检查更新（帮助菜单）。 */
+  checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
+
+  /**
    * 自动化测试标记：跳过启动时的会话恢复，保证测试初始状态干净。
    * 与下面「禁用会话记录」相互独立——会话恢复测试需要
    * 「不恢复旧会话，但要记录新会话」的组合。

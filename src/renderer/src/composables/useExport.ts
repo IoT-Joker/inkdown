@@ -115,6 +115,35 @@ export async function buildHtmlForCheck(): Promise<string> {
   return buildHtml()
 }
 
+/**
+ * 把 Markdown 渲染成静态 HTML 片段，供分栏预览使用。
+ *
+ * 走同步的 renderToStaticHTML：不渲染 Mermaid/Vega 等图表（那些需要异步运行时），
+ * 换来的是即时响应——预览区随输入实时更新，不适合每次等几秒渲染图表。
+ * 需要完整图表时用导出功能。
+ */
+export function renderPreviewHtml(markdown: string): string {
+  try {
+    return renderToStaticHTML(markdown, {
+      footnote: settings.footnote,
+      superSubScript: settings.superSubScript,
+      frontMatter: settings.frontMatter,
+      // 默认是 false，不开的话 ==高亮== 会原样显示
+      highlightSyntax: settings.highlightSyntax,
+      // 公式：与偏好设置保持一致（选项名是 texMathDollars / texMathGfm）
+      texMathDollars: settings.texMathDollars,
+      texMathGfm: settings.texMathGfm,
+      texMathSingleBackslash: settings.texMathSingleBackslash,
+      texMathDoubleBackslash: settings.texMathDoubleBackslash,
+      multilineBlockquote: settings.multilineBlockquote,
+      githubAlerts: settings.githubAlerts
+    })
+  } catch (err) {
+    console.warn('[preview] 渲染失败:', err)
+    return ''
+  }
+}
+
 // 暴露给主进程自检使用
 ;(window as unknown as Record<string, unknown>).__inkdownExport = { buildHtmlForCheck }
 

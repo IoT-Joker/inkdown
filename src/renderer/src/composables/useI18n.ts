@@ -1,5 +1,7 @@
 import { ref, computed } from 'vue'
 import { translate, LOCALE_LABELS, type LocaleCode } from '../../../shared/i18n'
+// 导入即把本批新增词条合并进主词典（主词典由并行工作流维护，此处不改动它）
+import '../../../shared/i18nExtra'
 
 /**
  * 渲染层 i18n。

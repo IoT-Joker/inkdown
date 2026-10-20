@@ -140,6 +140,7 @@ const menus = computed<MenuGroup[]>(() => [
       { labelKey: 'menu.help.repo', command: 'help:repo' },
       { labelKey: 'menu.help.feedback', command: 'help:feedback' },
       { labelKey: '', separator: true },
+      { labelKey: 'menu.help.update', command: 'help:checkUpdate' },
       { labelKey: 'menu.help.about', command: 'help:about' }
     ]
   }
