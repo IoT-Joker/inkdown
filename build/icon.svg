@@ -1,40 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <!-- 背景渐变：墨蓝 → 靛紫，沉稳且有辨识度 -->
+    <!-- 背景：蓝紫渐变，保持品牌调性 -->
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#3B82F6" />
-      <stop offset="55%" stop-color="#6366F1" />
-      <stop offset="100%" stop-color="#8B5CF6" />
-    </linearGradient>
-    <!-- 墨滴高光 -->
-    <linearGradient id="drop" x1="0.3" y1="0" x2="0.7" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF" />
-      <stop offset="100%" stop-color="#E8ECFF" />
+      <stop offset="0%" stop-color="#4F7CF7" />
+      <stop offset="100%" stop-color="#7C5CF6" />
     </linearGradient>
     <!-- 顶部柔光 -->
-    <radialGradient id="glow" cx="0.5" cy="0.1" r="0.9">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.35" />
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.28" />
       <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
     </radialGradient>
   </defs>
 
-  <!-- 圆角方形底 -->
   <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)" />
   <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#glow)" />
 
-  <!-- 墨滴：上尖下圆，向下收成一个尖 —— 既是「墨」也是「down」 -->
+  <!-- 纸张：右上角折角，文本编辑器最通用的识别形状 -->
   <path
-    d="M32 11 C 32 11, 49 31, 49 41 A 17 17 0 1 1 15 41 C 15 31, 32 11, 32 11 Z"
-    fill="url(#drop)"
+    d="M19 11 A2 2 0 0 1 21 9 H36 L45 18 V53 A2 2 0 0 1 43 55 H21 A2 2 0 0 1 19 53 Z"
+    fill="#FFFFFF"
   />
+  <!-- 折角背面 -->
+  <path d="M36 9 L45 18 H38 A2 2 0 0 1 36 16 Z" fill="#C7D2FE" />
 
-  <!-- 滴内的向下箭头：点出 Markdown 的下行语义 -->
-  <path
-    d="M32 27 L32 45 M25 38 L32 45 L39 38"
-    fill="none"
-    stroke="#4F46E5"
-    stroke-width="4.5"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
+  <!-- 文字行：长短不一，暗示标题与正文的层级 -->
+  <rect x="24" y="24.5" width="17" height="3.6" rx="1.8" fill="#4338CA" />
+  <rect x="24" y="32" width="17" height="3.6" rx="1.8" fill="#A5B4FC" />
+  <rect x="24" y="39.5" width="8" height="3.6" rx="1.8" fill="#A5B4FC" />
+
+  <!-- 插入光标：琥珀色，点出「正在编辑」 -->
+  <rect x="34.5" y="37.8" width="3.2" height="7" rx="1.6" fill="#F59E0B" />
 </svg>

@@ -22,7 +22,9 @@
     "typecheck:muya": "tsc --noEmit -p tsconfig.muya.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "check": "npm run typecheck && npm run verify",
-    "icons": "node scripts/make-icons.js"
+    "icons": "node scripts/make-icons.js",
+    "package": "node scripts/package.js",
+    "package:dir": "node scripts/package.js --dir"
   },
   "build": {
     "appId": "com.iotjoker.inkdown",
@@ -31,10 +33,15 @@
       "output": "release",
       "buildResources": "build"
     },
-    "files": ["out/**/*", "build/icon.png"],
+    "files": [
+      "out/**/*",
+      "build/icon.png"
+    ],
     "win": {
       "icon": "build/icon.ico",
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "mac": {
       "icon": "build/icon.png",
@@ -43,7 +50,10 @@
     "linux": {
       "icon": "build/icon.png",
       "category": "Office",
-      "target": ["AppImage", "deb"]
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -62,6 +72,7 @@
     "@types/underscore": "^1.13.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "electron": "33.4.11",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^3.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",

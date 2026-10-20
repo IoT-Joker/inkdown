@@ -98,8 +98,9 @@ examples/demo.md     功能演示文档
 
 ### 应用图标
 
-图标是 **墨滴 + 向下箭头** 的造型：墨滴呼应书写，箭头既点出 Markdown 的“下行”语义，
-也构成字母意象；蓝紫渐变底沉稳且有辨识度。
+图标是 **文档 + 文字行 + 插入光标** 的造型：折角纸张是最通用的文本编辑器识别形状，
+内部三条长短不一的文字行暗示标题与正文层级，右下角的琥珀色光标点出「正在编辑」。
+蓝紫渐变底保持品牌调性。
 
 源码为矢量图 [build/icon.svg](build/icon.svg)，由脚本生成各尺寸位图：
 
@@ -113,7 +114,28 @@ pnpm icons      # 生成 build/icon-*.png 与 build/icon.ico
 | `build/icon.png` | 窗口图标、macOS / Linux 打包 |
 | `build/icon-{16..512}.png` | 各尺寸位图，供需要单独尺寸的场景 |
 
-窗口图标在开发时即生效；打包配置（electron-builder）已指向这些产物。
+窗口图标在开发时即生效；打包配置已指向这些产物。
+
+### 打包成安装程序
+
+```bash
+pnpm package        # Windows 安装程序（NSIS）+ 免安装目录
+pnpm package:dir    # 只出免安装目录，速度快
+```
+
+产物在 `release/`：`Inkdown Setup <版本>.exe`（安装程序）与 `win-unpacked/`（免安装版）。
+
+`scripts/package.js` 处理了三个本机特有的障碍：
+
+1. **Node 与 pnpm 不在 PATH** —— electron-builder 需要**直接执行** `pnpm` 来收集依赖树，
+   而本机 Node 是内置运行时、pnpm 是 `.mjs` 文件。脚本在项目外生成 `node.cmd` / `pnpm.cmd`
+   垫片并临时加入 PATH。
+2. **GitHub 直连不通** —— Electron 与打包工具链的二进制改从 npmmirror 取。
+3. **pnpm 输出混入提示行** —— electron-builder 会解析 `pnpm list --json` 的 stdout，
+   任何非 JSON 的提示都会让它报 `No JSON content found in output`。
+   已在 `.npmrc` 固定 store 目录并静音输出。
+
+打包产物体积：安装程序约 124 MB，免安装目录约 499 MB（Electron 运行时占大头）。
 
 ### 文件树与拖入
 
