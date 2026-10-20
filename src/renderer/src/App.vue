@@ -8,7 +8,7 @@ import FindBar from './components/FindBar.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import { executeCommand, registerGlobalCommands } from './composables/useCommands'
 import { useFile } from './composables/useFile'
-import { loadSettings, loadRecent, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs } from './store'
+import { loadSettings, loadRecent, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs, tabLabel } from './store'
 
 const { openPath, refreshWorkspace, saveTab, saveAll, openFolder } = useFile()
 const editorRef = ref<InstanceType<typeof EditorHost> | null>(null)
@@ -24,14 +24,14 @@ watch(
       for (const tab of state.tabs) {
         if (isDirty(tab) && tab.filePath) await saveTab(tab)
       }
-    }, 1500)
+    }, settings.autoSaveDelay)
   }
 )
 
 const windowTitle = computed(() => {
   const tab = getActiveTab()
   if (!tab) return 'Typra2'
-  return `${isDirty(tab) ? '● ' : ''}${tab.title} — Typra2`
+  return `${tabLabel(tab)} — Typra2`
 })
 
 watch(windowTitle, (t) => window.typra.setTitle(t), { immediate: true })
@@ -75,30 +75,30 @@ onMounted(async () => {
     openFolder,
     refreshWorkspace,
     activeTab: () => getActiveTab(),
-    tabs: () => state.tabs
+    tabs: () => state.tabs,
+    notice: null as null | { text: string },
+    clearNotice: () => {
+      state.notice = null
+    }
   }
+  // notice 需要实时反映 state，用 getter 代理
+  Object.defineProperty((window as unknown as Record<string, unknown>).__typraApp, 'notice', {
+    get: () => state.notice
+  })
   ;(window as unknown as Record<string, unknown>).__typraQuit = () => executeCommand('file:quit')
 
   const off = window.typra.onMenuCommand(onMenuCommand)
   window.addEventListener('beforeunload', onBeforeUnload)
 
-  // 外部修改文件时提示重新载入
-  const offFs = window.typra.onFileChanged(async (filePath: string) => {
+  // 外部修改文件时给出非阻塞提示（不再用模态对话框打断写作）。
+  // 主进程已过滤掉应用自身的写盘动作，这里只负责提示。
+  const offFs = window.typra.onFileChanged((filePath: string) => {
     const tab = state.tabs.find((t) => t.filePath === filePath)
-    if (!tab || tab.id !== state.activeId) return
-    const info = await window.typra.pathInfo(filePath)
-    if (info.mtimeMs === tab.mtimeMs) return
-    const answer = await window.typra.messageBox(
-      '文件已在外部被修改',
-      `「${tab.title}」在 Typra2 之外被改动，是否重新载入？`,
-      ['重新载入', '保留当前内容']
-    )
-    if (answer === 0) {
-      const { content, mtimeMs } = await window.typra.readFile(filePath)
-      tab.content = content
-      tab.savedContent = content
-      tab.mtimeMs = mtimeMs
-      editorRef.value?.reloadFromTab()
+    if (!tab) return
+    state.notice = {
+      text: `「${tab.title}」已在 Typra2 之外被修改`,
+      action: 'reload',
+      filePath
     }
   })
 
@@ -114,6 +114,23 @@ onMounted(async () => {
     window.removeEventListener('beforeunload', onBeforeUnload)
   })
 })
+
+/** 处理提示条上的操作。 */
+async function onNoticeAction(): Promise<void> {
+  const notice = state.notice
+  if (!notice) return
+  if (notice.action === 'reload' && notice.filePath) {
+    const tab = state.tabs.find((t) => t.filePath === notice.filePath)
+    if (tab) {
+      const { content, mtimeMs } = await window.typra.readFile(notice.filePath)
+      tab.content = content
+      tab.savedContent = content
+      tab.mtimeMs = mtimeMs
+      if (tab.id === state.activeId) editorRef.value?.reloadFromTab()
+    }
+  }
+  state.notice = null
+}
 
 /** 未保存改动时先询问，避免直接关窗丢内容。 */
 async function tryQuit(): Promise<void> {
@@ -139,6 +156,12 @@ async function tryQuit(): Promise<void> {
       </div>
     </div>
     <FindBar />
+    <!-- 非阻塞提示条：告知外部改动等，不打断写作 -->
+    <div v-if="state.notice" class="notice-bar">
+      <span class="notice-text">{{ state.notice.text }}</span>
+      <button v-if="state.notice.action" class="ty-btn" @click="onNoticeAction">重新载入</button>
+      <button class="ty-btn" @click="state.notice = null">忽略</button>
+    </div>
     <StatusBar />
     <PreferencesDialog v-if="state.preferencesVisible" />
   </div>
@@ -168,5 +191,23 @@ async function tryQuit(): Promise<void> {
 .sidebar-show:hover {
   color: var(--ty-text);
   background: var(--ty-hover);
+}
+.notice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 6px 12px;
+  border-top: 1px solid var(--ty-border);
+  background: var(--ty-active);
+  font-size: 12px;
+  color: var(--ty-text);
+}
+.notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

@@ -94,6 +94,70 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   }
   console.log('[filetest] 保存到磁盘 OK')
 
+  // 3b. 回归测试：应用自己保存后，不得弹出「外部修改」提示
+  //     （这正是「勾选复选框就提示重新载入」的根因）
+  const selfWriteResult = await win.webContents.executeJavaScript(`
+    (async () => {
+      const app = window.__typraApp
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const tab = app.activeTab()
+
+      // 先清掉可能残留的提示
+      app.clearNotice && app.clearNotice()
+      await wait(200)
+
+      // 模拟「勾选复选框」：改内容 → 自动保存（走应用真实的保存路径）
+      tab.content = tab.content + '\\n\\n- [x] 勾选测试\\n'
+      window.__typraMuya.setContent(tab.content, false)
+      await wait(400)
+      await app.saveTab(tab)
+      // 等超过自动保存防抖与 fs.watch 触发窗口
+      await wait(2500)
+
+      return {
+        notice: app.notice ? app.notice.text : null,
+        content: tab.content,
+        saved: tab.savedContent
+      }
+    })()
+  `)
+  if (selfWriteResult.notice) {
+    console.error(
+      '[filetest] FAIL: 应用自己保存后仍弹出外部修改提示:',
+      JSON.stringify(selfWriteResult.notice)
+    )
+    return false
+  }
+  console.log('[filetest] 自写不误报 OK: 应用保存后无「外部修改」提示')
+
+  // 3c. 对照测试：真实的外部改动必须能检测到
+  const externalResult = await win.webContents.executeJavaScript(`
+    (async () => {
+      const app = window.__typraApp
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      app.clearNotice && app.clearNotice()
+      await wait(200)
+      return { cleared: app.notice ? app.notice.text : null }
+    })()
+  `)
+  if (externalResult.cleared) {
+    console.error('[filetest] FAIL: 提示未能清除')
+    return false
+  }
+  // 从主进程外部改写文件（绕过应用的写入路径），再等监听触发。
+  // 先等过自写保护窗口（主进程为 2 秒），否则这次写入会被误判成自写。
+  await new Promise((r) => setTimeout(r, 2500))
+  await fsp.writeFile(saved, '# 外部改动\n\n这段内容由外部写入。\n', 'utf8')
+  await new Promise((r) => setTimeout(r, 3000))
+  const externalNotice = await win.webContents.executeJavaScript(
+    `(window.__typraApp.notice ? window.__typraApp.notice.text : null)`
+  )
+  if (!externalNotice) {
+    console.error('[filetest] FAIL: 真实外部改动未被检测到（漏报）')
+    return false
+  }
+  console.log('[filetest] 外部改动检测 OK:', externalNotice)
+
   // 4. 导出 HTML
   const exportResult = await win.webContents.executeJavaScript(`
     (async () => {

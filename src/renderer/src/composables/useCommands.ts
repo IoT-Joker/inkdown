@@ -1,4 +1,4 @@
-import { getActiveTab, state, persistView, createTab, closeTab, hasUnsavedTabs, isDirty } from '../store'
+import { getActiveTab, state, persistView, createTab, closeTab } from '../store'
 import { useFile } from './useFile'
 
 type CommandHandler = (payload?: unknown) => void | Promise<void>
@@ -75,8 +75,13 @@ export function registerGlobalCommands(): void {
     'file:new': () => {
       createTab({ content: '' })
     },
-    'file:closeTab': () => {
-      if (state.activeId) closeTab(state.activeId)
+    'file:closeTab': async () => {
+      const tab = getActiveTab()
+      if (!tab) return
+      const { confirmClose } = useFile()
+      // 关闭前按惯例询问是否保存；用户取消则中止
+      if (!(await confirmClose(tab))) return
+      closeTab(tab.id)
     },
     // 文件读写命令：这些是菜单与快捷键的主入口，必须注册，否则 Ctrl+O/Ctrl+S 会静默失效
     'file:open': async () => {
@@ -99,24 +104,13 @@ export function registerGlobalCommands(): void {
       const { saveAll } = useFile()
       await saveAll()
     },
-    // 关闭窗口前先处理未保存内容
+    // 退出前逐个确认未保存的标签，用户取消则整体中止
     'file:quit': async () => {
-      if (!hasUnsavedTabs()) {
-        window.typra.quit()
-        return
+      const { confirmClose } = useFile()
+      for (const tab of state.tabs) {
+        if (!(await confirmClose(tab))) return
       }
-      const answer = await window.typra.messageBox('有未保存的改动', '是否保存后再退出？', [
-        '保存并退出',
-        '直接退出',
-        '取消'
-      ])
-      if (answer === 0) {
-        const { saveAll } = useFile()
-        await saveAll()
-        window.typra.quit()
-      } else if (answer === 1) {
-        window.typra.quit()
-      }
+      window.typra.quit()
     },
     'edit:find': () => {
       state.findMode = 'find'

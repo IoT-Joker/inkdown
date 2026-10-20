@@ -7,6 +7,31 @@ import { getMainWindow } from './window'
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
 const watchers = new Map<string, FSWatcher>()
 
+/**
+ * 本进程最近写过的文件：路径 → 写入时刻。
+ *
+ * fs.watch 无法区分「谁改的文件」，所以应用保存后也会触发变更事件。
+ * 记录自写时刻，事件到达时若在该时间窗内就忽略，
+ * 避免把「自己保存」误报成「外部修改」。
+ *
+ * 用时间窗而不是比对 mtime：写入与监听事件之间存在竞争，
+ * 且 mtime 精度有限，比对容易产生假阳性。
+ */
+const selfWrites = new Map<string, number>()
+
+/** 自写保护窗口（毫秒）。窗口外的变更一律视为外部改动。 */
+const SELF_WRITE_WINDOW_MS = 2000
+
+/** 判定某次变更是否来自本进程的自写动作。 */
+function isSelfWrite(filePath: string): boolean {
+  const at = selfWrites.get(filePath)
+  if (at === undefined) return false
+  const within = Date.now() - at <= SELF_WRITE_WINDOW_MS
+  // 超出窗口即清理，避免陈旧记录长期压制真实的外部改动
+  if (!within) selfWrites.delete(filePath)
+  return within
+}
+
 interface DirEntry {
   name: string
   path: string
@@ -47,6 +72,8 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('fs:writeFile', async (_e, filePath: string, content: string) => {
+    // 先记录写入时刻，覆盖 fs.watch 事件早于写入完成到达的竞争窗口
+    selfWrites.set(filePath, Date.now())
     await fsp.writeFile(filePath, content, 'utf8')
     const stat = await fsp.stat(filePath)
     return { filePath, mtimeMs: stat.mtimeMs }
@@ -130,8 +157,16 @@ export function registerIpc(): void {
   ipcMain.handle('fs:watch', async (_e, filePath: string) => {
     if (watchers.has(filePath)) return true
     try {
-      const w = watch(filePath, { persistent: false }, () => {
-        getMainWindow()?.webContents.send('fs:fileChanged', filePath)
+      const w = watch(filePath, { persistent: false }, async () => {
+        // 自写动作触发的变更不广播，避免误报成外部修改
+        if (isSelfWrite(filePath)) return
+        let mtimeMs = 0
+        try {
+          mtimeMs = (await fsp.stat(filePath)).mtimeMs
+        } catch {
+          return
+        }
+        getMainWindow()?.webContents.send('fs:fileChanged', filePath, mtimeMs)
       })
       watchers.set(filePath, w)
       return true

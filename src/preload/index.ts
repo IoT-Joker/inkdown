@@ -18,8 +18,8 @@ const api = {
     ipcRenderer.invoke('fs:copyImage', docPath, src),
   watch: (filePath: string) => ipcRenderer.invoke('fs:watch', filePath),
   unwatch: (filePath: string) => ipcRenderer.invoke('fs:unwatch', filePath),
-  onFileChanged: (fn: (filePath: string) => void) => {
-    const listener = (_e: unknown, filePath: string) => fn(filePath)
+  onFileChanged: (fn: (filePath: string, mtimeMs: number) => void) => {
+    const listener = (_e: unknown, filePath: string, mtimeMs: number) => fn(filePath, mtimeMs)
     ipcRenderer.on('fs:fileChanged', listener)
     return () => ipcRenderer.off('fs:fileChanged', listener)
   },

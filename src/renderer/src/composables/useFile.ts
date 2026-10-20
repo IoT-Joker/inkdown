@@ -61,6 +61,22 @@ export function useFile() {
     return ok
   }
 
+  /**
+   * 关闭前的保存确认：保存 / 不保存 / 取消。
+   * 返回 false 表示用户取消，调用方应中止关闭动作。
+   */
+  async function confirmClose(tab: Tab): Promise<boolean> {
+    if (!isDirty(tab)) return true
+    const answer = await window.typra.messageBox(
+      '是否保存改动？',
+      `「${tab.title}」有未保存的改动。`,
+      ['保存', '不保存', '取消']
+    )
+    if (answer === 0) return await saveTab(tab)
+    if (answer === 1) return true
+    return false
+  }
+
   /** 打开文件夹作为工作区，供文件树使用。 */
   async function openFolder(): Promise<void> {
     const dir = await window.typra.openFolderDialog()
@@ -75,7 +91,7 @@ export function useFile() {
     state.workspace = await window.typra.readDir(state.workspace.path, 1)
   }
 
-  return { openPath, openDialog, saveTab, saveAll, openFolder, refreshWorkspace }
+  return { openPath, openDialog, saveTab, saveAll, confirmClose, openFolder, refreshWorkspace }
 }
 
 export function baseName(p: string): string {

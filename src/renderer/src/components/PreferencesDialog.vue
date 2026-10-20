@@ -76,6 +76,28 @@ function setTheme(theme: typeof state.theme): void {
         </section>
 
         <section class="group">
+          <h3>文件</h3>
+          <div class="row">
+            <label>自动保存</label>
+            <input v-model="draft.autoSave" type="checkbox" />
+            <span class="hint">停止输入后自动写盘（仅对已保存过的文件生效）</span>
+          </div>
+          <div class="row">
+            <label>自动保存延迟</label>
+            <input v-model.number="draft.autoSaveDelay" type="range" min="500" max="5000" step="100" />
+            <span class="value">{{ draft.autoSaveDelay }} ms</span>
+          </div>
+          <div class="row">
+            <label>默认列表标记</label>
+            <select v-model="draft.bulletListMarker" class="sel">
+              <option value="-">- 短横线</option>
+              <option value="*">* 星号</option>
+              <option value="+">+ 加号</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="group">
           <h3>编辑</h3>
           <div class="row">
             <label>自动配对括号</label>
@@ -253,6 +275,18 @@ function setTheme(theme: typeof state.theme): void {
   flex: none;
   width: 52px;
   color: var(--ty-muted);
+  font-size: 12px;
+}
+.hint {
+  color: var(--ty-muted);
+  font-size: 11px;
+}
+.sel {
+  padding: 3px 6px;
+  border: 1px solid var(--ty-border);
+  border-radius: 4px;
+  background: var(--ty-bg);
+  color: var(--ty-text);
   font-size: 12px;
 }
 .theme-list {

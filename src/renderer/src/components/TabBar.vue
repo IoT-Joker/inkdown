@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { getActiveTab, isDirty, state, closeTab, createTab } from '../store'
+import { computed } from 'vue'
+import { getActiveTab, isDirty, state, closeTab, tabLabel } from '../store'
 import { executeCommand } from '../composables/useCommands'
+import { useFile } from '../composables/useFile'
 
 const tabs = computed(() => state.tabs)
 
@@ -9,13 +10,13 @@ function selectTab(id: string): void {
   state.activeId = id
 }
 
-function onClose(id: string, e: MouseEvent): void {
+/** 关闭标签：先按惯例询问是否保存，用户取消则中止。 */
+async function onClose(id: string, e: MouseEvent): Promise<void> {
   e.stopPropagation()
   const tab = state.tabs.find((t) => t.id === id)
-  if (tab && isDirty(tab)) {
-    const ok = window.confirm(`「${tab.title}」有未保存的改动，仍要关闭吗？`)
-    if (!ok) return
-  }
+  if (!tab) return
+  const { confirmClose } = useFile()
+  if (!(await confirmClose(tab))) return
   closeTab(id)
 }
 </script>
@@ -28,16 +29,22 @@ function onClose(id: string, e: MouseEvent): void {
         :key="tab.id"
         class="tab"
         :class="{ active: tab.id === state.activeId }"
-        :title="tab.filePath || tab.title"
+        :title="(tab.filePath || tab.title) + (isDirty(tab) ? '（未保存）' : '')"
         @click="selectTab(tab.id)"
         @mousedown.middle="onClose(tab.id, $event)"
       >
-        <span class="tab-title">{{ tab.title }}</span>
-        <span v-if="isDirty(tab)" class="dirty-dot" />
-        <button class="tab-close" title="关闭标签页" @click="onClose(tab.id, $event)">×</button>
+        <span class="tab-title">{{ tabLabel(tab) }}</span>
+        <button class="tab-close" title="关闭标签页 (Ctrl+W)" @click="onClose(tab.id, $event)">×</button>
       </div>
     </div>
     <button class="tab-new" title="新建标签页 (Ctrl+N)" @click="executeCommand('file:new')">+</button>
+    <button
+      class="tab-settings"
+      title="偏好设置 (Ctrl+,)"
+      @click="executeCommand('app:preferences')"
+    >
+      ⚙
+    </button>
   </div>
 </template>
 
@@ -87,13 +94,6 @@ function onClose(id: string, e: MouseEvent): void {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dirty-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ty-accent);
-  flex: none;
-}
 .tab-close {
   flex: none;
   width: 16px;
@@ -126,6 +126,20 @@ function onClose(id: string, e: MouseEvent): void {
   cursor: pointer;
 }
 .tab-new:hover {
+  background: var(--ty-hover);
+  color: var(--ty-text);
+}
+.tab-settings {
+  flex: none;
+  width: 32px;
+  border: 0;
+  border-left: 1px solid var(--ty-border);
+  background: transparent;
+  color: var(--ty-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.tab-settings:hover {
   background: var(--ty-hover);
   color: var(--ty-text);
 }

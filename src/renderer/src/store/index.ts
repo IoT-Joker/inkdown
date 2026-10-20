@@ -64,6 +64,8 @@ export const state = reactive({
   findMode: 'find' as 'find' | 'replace',
   preferencesVisible: false,
   statusMessage: '',
+  /** 非阻塞提示条：用于外部改动等需要告知但不打断写作的情况 */
+  notice: null as { text: string; action?: string; filePath?: string } | null,
   sourceContent: ''
 })
 
@@ -102,6 +104,15 @@ export function isDirty(tab: Tab | undefined): boolean {
   return !!tab && tab.content !== tab.savedContent
 }
 
+/**
+ * 标签显示名：有未保存改动时在文件名后加 `*`（编辑器惯例）。
+ * 未命名文档同样适用。
+ */
+export function tabLabel(tab: Tab | undefined): string {
+  if (!tab) return ''
+  return isDirty(tab) ? `${tab.title} *` : tab.title
+}
+
 export function hasUnsavedTabs(): boolean {
   return state.tabs.some((t) => isDirty(t))
 }
@@ -114,6 +125,8 @@ export const settings = reactive({
   codeFontSize: 14,
   codeFontFamily: '',
   autoSave: true,
+  /** 自动保存防抖延迟（毫秒） */
+  autoSaveDelay: 1500,
   autoPairBracket: true,
   autoPairMarkdownSyntax: true,
   autoPairQuote: true,
