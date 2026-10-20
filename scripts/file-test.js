@@ -10,10 +10,17 @@ const root = __dirname.replace(/[\\/]scripts$/, '')
 const electron = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 const workDir = path.join(root, '.tmp-file-test')
 
-const env = { ...process.env, TYPRA2_FILE_TEST: workDir }
+const env = {
+  ...process.env,
+  TYPRA2_FILE_TEST: workDir,
+  TYPRA2_NO_SESSION_RESTORE: '1',
+  // 测试不记录会话，避免污染真实使用的会话数据
+  TYPRA2_NO_SESSION_PERSIST: '1'
+}
 delete env.ELECTRON_RUN_AS_NODE
 delete env.TYPRA2_SELF_CHECK
 delete env.TYPRA2_SCREENSHOT
+delete env.TYPRA2_SESSION_TEST
 
 const child = spawn(electron, ['.'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
 

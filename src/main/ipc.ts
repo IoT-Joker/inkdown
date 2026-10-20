@@ -39,11 +39,20 @@ interface DirEntry {
   children?: DirEntry[]
 }
 
-/** 递归读取目录树，默认只展开两层，避免大目录阻塞。 */
+/** Markdown 文档扩展名。文件树只列出这些文件，避免混入图片、脚本等无关内容。 */
+const MARKDOWN_EXT = new Set(['.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdx', '.txt'])
+
+/** 判断是否为 Markdown 文档。 */
+export function isMarkdownFile(name: string): boolean {
+  return MARKDOWN_EXT.has(extname(name).toLowerCase())
+}
+
+/** 递归读取目录树。目录始终保留用于导航，文件只保留 Markdown。 */
 async function readDirTree(dir: string, depth: number): Promise<DirEntry[]> {
   const entries = await fsp.readdir(dir, { withFileTypes: true })
   const result: DirEntry[] = []
   for (const entry of entries) {
+    // 跳过隐藏文件与依赖目录
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
     const full = join(dir, entry.name)
     if (entry.isDirectory()) {
@@ -53,7 +62,7 @@ async function readDirTree(dir: string, depth: number): Promise<DirEntry[]> {
         isDirectory: true,
         children: depth > 0 ? await readDirTree(full, depth - 1) : undefined
       })
-    } else {
+    } else if (isMarkdownFile(entry.name)) {
       result.push({ name: entry.name, path: full, isDirectory: false })
     }
   }

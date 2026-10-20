@@ -203,6 +203,143 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   }
   console.log(`[filetest] 导出 PDF OK: ${pdfBytes.length} bytes, 头部 ${header}`)
 
+  // 7. 文件树只显示 Markdown：目录保留，非 Markdown 文件必须被过滤掉
+  const mixedDir = join(workDir, 'tree-mixed')
+  await fsp.mkdir(join(mixedDir, '子目录'), { recursive: true })
+  await fsp.writeFile(join(mixedDir, 'note.md'), '# note\n', 'utf8')
+  await fsp.writeFile(join(mixedDir, 'other.markdown'), '# other\n', 'utf8')
+  await fsp.writeFile(join(mixedDir, 'plain.txt'), 'plain\n', 'utf8')
+  await fsp.writeFile(join(mixedDir, 'photo.png'), 'not really a png', 'utf8')
+  await fsp.writeFile(join(mixedDir, 'data.json'), '{}', 'utf8')
+  await fsp.writeFile(join(mixedDir, 'script.js'), '// x', 'utf8')
+  const treeFiltered = await win.webContents.executeJavaScript(
+    `window.typra.readDir(${JSON.stringify(mixedDir)})`
+  )
+  const names = treeFiltered.children.map((c: { name: string }) => c.name).sort()
+  const hasNonMd = names.some((n: string) => /\.(png|json|js)$/i.test(n))
+  if (hasNonMd) {
+    console.error('[filetest] FAIL: 文件树未过滤非 Markdown 文件:', JSON.stringify(names))
+    return false
+  }
+  if (!names.includes('note.md') || !names.includes('子目录')) {
+    console.error('[filetest] FAIL: 文件树缺少 md 文件或目录:', JSON.stringify(names))
+    return false
+  }
+  console.log('[filetest] 文件树过滤 OK: 仅 Markdown 与目录 →', names.join(', '))
+
+  // 8. 会话恢复：记录当前标签，模拟重启后应能恢复
+  const sessionSaved = await win.webContents.executeJavaScript(`
+    (async () => {
+      const app = window.__typraApp
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      // 打开两个文件作为会话内容
+      await app.openPath(${JSON.stringify(source)})
+      await wait(400)
+      await app.openPath(${JSON.stringify(saved)})
+      await wait(400)
+      app.persistSession()
+      await wait(200)
+      return {
+        tabFiles: app.tabs().map((t) => t.filePath).filter(Boolean),
+        session: app.loadSession()
+      }
+    })()
+  `)
+  if (!sessionSaved.session || sessionSaved.session.files.length < 2) {
+    console.error('[filetest] FAIL: 会话未记录:', JSON.stringify(sessionSaved))
+    return false
+  }
+  const sessionPaths = sessionSaved.session.files
+  if (!sessionPaths.includes(source) || !sessionPaths.includes(saved)) {
+    console.error('[filetest] FAIL: 会话内容不含已打开文件:', JSON.stringify(sessionPaths))
+    return false
+  }
+  console.log(`[filetest] 会话记录 OK: ${sessionPaths.length} 个文件`)
+
   console.log('[filetest] PASS: 打开 → 编辑 → 保存 → 导出 HTML/PDF 全链路通过')
+  return true
+}
+
+/**
+ * 会话恢复的独立验证：分两次启动进程。
+ * 第一次打开文件并退出，第二次启动时检查是否自动恢复。
+ */
+export async function runSessionRestoreTest(win: BrowserWindow, workDir: string): Promise<boolean> {
+  const phase = process.env['TYPRA2_SESSION_PHASE'] ?? 'first'
+  const fileA = join(workDir, 'session-a.md')
+  const fileB = join(workDir, 'session-b.md')
+
+  win.webContents.on('console-message', (_e, level, message) => {
+    const tag = ['verbose', 'info', 'warning', 'error'][level] ?? String(level)
+    if (tag === 'error') console.log(`[renderer:error] ${message}`)
+  })
+
+  const ready = async (): Promise<boolean> => {
+    const started = Date.now()
+    while (Date.now() - started < 15000) {
+      const ok = await win.webContents
+        .executeJavaScript(`!!document.querySelector('.muya-container .mu-paragraph')`)
+        .catch(() => false)
+      if (ok) return true
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    return false
+  }
+  if (!(await ready())) {
+    console.error('[sessiontest] FAIL: 编辑器未就绪')
+    return false
+  }
+
+  if (phase === 'first') {
+    await fsp.mkdir(workDir, { recursive: true })
+    await fsp.writeFile(fileA, '# 会话文件 A\n\n第一个文件。\n', 'utf8')
+    await fsp.writeFile(fileB, '# 会话文件 B\n\n第二个文件。\n', 'utf8')
+    // 打开两个文件，让会话被记录
+    await win.webContents.executeJavaScript(`
+      (async () => {
+        const app = window.__typraApp
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        await app.openPath(${JSON.stringify(fileA)})
+        await wait(400)
+        await app.openPath(${JSON.stringify(fileB)})
+        await wait(500)
+        app.persistSession()
+        await wait(300)
+        return app.tabs().length
+      })()
+    `)
+    console.log('[sessiontest] 第一阶段 OK: 已打开两个文件并记录会话')
+    return true
+  }
+
+  // 第二阶段：新进程启动，应当自动恢复上次的标签
+  const restored = await win.webContents.executeJavaScript(`
+    (async () => {
+      const app = window.__typraApp
+      // 启动流程会异步恢复，轮询等待
+      for (let i = 0; i < 40; i++) {
+        const files = app.tabs().map((t) => t.filePath).filter(Boolean)
+        if (files.length >= 2) return { files, active: app.activeTab() && app.activeTab().filePath }
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      const files = app.tabs().map((t) => t.filePath).filter(Boolean)
+      return { files, active: app.activeTab() && app.activeTab().filePath }
+    })()
+  `)
+  const got = restored.files
+  if (!got.includes(fileA) || !got.includes(fileB)) {
+    console.error('[sessiontest] FAIL: 重启后未恢复上次的标签:', JSON.stringify(restored))
+    return false
+  }
+  // 第一阶段起点干净，恢复的应当恰好是这两个文件（防止测试数据污染悄悄通过）
+  if (got.length !== 2) {
+    console.error('[sessiontest] FAIL: 恢复的标签数应为 2，实际', got.length, JSON.stringify(got))
+    return false
+  }
+  if (restored.active !== fileB) {
+    console.error('[sessiontest] FAIL: 未恢复上次的活动标签:', JSON.stringify(restored))
+    return false
+  }
+  console.log(`[sessiontest] PASS: 重启后恢复 ${got.length} 个标签，活动标签正确`)
   return true
 }

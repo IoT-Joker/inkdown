@@ -13,4 +13,5 @@ coverage/
 .tmp-file-test/
 .tmp-selfcheck-tree/
 .tmp-pdf-render/
+.tmp-session-test/
 screenshots/

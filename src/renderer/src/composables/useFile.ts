@@ -1,5 +1,5 @@
 import { state, type Tab } from '../store'
-import { getActiveTab, isDirty } from '../store'
+import { getActiveTab, isDirty, pushRecent } from '../store'
 
 /** 文件读写与标签页管理。所有磁盘操作都经由 preload 桥接。 */
 export function useFile() {
@@ -7,13 +7,15 @@ export function useFile() {
     const existing = state.tabs.find((t) => t.filePath === filePath)
     if (existing) {
       state.activeId = existing.id
+      pushRecent(filePath)
       return
     }
     const { content, mtimeMs } = await window.typra.readFile(filePath)
     const tab = createTabFromFile(filePath, content, mtimeMs)
     state.tabs.push(tab)
     state.activeId = tab.id
-    window.typra.watch(filePath)
+    void window.typra.watch(filePath)
+    pushRecent(filePath)
   }
 
   async function openDialog(): Promise<void> {

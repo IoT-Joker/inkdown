@@ -52,6 +52,15 @@ const api = {
   /** 拖拽文件时把 File 对象解析为磁盘路径（Electron 33 的 webUtils）。 */
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 
+  /**
+   * 自动化测试标记：跳过启动时的会话恢复，保证测试初始状态干净。
+   * 与下面「禁用会话记录」相互独立——会话恢复测试需要
+   * 「不恢复旧会话，但要记录新会话」的组合。
+   */
+  skipSessionRestore: process.env.TYPRA2_NO_SESSION_RESTORE === '1',
+  /** 自动化测试标记：不记录会话，避免测试数据污染真实使用。 */
+  skipSessionPersist: process.env.TYPRA2_NO_SESSION_PERSIST === '1',
+
   onMenuCommand: (fn: (id: string) => void) => {
     const listener = (_e: unknown, id: string) => fn(id)
     ipcRenderer.on('menu:command', listener)

@@ -8,7 +8,7 @@ import FindBar from './components/FindBar.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import { executeCommand, registerGlobalCommands } from './composables/useCommands'
 import { useFile } from './composables/useFile'
-import { loadSettings, loadRecent, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs, tabLabel } from './store'
+import { loadSettings, loadRecent, loadSession, persistSession, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs, tabLabel } from './store'
 
 const { openPath, refreshWorkspace, saveTab, saveAll, openFolder } = useFile()
 const editorRef = ref<InstanceType<typeof EditorHost> | null>(null)
@@ -76,6 +76,8 @@ onMounted(async () => {
     refreshWorkspace,
     activeTab: () => getActiveTab(),
     tabs: () => state.tabs,
+    persistSession,
+    loadSession,
     notice: null as null | { text: string },
     clearNotice: () => {
       state.notice = null
@@ -105,8 +107,39 @@ onMounted(async () => {
   // 支持命令行传入文件路径
   const argv = (window as any).process?.argv as string[] | undefined
   const fileArg = argv?.find((a) => /\.(md|markdown|txt)$/i.test(a))
-  if (fileArg) await openPath(fileArg)
-  else if (!state.tabs.length) createTab({ content: '' })
+  // 自动化测试需要干净的初始状态，此时不恢复上次会话
+  const skipRestore = !!window.typra.skipSessionRestore
+  if (fileArg) {
+    await openPath(fileArg)
+  } else if (skipRestore) {
+    if (!state.tabs.length) createTab({ content: '' })
+  } else {
+    // 会话恢复：重启后自动重开上次的标签页（文件已被删除或移动的跳过）
+    const session = loadSession()
+    if (session?.files.length) {
+      for (const p of session.files) {
+        try {
+          if (await window.typra.exists(p)) await openPath(p)
+        } catch {
+          /* 文件不可用则跳过 */
+        }
+      }
+      if (session.activeFile) {
+        const target = state.tabs.find((t) => t.filePath === session.activeFile)
+        if (target) state.activeId = target.id
+      }
+    }
+    if (!state.tabs.length) createTab({ content: '' })
+  }
+
+  // 会话内容变化时记录，供下次启动恢复（测试可选择不记录，避免污染）
+  if (!window.typra.skipSessionPersist) {
+    watch(
+      () => state.tabs.map((t) => t.filePath).join('|') + '#' + state.activeId,
+      () => persistSession(),
+      { immediate: true }
+    )
+  }
 
   onBeforeUnmount(() => {
     off()

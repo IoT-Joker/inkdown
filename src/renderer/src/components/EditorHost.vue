@@ -398,6 +398,70 @@ function onSettingsChanged(): void {
   suppress = false
 }
 
+/* ------------------------------ 拖入打开 ------------------------------ */
+
+/** 拖拽状态：用于显示投放提示层。 */
+const dragging = ref(false)
+
+/** 可接受的 Markdown 扩展名。 */
+const MD_RE = /\.(md|markdown|mdown|mkd|mkdn|mdx|txt)$/i
+
+function onDragOver(e: DragEvent): void {
+  // 必须 preventDefault 才允许投放
+  e.preventDefault()
+  dragging.value = true
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onDragLeave(e: DragEvent): void {
+  // 只在真正离开容器时隐藏提示层（子元素切换会连续触发）
+  const related = e.relatedTarget as Node | null
+  if (related && containerRef.value?.contains(related)) return
+  dragging.value = false
+}
+
+async function onDrop(e: DragEvent): Promise<void> {
+  e.preventDefault()
+  dragging.value = false
+  const files = e.dataTransfer?.files
+  if (!files || !files.length) return
+  await openDroppedFiles([...files])
+}
+
+/**
+ * 路径解析钩子。默认走 preload 的 getPathForFile；
+ * 端到端自检可临时替换它（contextBridge 暴露的对象是只读代理，无法直接改写）。
+ */
+let pathForFileHook: ((file: File) => string) | null = null
+
+/** 供自检注入：覆盖拖入时的路径解析。 */
+function setPathForFileHook(fn: ((file: File) => string) | null): void {
+  pathForFileHook = fn
+}
+
+/**
+ * 打开拖入的文件列表。
+ * 独立成函数便于端到端自检直接调用（合成 DragEvent 的 dataTransfer.files
+ * 在无头环境不可用，但真实拖拽走的是同一条逻辑）。
+ */
+async function openDroppedFiles(files: File[]): Promise<number> {
+  const { useFile } = await import('../composables/useFile')
+  const { openPath } = useFile()
+  let opened = 0
+  for (const file of files) {
+    const p = pathForFileHook ? pathForFileHook(file) : window.typra.getPathForFile(file)
+    if (!p) continue
+    // 只接受 Markdown 文档，其它类型忽略
+    if (!MD_RE.test(p)) continue
+    await openPath(p)
+    opened += 1
+  }
+  if (!opened) {
+    state.notice = { text: '仅支持拖入 Markdown 文档（.md / .markdown / .txt）' }
+  }
+  return opened
+}
+
 onMounted(() => {
   registerGlobalCommands()
   mountEditor()
@@ -407,6 +471,11 @@ onMounted(() => {
     execute: executeCommand,
     has: (id: string) => hasCommand(id),
     ids: () => listCommandIds()
+  }
+  // 供端到端自检直接驱动拖入逻辑（合成事件无法携带真实文件路径）
+  ;(window as unknown as Record<string, unknown>).__typraDrop = {
+    openFiles: openDroppedFiles,
+    setPathHook: setPathForFileHook
   }
   window.addEventListener('typra:find', onFind)
   window.addEventListener('typra:find-close', onFindClose)
@@ -434,6 +503,9 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
       '--editor-code-font': settings.codeFontFamily || CODE_FONT_FALLBACK,
       '--editor-tab-size': settings.tabSize
     }"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
   >
     <div v-show="!isSource" class="editor-scroll">
       <div ref="containerRef" class="muya-container" />
@@ -450,6 +522,10 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
     <div v-if="!activeTab" class="empty-state">
       <p class="empty-title">Typra2</p>
       <p class="empty-hint">按 Ctrl+N 新建文档，或 Ctrl+O 打开文件</p>
+    </div>
+    <!-- 拖入提示层 -->
+    <div v-if="dragging" class="drop-overlay">
+      <div class="drop-box">松开以打开 Markdown 文档</div>
     </div>
   </div>
 </template>
@@ -507,5 +583,23 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 .empty-hint {
   margin: 0;
   font-size: 13px;
+}
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ty-active);
+  pointer-events: none;
+}
+.drop-box {
+  padding: 18px 28px;
+  border: 2px dashed var(--ty-accent);
+  border-radius: 10px;
+  background: var(--ty-bg);
+  color: var(--ty-accent);
+  font-size: 14px;
 }
 </style>

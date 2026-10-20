@@ -211,3 +211,44 @@ export function loadRecent(): void {
     /* ignore */
   }
 }
+
+/* ------------------------------ 会话恢复 ------------------------------ */
+
+const SESSION_KEY = 'typra2-session'
+
+/** 上次退出时打开的标签页（文件路径），重启后据此恢复。 */
+export interface SessionSnapshot {
+  files: string[]
+  activeFile: string | null
+}
+
+/** 记录当前会话：只保存已落盘的标签，未命名文档不参与恢复。 */
+export function persistSession(): void {
+  try {
+    const files = state.tabs.map((t) => t.filePath).filter((p): p is string => !!p)
+    const active = getActiveTab()?.filePath ?? null
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ files, activeFile: active }))
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadSession(): SessionSnapshot | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as SessionSnapshot
+    if (!Array.isArray(parsed.files)) return null
+    return { files: parsed.files, activeFile: parsed.activeFile ?? null }
+  } catch {
+    return null
+  }
+}
+
+export function clearSession(): void {
+  try {
+    localStorage.removeItem(SESSION_KEY)
+  } catch {
+    /* ignore */
+  }
+}

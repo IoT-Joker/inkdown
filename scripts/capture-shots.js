@@ -9,7 +9,12 @@ const root = __dirname.replace(/[\\/]scripts$/, '')
 const electron = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 const outDir = path.join(root, 'screenshots')
 
-const env = { ...process.env, TYPRA2_SCREENSHOT: outDir }
+const env = {
+  ...process.env,
+  TYPRA2_SCREENSHOT: outDir,
+  TYPRA2_NO_SESSION_RESTORE: '1',
+  TYPRA2_NO_SESSION_PERSIST: '1'
+}
 delete env.ELECTRON_RUN_AS_NODE
 delete env.TYPRA2_SELF_CHECK
 delete env.TYPRA2_FILE_TEST

@@ -4,7 +4,7 @@ import { buildAppMenu } from './menu'
 import { createWindow } from './window'
 import { runSelfCheck } from './selfCheck'
 import { captureScreenshots } from './screenshot'
-import { runFileTest } from './fileTest'
+import { runFileTest, runSessionRestoreTest } from './fileTest'
 import { renderPdfToImages } from './renderPdf'
 
 /**
@@ -36,6 +36,14 @@ app.whenReady().then(async () => {
   const fileTestDir = process.env['TYPRA2_FILE_TEST']
   if (fileTestDir) {
     const ok = await runFileTest(win, fileTestDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // TYPRA2_SESSION_TEST=<目录> 时验证会话恢复（需分两次启动进程）
+  const sessionTestDir = process.env['TYPRA2_SESSION_TEST']
+  if (sessionTestDir) {
+    const ok = await runSessionRestoreTest(win, sessionTestDir)
     app.exit(ok ? 0 : 1)
     return
   }

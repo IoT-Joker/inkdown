@@ -683,18 +683,116 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     `[selfcheck] 文件树 OK: ${treeCheck.childCount} 个条目（${treeCheck.names.slice(0, 6).join(', ')}）`
   )
 
-  // 清理自检用的临时目录
-  await fsp.rm(workDirForTree, { recursive: true, force: true }).catch(() => {})
+  // 4b-10. 验证拖入打开：构造带文件的 drop 事件，检查是否真的打开了文档
+  const dropFile = join(workDirForTree, 'dropped.md')
+  await fsp.writeFile(dropFile, '# 拖入的文档\n\n通过拖拽打开。\n', 'utf8')
+  const dropCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__typraApp
+      const before = app.tabs().length
+      const host = document.querySelector('.editor-host')
+      if (!host) return { error: '找不到 editor-host' }
 
-  // 4c. 验证导出：静态 HTML 生成且包含标题与表格
+      // 构造一个含 File 的 DataTransfer，并让 getPathForFile 返回已知路径
+      const file = new File(['# 拖入的文档\\n'], 'dropped.md', { type: 'text/markdown' })
+      const dt = new DataTransfer()
+      dt.items.add(file)
+
+      // 拦截路径解析：jsdom/无头环境无法从 File 取真实磁盘路径
+      const original = window.typra.getPathForFile
+      window.typra.getPathForFile = () => ${JSON.stringify(dropFile)}
+
+      const over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt })
+      host.dispatchEvent(over)
+      await wait(150)
+      const overlayShown = !!document.querySelector('.drop-overlay')
+
+      // 合成 DragEvent 的 dataTransfer.files 在无头环境不可用，
+      // 因此这里直接驱动同一套投放逻辑（openDroppedFiles）；
+      // contextBridge 暴露的对象只读，路径解析改用可注入钩子。
+      window.__typraDrop.setPathHook(() => ${JSON.stringify(dropFile)})
+      const openedCount = await window.__typraDrop.openFiles([file])
+      await wait(900)
+
+      // 关闭提示层（模拟 drop 结束后隐藏）
+      host.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+      await wait(200)
+
+      window.__typraDrop.setPathHook(null)
+      const files = app.tabs().map((t) => t.filePath).filter(Boolean)
+      return {
+        before,
+        after: app.tabs().length,
+        overlayShown,
+        overlayAfterDrop: !!document.querySelector('.drop-overlay'),
+        openedCount,
+        opened: files.some((f) => f.endsWith('dropped.md')),
+        active: app.activeTab() && app.activeTab().filePath
+      }
+    })()
+  `)
+  if (dropCheck.error) {
+    console.error('[selfcheck] FAIL: 拖入测试无法执行:', dropCheck.error)
+    return false
+  }
+  if (!dropCheck.overlayShown) {
+    console.error('[selfcheck] FAIL: dragover 未显示投放提示层:', JSON.stringify(dropCheck))
+    return false
+  }
+  if (dropCheck.overlayAfterDrop) {
+    console.error('[selfcheck] FAIL: drop 后投放提示层未消失:', JSON.stringify(dropCheck))
+    return false
+  }
+  if (!dropCheck.opened || dropCheck.after <= dropCheck.before) {
+    console.error('[selfcheck] FAIL: 拖入的 Markdown 未打开:', JSON.stringify(dropCheck))
+    return false
+  }
+  console.log('[selfcheck] 拖入打开 OK: 投放提示层正常，文档已打开')
+
+  // 4b-11. 拖入非 Markdown 文件应被忽略
+  const dropBad = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__typraApp
+      const before = app.tabs().length
+      app.clearNotice()
+      await wait(150)
+      const file = new File(['{}'], 'blocked.json', { type: 'application/json' })
+      window.__typraDrop.setPathHook(() => 'E:\\\\tmp\\\\blocked.json')
+      const openedCount = await window.__typraDrop.openFiles([file])
+      await wait(400)
+      window.__typraDrop.setPathHook(null)
+      return {
+        before,
+        after: app.tabs().length,
+        openedCount,
+        notice: app.notice ? app.notice.text : null
+      }
+    })()
+  `)
+  if (dropBad.after !== dropBad.before || dropBad.openedCount !== 0) {
+    console.error('[selfcheck] FAIL: 非 Markdown 文件不应被打开:', JSON.stringify(dropBad))
+    return false
+  }
+  if (!dropBad.notice) {
+    console.error('[selfcheck] FAIL: 拖入非 Markdown 时应给出提示:', JSON.stringify(dropBad))
+    return false
+  }
+  console.log('[selfcheck] 拖入过滤 OK: 非 Markdown 文件被忽略并给出提示')
+
+  // 4c. 验证导出：静态 HTML 生成且包含标题与表格。
+  //     先载入确定的文档内容，避免受前序用例（拖入等）改变当前标签的影响。
   const exported = await win.webContents.executeJavaScript(`
     (async () => {
       const mod = window.__typraExport
       if (!mod) return { error: 'export module not exposed' }
+      window.__typraLoad('# 导出标题\\n\\n正文段落。\\n\\n| 列A | 列B |\\n| --- | --- |\\n| 1 | 2 |\\n')
+      await new Promise((r) => setTimeout(r, 700))
       const html = await mod.buildHtmlForCheck()
       return {
         length: html.length,
-        hasTitle: html.includes('标题一') || html.includes('列A'),
+        hasTitle: html.includes('导出标题'),
         hasDoctype: html.toLowerCase().includes('<!doctype html'),
         hasTable: html.includes('<table')
       }
@@ -738,6 +836,22 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   console.log(`[selfcheck] 字数统计 OK: ${countCheck.shown} 字`)
+
+  // 清理自检用的临时目录（所有依赖它的用例都已执行完）。
+  // 先停掉该目录下文件的监听器：fs.watch 持有句柄时删除会失败或挂住。
+  await win.webContents
+    .executeJavaScript(
+      `(async () => {
+        const app = window.__typraApp
+        const files = app.tabs().map((t) => t.filePath).filter(Boolean)
+        for (const f of files) {
+          if (f.includes('selfcheck-tree')) await window.typra.unwatch(f)
+        }
+        return true
+      })()`
+    )
+    .catch(() => {})
+  await fsp.rm(workDirForTree, { recursive: true, force: true }).catch(() => {})
 
   console.log('[selfcheck] shell:', JSON.stringify(shell))
   console.log('[selfcheck] statusbar:', statusText.replace(/\s+/g, ' ').trim())
