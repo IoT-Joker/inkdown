@@ -2,6 +2,10 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
 import { registerCommands, registerGlobalCommands } from '../composables/useCommands'
+import { exportHtml, exportPdf, buildHtmlForCheck } from '../composables/useExport'
+
+// 供主进程端到端自检调用
+;(window as unknown as Record<string, unknown>).__typraExport = { buildHtmlForCheck }
 import { getActiveTab, isDirty, state, settings, type Tab } from '../store'
 import { baseName } from '../composables/useFile'
 
@@ -9,6 +13,8 @@ const containerRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
 let muya: Muya | null = null
 let suppress = false
+/** 源码模式的等宽字体回退栈（通过 CSS 变量传给样式，避免 v-bind 依赖构建插件） */
+const CODE_FONT_FALLBACK = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 /** 各标签页的光标与滚动位置，切回时恢复。 */
 const viewState = new Map<string, { cursor: { anchor: number; focus: number } | null; scrollTop: number }>()
 
@@ -63,6 +69,19 @@ function refreshOutline(): void {
   }))
 }
 
+/** 打字机模式：让光标所在块保持在视口垂直中心附近。 */
+function keepCursorCentered(): void {
+  const scroller = containerRef.value?.closest('.editor-scroll') as HTMLElement | null
+  if (!scroller) return
+  const sel = document.getSelection()
+  if (!sel || !sel.rangeCount) return
+  const rect = sel.getRangeAt(0).getBoundingClientRect()
+  if (!rect.height && !rect.top) return
+  const scrollerRect = scroller.getBoundingClientRect()
+  const target = scroller.scrollTop + (rect.top - scrollerRect.top) - scrollerRect.height / 2
+  scroller.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
+}
+
 function mountEditor(): void {
   const el = containerRef.value
   if (!el) return
@@ -90,6 +109,7 @@ function mountEditor(): void {
     const cursor = muya.getCursorOffset()
     if (cursor) t.cursor = { anchor: cursor.anchor, focus: cursor.focus }
     refreshOutline()
+    if (state.typewriterMode) keepCursorCentered()
   })
 
   updateCounts(tab?.content ?? '')
@@ -214,7 +234,9 @@ function registerEditorCommands(): void {
     'edit:pastePlain': () => void muya?.pasteAsPlainText(),
     'paragraph:table': () => muya?.createTable(3, 3),
     'format:image': () => void insertImage(),
-    'view:focusEditor': () => focus()
+    'view:focusEditor': () => focus(),
+    'file:exportHtml': () => void exportHtml(),
+    'file:exportPdf': () => void exportPdf()
   }
 
   for (const [id, type] of Object.entries(paragraphMap)) {
@@ -346,7 +368,16 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 </script>
 
 <template>
-  <div class="editor-host" :style="{ '--editor-zoom': state.zoom }">
+  <div
+    class="editor-host"
+    :style="{
+      '--editor-zoom': state.zoom,
+      '--editor-font-size': `${settings.fontSize}px`,
+      '--editor-code-size': `${settings.codeFontSize}px`,
+      '--editor-code-font': settings.codeFontFamily || CODE_FONT_FALLBACK,
+      '--editor-tab-size': settings.tabSize
+    }"
+  >
     <div v-show="!isSource" class="editor-scroll">
       <div ref="containerRef" class="muya-container" />
     </div>
@@ -382,7 +413,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 }
 .muya-container {
   min-height: 100%;
-  font-size: calc(v-bind('settings.fontSize + "px"') * var(--editor-zoom));
+  font-size: calc(var(--editor-font-size) * var(--editor-zoom));
 }
 .source-editor {
   width: 100%;
@@ -392,12 +423,12 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   border: 0;
   outline: none;
   resize: none;
-  font-family: v-bind('settings.codeFontFamily || "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"');
-  font-size: calc(v-bind('settings.codeFontSize + "px"') * var(--editor-zoom));
+  font-family: var(--editor-code-font);
+  font-size: calc(var(--editor-code-size) * var(--editor-zoom));
   line-height: 1.6;
   color: var(--ty-text);
   background: transparent;
-  tab-size: v-bind('settings.tabSize');
+  tab-size: var(--editor-tab-size);
 }
 .empty-state {
   position: absolute;

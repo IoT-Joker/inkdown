@@ -1,0 +1,152 @@
+import { MarkdownToHtml, renderToStaticHTML } from '@muyajs/core'
+import { getActiveTab, settings } from '../store'
+import { baseName } from './useFile'
+
+/** 导出时追加的排版样式：让脱离应用的 HTML/PDF 依然接近 Typora 的观感。 */
+const EXPORT_CSS = `
+:root { color-scheme: light dark; }
+body {
+  margin: 0; padding: 44px 24px; background: #fff; color: #24292f;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 16px; line-height: 1.75;
+}
+.markdown-body { max-width: 860px; margin: 0 auto; }
+h1, h2, h3, h4, h5, h6 { margin: 1.4em 0 0.6em; line-height: 1.3; font-weight: 600; }
+h1 { font-size: 2em; border-bottom: 1px solid #e5e7eb; padding-bottom: .3em; }
+h2 { font-size: 1.5em; border-bottom: 1px solid #e5e7eb; padding-bottom: .3em; }
+h3 { font-size: 1.25em; }
+p { margin: 0.85em 0; }
+a { color: #0969da; }
+code { background: #f6f8fa; padding: .2em .4em; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+pre { background: #f6f8fa; padding: 14px 16px; border-radius: 6px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+blockquote { margin: 1em 0; padding: 0 1em; border-left: 4px solid #d0d7de; color: #57606a; }
+table { border-collapse: collapse; margin: 1em 0; }
+th, td { border: 1px solid #d0d7de; padding: 6px 12px; text-align: left; }
+th { background: #f6f8fa; font-weight: 600; }
+img { max-width: 100%; }
+hr { border: 0; border-top: 1px solid #d0d7de; margin: 1.6em 0; }
+ul, ol { padding-left: 1.6em; }
+li { margin: .3em 0; }
+.katex-display { overflow-x: auto; }
+@media print { body { padding: 0; } .markdown-body { max-width: none; } }
+@media (prefers-color-scheme: dark) {
+  body { background: #1e1e1e; color: #d4d4d4; }
+  code, pre, th { background: #2d2d2d; }
+  h1, h2 { border-bottom-color: #333; }
+  blockquote { border-left-color: #444; color: #9a9a9a; }
+  th, td { border-color: #333; }
+  a { color: #569cd6; }
+}
+`
+
+/** 取当前标签的导出文件名（去掉原扩展名，换成目标扩展名）。 */
+function exportName(ext: string): string {
+  const tab = getActiveTab()
+  if (!tab) return `untitled.${ext}`
+  const stem = tab.filePath ? baseName(tab.filePath).replace(/\.[^.]+$/, '') : tab.title
+  return `${stem}.${ext}`
+}
+
+/**
+ * 生成完整独立 HTML。
+ *
+ * 优先走 `MarkdownToHtml.generate()`：它复用编辑器实例，能把 Mermaid/Vega/
+ * PlantUML 图表渲染成静态 SVG，导出结果与所见一致。
+ * 该路径依赖图表运行时，一旦失败就退回同步的 `renderToStaticHTML`，
+ * 保证导出始终可用（此时图表会以普通代码块保留）。
+ */
+async function buildHtml(): Promise<string> {
+  const tab = getActiveTab()
+  if (!tab) return ''
+  const muya = (window as unknown as { __typraMuya?: unknown }).__typraMuya
+  if (muya) {
+    try {
+      const converter = new MarkdownToHtml(tab.content, muya as never)
+      // 图表渲染可能因外部依赖挂起，加超时保护，超时即回退
+      const rendered = await Promise.race([
+        converter.generate({ title: tab.title, extraCSS: EXPORT_CSS }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000))
+      ])
+      if (rendered) return rendered
+      console.warn('[export] 图表渲染超时，回退到静态渲染')
+    } catch (err) {
+      console.warn('[export] 图表渲染导出失败，回退到静态渲染：', err)
+    }
+  }
+  return wrapDocument(
+    renderToStaticHTML(tab.content, {
+      footnote: settings.footnote,
+      math: settings.texMathDollars || settings.texMathGfm,
+      superSubScript: settings.superSubScript,
+      frontMatter: settings.frontMatter
+    }),
+    tab.title
+  )
+}
+
+/** 把正文 HTML 包进带样式的完整文档。 */
+function wrapDocument(body: string, title: string): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>${EXPORT_CSS}</style>
+</head>
+<body>
+<article class="markdown-body">
+${body}
+</article>
+</body>
+</html>`
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!
+  )
+}
+
+/** 供端到端自检调用：不弹保存对话框，直接返回生成的 HTML。 */
+export async function buildHtmlForCheck(): Promise<string> {
+  return buildHtml()
+}
+
+// 暴露给主进程自检使用
+;(window as unknown as Record<string, unknown>).__typraExport = { buildHtmlForCheck }
+
+/** 导出为 HTML 文件。 */
+export async function exportHtml(): Promise<boolean> {
+  const tab = getActiveTab()
+  if (!tab) return false
+  const html = await buildHtml()
+  const saved = await window.typra.saveFileDialog(exportName('html'), html)
+  return !!saved
+}
+
+/** 导出为 PDF：静态 HTML 渲染进隐藏 iframe，再由主进程 printToPDF。 */
+export async function exportPdf(): Promise<boolean> {  const tab = getActiveTab()
+  if (!tab) return false
+  const target = await window.typra.saveAsDialog(exportName('pdf'))
+  if (!target) return false
+
+  const html = await buildHtml()
+  // 用离屏 iframe 承载导出内容，避免污染当前编辑器 DOM
+  const iframe = document.createElement('iframe')
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:1200px;border:0;'
+  iframe.srcdoc = html
+  document.body.appendChild(iframe)
+  await new Promise((resolve) => {
+    iframe.onload = resolve
+    // srcdoc 已就绪时 onload 可能已错过，兜底超时
+    setTimeout(resolve, 2500)
+  })
+
+  const ok = await window.typra.exportPdf(target)
+  iframe.remove()
+  return ok
+}

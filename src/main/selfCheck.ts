@@ -6,6 +6,15 @@ import type { BrowserWindow } from 'electron'
  * 通过 TYPRA2_SELF_CHECK=1 触发，结果以退出码表示（0 通过 / 1 失败）。
  */
 export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
+  // 先把渲染进程的错误与控制台输出引到主进程，便于定位失败原因
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    const tag = ['verbose', 'info', 'warning', 'error'][level] ?? String(level)
+    console.log(`[renderer:${tag}] ${message} (${sourceId}:${line})`)
+  })
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error(`[selfcheck] 页面加载失败 ${code} ${desc} ${url}`)
+  })
+
   const waitFor = async (predicate: string, timeoutMs = 15000): Promise<boolean> => {
     const started = Date.now()
     while (Date.now() - started < timeoutMs) {
@@ -82,6 +91,70 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   console.log('[selfcheck] round-trip OK, TOC:', JSON.stringify(roundTrip.tocText))
+
+  // 4b. 验证进阶语法：表格、数学公式、任务列表、代码块都能渲染
+  const features = await win.webContents.executeJavaScript(`
+    (async () => {
+      const muya = window.__typraMuya
+      if (!muya) return { error: 'no muya instance' }
+      const input = [
+        '| 列A | 列B |',
+        '| --- | --- |',
+        '| 1 | 2 |',
+        '',
+        '\\\`\\\`\\\`js',
+        'const x = 1',
+        '\\\`\\\`\\\`',
+        '',
+        '- [x] 已完成',
+        '- [ ] 未完成',
+        '',
+        '行内公式 \$a^2+b^2=c^2\$',
+        ''
+      ].join('\\n')
+      muya.setContent(input, false)
+      await new Promise((r) => setTimeout(r, 600))
+      const c = document.querySelector('.muya-container')
+      const out = muya.getMarkdown()
+      return {
+        hasTable: !!c.querySelector('.mu-table, table'),
+        hasCode: !!c.querySelector('.mu-fence-code, pre'),
+        hasTask: /- \\[x\\]/.test(out) && /- \\[ \\]/.test(out),
+        hasMath: !!c.querySelector('.katex, .mu-math, [class*="math"]'),
+        out: out.slice(0, 300)
+      }
+    })()
+  `)
+  if (features.error) {
+    console.error('[selfcheck] FAIL: 进阶语法检查取不到实例:', features.error)
+    return false
+  }
+  const missing = ['hasTable', 'hasCode', 'hasTask'].filter((k) => !features[k])
+  if (missing.length) {
+    console.error('[selfcheck] FAIL: 进阶语法未渲染:', missing.join(','), JSON.stringify(features))
+    return false
+  }
+  console.log('[selfcheck] 进阶语法 OK: 表格/代码块/任务列表/公式')
+
+  // 4c. 验证导出：静态 HTML 生成且包含标题与表格
+  const exported = await win.webContents.executeJavaScript(`
+    (async () => {
+      const mod = window.__typraExport
+      if (!mod) return { error: 'export module not exposed' }
+      const html = await mod.buildHtmlForCheck()
+      return {
+        length: html.length,
+        hasTitle: html.includes('标题一') || html.includes('列A'),
+        hasDoctype: html.toLowerCase().includes('<!doctype html'),
+        hasTable: html.includes('<table')
+      }
+    })()
+  `)
+  if (exported.error || !exported.hasDoctype || exported.length < 200) {
+    console.error('[selfcheck] FAIL: HTML 导出异常:', JSON.stringify(exported))
+    return false
+  }
+  console.log('[selfcheck] 导出 OK: 长度', exported.length)
 
   // 5. 验证状态栏字数统计随内容更新
   const statusText = await win.webContents.executeJavaScript(

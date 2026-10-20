@@ -81,6 +81,7 @@ function outlineIndent(level: number): string {
             :key="child.path"
             :entry="child"
             :depth="0"
+            @refresh="$emit('refresh')"
           />
         </template>
         <p v-else class="sidebar-empty">尚未打开文件夹</p>

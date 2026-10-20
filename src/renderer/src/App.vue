@@ -8,10 +8,25 @@ import FindBar from './components/FindBar.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import { executeCommand, registerGlobalCommands } from './composables/useCommands'
 import { useFile } from './composables/useFile'
-import { loadSettings, loadRecent, state, getActiveTab, isDirty, createTab, hasUnsavedTabs } from './store'
+import { loadSettings, loadRecent, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs } from './store'
 
-const { openPath, refreshWorkspace, saveTab } = useFile()
+const { openPath, refreshWorkspace, saveTab, saveAll } = useFile()
 const editorRef = ref<InstanceType<typeof EditorHost> | null>(null)
+
+/** 自动保存：仅对已有磁盘路径的标签生效，避免频繁弹保存对话框。 */
+let autoSaveTimer: number | undefined
+watch(
+  () => state.tabs.map((t) => `${t.id}:${t.content.length}:${t.content === t.savedContent}`).join('|'),
+  () => {
+    if (!settings.autoSave) return
+    if (autoSaveTimer) window.clearTimeout(autoSaveTimer)
+    autoSaveTimer = window.setTimeout(async () => {
+      for (const tab of state.tabs) {
+        if (isDirty(tab) && tab.filePath) await saveTab(tab)
+      }
+    }, 1500)
+  }
+)
 
 const windowTitle = computed(() => {
   const tab = getActiveTab()
