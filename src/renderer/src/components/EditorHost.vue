@@ -586,6 +586,34 @@ async function openDroppedFiles(files: File[]): Promise<number> {
   return opened
 }
 
+/**
+ * 跳到指定行（供全库搜索结果点击后定位）。
+ * 用 setCursorByOffset 把光标放到目标行首，再滚动到可见区域。
+ */
+function onGotoLine(e: Event): void {
+  const d = (e as CustomEvent).detail as { filePath?: string; line?: number }
+  if (!muya || !d?.line) return
+  const line = Math.max(0, d.line - 1)
+  requestAnimationFrame(() => {
+    const m = muya
+    if (!m) return
+    try {
+      m.setCursorByOffset({ anchor: { line, ch: 0 }, focus: { line, ch: 0 } })
+      // 让光标行进入视野
+      const scroller = getScroller()
+      const sel = document.getSelection()
+      if (scroller && sel && sel.rangeCount) {
+        const rect = sel.getRangeAt(0).getBoundingClientRect()
+        const scrollerRect = scroller.getBoundingClientRect()
+        const target = scroller.scrollTop + (rect.top - scrollerRect.top) - scrollerRect.height / 3
+        scroller.scrollTo({ top: Math.max(0, target), behavior: 'auto' })
+      }
+    } catch {
+      /* 行号可能超出文档范围，忽略 */
+    }
+  })
+}
+
 onMounted(() => {
   registerGlobalCommands()
   mountEditor()
@@ -607,6 +635,7 @@ onMounted(() => {
   window.addEventListener('inkdown:find-close', onFindClose)
   window.addEventListener('inkdown:settings-changed', onSettingsChanged)
   window.addEventListener('inkdown:insert-text', onInsertText as EventListener)
+  window.addEventListener('inkdown:goto-line', onGotoLine as EventListener)
 })
 
 onBeforeUnmount(() => {
@@ -614,6 +643,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('inkdown:find-close', onFindClose)
   window.removeEventListener('inkdown:settings-changed', onSettingsChanged)
   window.removeEventListener('inkdown:insert-text', onInsertText as EventListener)
+  window.removeEventListener('inkdown:goto-line', onGotoLine as EventListener)
   muya?.destroy()
   muya = null
 })

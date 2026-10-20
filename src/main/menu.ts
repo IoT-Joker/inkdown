@@ -68,7 +68,12 @@ export function buildAppMenu(): void {
         { role: 'selectAll', label: t('menu.edit.selectAll') },
         { type: 'separator' },
         { label: t('menu.edit.find'), accelerator: 'CmdOrCtrl+F', click: cmd('edit:find') },
-        { label: t('menu.edit.replace'), accelerator: 'CmdOrCtrl+H', click: cmd('edit:replace') }
+        { label: t('menu.edit.replace'), accelerator: 'CmdOrCtrl+H', click: cmd('edit:replace') },
+        {
+          label: t('search.folder'),
+          accelerator: 'CmdOrCtrl+Shift+F',
+          click: cmd('edit:findInFolder')
+        }
       ]
     },
     {
@@ -153,10 +158,16 @@ export function buildAppMenu(): void {
         },
         { type: 'separator' },
         {
+          label: t('palette.title'),
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: cmd('app:commandPalette')
+        },
+        {
           label: t('menu.view.toggleSource'),
           accelerator: 'CmdOrCtrl+/',
           click: cmd('view:toggleSource')
         },
+        { label: t('view.splitPreview'), click: cmd('view:toggleSplit') },
         { label: t('menu.view.toggleFocus'), accelerator: 'F8', click: cmd('view:toggleFocus') },
         {
           label: t('menu.view.toggleTypewriter'),

@@ -72,7 +72,8 @@ const menus = computed<MenuGroup[]>(() => [
       { labelKey: 'menu.edit.lineEndingCrlf', command: 'edit:lineEnding', payload: 'crlf', checked: settings.lineEnding === 'crlf' },
       { labelKey: '', separator: true },
       { labelKey: 'menu.edit.find', command: 'edit:find', accel: 'Ctrl+F' },
-      { labelKey: 'menu.edit.replace', command: 'edit:replace', accel: 'Ctrl+H' }
+      { labelKey: 'menu.edit.replace', command: 'edit:replace', accel: 'Ctrl+H' },
+      { labelKey: 'search.folder', command: 'edit:findInFolder', accel: 'Ctrl+Shift+F' }
     ]
   },
   {
@@ -117,10 +118,13 @@ const menus = computed<MenuGroup[]>(() => [
   {
     labelKey: 'menu.view',
     items: [
+      { labelKey: 'palette.title', command: 'app:commandPalette', accel: 'Ctrl+Shift+P' },
+      { labelKey: '', separator: true },
       { labelKey: 'menu.view.toggleSidebar', command: 'view:toggleSidebar', accel: 'Ctrl+Shift+L' },
       { labelKey: 'menu.view.toggleOutline', command: 'view:toggleOutline', accel: 'Ctrl+Shift+1' },
       { labelKey: '', separator: true },
       { labelKey: 'menu.view.toggleSource', command: 'view:toggleSource', accel: 'Ctrl+/' },
+      { labelKey: 'view.splitPreview', command: 'view:toggleSplit' },
       { labelKey: 'menu.view.toggleFocus', command: 'view:toggleFocus', accel: 'F8' },
       { labelKey: 'menu.view.toggleTypewriter', command: 'view:toggleTypewriter', accel: 'F9' },
       { labelKey: '', separator: true },

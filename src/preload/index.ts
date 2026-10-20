@@ -6,6 +6,9 @@ const api = {
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
   readDir: (dir: string, depth?: number) => ipcRenderer.invoke('fs:readDir', dir, depth),
+  /** 全库搜索：在目录下递归搜索 Markdown 文件内容。 */
+  searchInFolder: (rootDir: string, opts: unknown) =>
+    ipcRenderer.invoke('fs:searchInFolder', rootDir, opts),
   createFile: (filePath: string) => ipcRenderer.invoke('fs:createFile', filePath),
   createFolder: (dirPath: string) => ipcRenderer.invoke('fs:createFolder', dirPath),
   rename: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:rename', oldPath, newPath),

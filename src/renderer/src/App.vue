@@ -9,6 +9,8 @@ import FindBar from './components/FindBar.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import AboutDialog from './components/AboutDialog.vue'
 import ShortcutsDialog from './components/ShortcutsDialog.vue'
+import FolderSearchPanel from './components/FolderSearchPanel.vue'
+import CommandPalette from './components/CommandPalette.vue'
 import { executeCommand, registerGlobalCommands } from './composables/useCommands'
 import { useFile } from './composables/useFile'
 import { useI18n, initLocale } from './composables/useI18n'
@@ -200,6 +202,8 @@ async function tryQuit(): Promise<void> {
     <TabBar />
     <div class="app-body">
       <SideBar @refresh="refreshWorkspace" />
+      <!-- 全库搜索面板：打开时占一列，关闭时不影响布局 -->
+      <FolderSearchPanel />
       <div class="main-column">
         <button
           v-if="!state.sidebarVisible"
@@ -223,6 +227,7 @@ async function tryQuit(): Promise<void> {
     <PreferencesDialog v-if="state.preferencesVisible" />
     <AboutDialog v-if="state.aboutVisible" />
     <ShortcutsDialog v-if="state.shortcutsVisible" />
+    <CommandPalette v-if="state.paletteVisible" />
   </div>
 </template>
 

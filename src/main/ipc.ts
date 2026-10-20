@@ -8,6 +8,7 @@ import { getLocale, setLocale } from './locale'
 import { translate, type LocaleCode } from '../shared/i18n'
 import { takePendingFile } from './fileAssociation'
 import { checkForUpdatesManually } from './updater'
+import { searchInFolder, type SearchOptions } from './folderSearch'
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
 const watchers = new Map<string, FSWatcher>()
@@ -111,6 +112,14 @@ export function registerIpc(): void {
   ipcMain.handle('fs:readDir', async (_e, dir: string, depth = 1) => {
     const root = resolve(dir)
     return { path: root, name: basename(root), children: await readDirTree(root, depth) }
+  })
+
+  /**
+   * 全库搜索：在指定目录下递归搜索所有 Markdown 文件。
+   * 纯 Node 实现（见 folderSearch.ts），不引入 ripgrep 等原生依赖。
+   */
+  ipcMain.handle('fs:searchInFolder', async (_e, rootDir: string, opts: SearchOptions) => {
+    return searchInFolder(resolve(rootDir), opts)
   })
 
   ipcMain.handle('fs:createFile', async (_e, filePath: string) => {

@@ -172,6 +172,58 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
     console.log('[shot] 已写出 10-split-preview.png')
   }
 
+  // 全库搜索与命令面板
+  const extra = [
+    {
+      name: '11-folder-search.png',
+      setup: `
+        (async () => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+          const c = window.__inkdownCommands
+          const app = window.__inkdownApp
+          // 先回所见即所得，避免停在分栏
+          if (app.viewMode() !== 'wysiwyg') await c.execute('view:toggleSplit')
+          await wait(300)
+          const dir = await window.inkdown.readDir(${JSON.stringify(process.cwd())}, 1)
+          app.setWorkspace(dir)
+          await wait(300)
+          await c.execute('edit:findInFolder')
+          await wait(400)
+          const input = document.querySelector('.fs-input')
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+          setter.call(input, 'Markdown')
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          for (let i = 0; i < 40; i++) {
+            if (document.querySelectorAll('.fs-hit').length > 0) break
+            await wait(200)
+          }
+          return true
+        })()
+      `
+    },
+    {
+      name: '12-command-palette.png',
+      setup: `
+        (async () => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+          const c = window.__inkdownCommands
+          document.querySelector('.fs-close')?.click()
+          await wait(300)
+          await c.execute('app:commandPalette')
+          await wait(600)
+          return true
+        })()
+      `
+    }
+  ]
+  for (const e of extra) {
+    await win.webContents.executeJavaScript(e.setup)
+    await new Promise((r) => setTimeout(r, 500))
+    const shot = await win.webContents.capturePage()
+    await fsp.writeFile(join(outDir, e.name), shot.toPNG())
+    console.log(`[shot] 已写出 ${e.name}`)
+  }
+
   console.log('[shot] PASS: 查找栏截图完成')
   return true
 }

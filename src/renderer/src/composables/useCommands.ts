@@ -90,6 +90,18 @@ export function registerGlobalCommands(): void {
     'app:preferences': () => {
       state.preferencesVisible = true
     },
+    // 全库搜索：需要先打开一个文件夹作为搜索范围
+    'edit:findInFolder': () => {
+      if (!state.workspace) {
+        state.notice = { text: t('search.folderNoFolder') }
+        return
+      }
+      state.folderSearchVisible = true
+    },
+    // 命令面板
+    'app:commandPalette': () => {
+      state.paletteVisible = true
+    },
     // 帮助菜单
     'help:about': () => {
       state.aboutVisible = true

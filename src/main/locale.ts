@@ -2,6 +2,8 @@ import { app } from 'electron'
 import { promises as fsp } from 'node:fs'
 import { join } from 'node:path'
 import { translate, type LocaleCode } from '../shared/i18n'
+// 导入即把新增词条合并进主词典（主词典由并行工作流维护）
+import '../shared/i18nExtra'
 
 /**
  * 主进程的语言状态。

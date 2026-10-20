@@ -1417,15 +1417,169 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     })()
   `)
 
+  // 5j. 全库搜索：在文件夹内递归搜索并展示分组结果
+  const searchDir = join(process.cwd(), '.tmp-selfcheck-search')
+  await fsp.mkdir(join(searchDir, '子目录'), { recursive: true })
+  await fsp.writeFile(join(searchDir, 'a.md'), '# 甲文件\n\n这里提到 关键词甲 一次。\n', 'utf8')
+  await fsp.writeFile(
+    join(searchDir, '子目录', 'b.md'),
+    '# 乙文件\n\n这里也提到 关键词甲。\n',
+    'utf8'
+  )
+  await fsp.writeFile(join(searchDir, 'c.md'), '# 丙文件\n\n没有匹配内容。\n', 'utf8')
+  // 非 Markdown 不应被搜到
+  await fsp.writeFile(join(searchDir, 'd.json'), '{"x":"关键词甲"}', 'utf8')
+
+  const folderSearchCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+
+      // 设定工作区（模拟已打开文件夹）
+      const dir = await window.inkdown.readDir(${JSON.stringify(searchDir)}, 1)
+      app.setWorkspace(dir)
+      await wait(300)
+
+      await c.execute('edit:findInFolder')
+      await wait(400)
+      const panel = document.querySelector('.folder-search')
+      if (!panel) return { error: '全库搜索面板未出现' }
+
+      const input = panel.querySelector('.fs-input')
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, '关键词甲')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      // 等 debounce + 搜索完成
+      for (let i = 0; i < 40; i++) {
+        if (panel.querySelectorAll('.fs-hit').length > 0) break
+        await wait(150)
+      }
+
+      const groups = [...panel.querySelectorAll('.fs-group-name')].map((e) => e.textContent.trim())
+      const hits = panel.querySelectorAll('.fs-hit').length
+      const summary = panel.querySelector('.fs-summary')?.innerText || ''
+
+      return { groups, hits, summary, hasPanel: true }
+    })()
+  `)
+  if (folderSearchCheck.error) {
+    console.error('[selfcheck] FAIL: 全库搜索:', folderSearchCheck.error)
+    return false
+  }
+  if (folderSearchCheck.hits < 2) {
+    console.error('[selfcheck] FAIL: 全库搜索命中数不足:', JSON.stringify(folderSearchCheck))
+    return false
+  }
+  // 应同时覆盖根目录与子目录的文件，且不含 json
+  const joined = folderSearchCheck.groups.join(',')
+  if (!joined.includes('a.md') || !joined.includes('b.md')) {
+    console.error('[selfcheck] FAIL: 未覆盖子目录或根目录:', JSON.stringify(folderSearchCheck))
+    return false
+  }
+  if (joined.includes('d.json')) {
+    console.error('[selfcheck] FAIL: 非 Markdown 文件被搜到:', JSON.stringify(folderSearchCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 全库搜索 OK: ${folderSearchCheck.hits} 处命中，覆盖 ${folderSearchCheck.groups.length} 个文件（含子目录，已排除非 Markdown）`
+  )
+
+  // 关闭面板并清理
+  await win.webContents.executeJavaScript(`
+    (async () => {
+      const b = document.querySelector('.fs-close')
+      b && b.click()
+      await new Promise((r) => setTimeout(r, 200))
+      return true
+    })()
+  `)
+  await fsp.rm(searchDir, { recursive: true, force: true }).catch(() => {})
+
+  // 5k. 命令面板：可打开、可过滤、回车执行
+  const paletteCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+
+      await c.execute('app:commandPalette')
+      await wait(500)
+      const box = document.querySelector('.palette')
+      if (!box) return { error: '命令面板未出现' }
+
+      const total = box.querySelectorAll('.palette-item').length
+      // 每条命令都应显示可读名称，而不是命令 id（形如 group:action）
+      const labels = [...box.querySelectorAll('.palette-item .palette-label')].map((e) =>
+        e.textContent.trim()
+      )
+      const idLikeLabels = labels.filter((l) => /^[a-z]+:[a-zA-Z]+$/.test(l))
+
+      // 过滤：输入 split 应缩小范围
+      const input = box.querySelector('.palette-input')
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'split')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await wait(400)
+      const filteredCount = box.querySelectorAll('.palette-item').length
+      const firstLabel = box.querySelector('.palette-item .palette-label')?.textContent?.trim() || ''
+
+      // 回车执行第一条（分栏预览），应关闭面板并切到分栏
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await wait(700)
+      const closed = !document.querySelector('.palette')
+      const mode = app.viewMode()
+
+      // 切回所见即所得，避免影响后续用例
+      if (mode === 'split') await c.execute('view:toggleSplit')
+      await wait(400)
+
+      return { total, filteredCount, firstLabel, closed, mode, modeBack: app.viewMode(), idLikeLabels }
+    })()
+  `)
+  if (paletteCheck.error) {
+    console.error('[selfcheck] FAIL: 命令面板:', paletteCheck.error)
+    return false
+  }
+  if (paletteCheck.total < 20) {
+    console.error('[selfcheck] FAIL: 命令面板条目过少:', JSON.stringify(paletteCheck))
+    return false
+  }
+  // 命令名必须可读：显示成 group:action 说明缺少词条映射
+  if (paletteCheck.idLikeLabels.length) {
+    console.error(
+      '[selfcheck] FAIL: 命令面板有命令显示为 id（缺词条映射）:',
+      JSON.stringify(paletteCheck.idLikeLabels)
+    )
+    return false
+  }
+  if (paletteCheck.filteredCount >= paletteCheck.total || paletteCheck.filteredCount === 0) {
+    console.error('[selfcheck] FAIL: 命令面板过滤无效:', JSON.stringify(paletteCheck))
+    return false
+  }
+  if (!paletteCheck.closed) {
+    console.error('[selfcheck] FAIL: 回车后命令面板未关闭:', JSON.stringify(paletteCheck))
+    return false
+  }
+  if (paletteCheck.mode !== 'split') {
+    console.error('[selfcheck] FAIL: 回车未执行选中的命令:', JSON.stringify(paletteCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 命令面板 OK: ${paletteCheck.total} 条命令，过滤后 ${paletteCheck.filteredCount} 条，回车可执行`
+  )
+
   // 清理自检用的临时目录（所有依赖它的用例都已执行完）。
-  // 先停掉该目录下文件的监听器：fs.watch 持有句柄时删除会失败或挂住。
+  // 先停掉监听器：fs.watch 持有句柄时删除会失败或挂住。
+  // 注意要覆盖所有自检产生的目录（selfcheck-tree / selfcheck-search），
+  // 只要打开过文件就会注册监听。
   await win.webContents
     .executeJavaScript(
       `(async () => {
         const app = window.__inkdownApp
         const files = app.tabs().map((t) => t.filePath).filter(Boolean)
         for (const f of files) {
-          if (f.includes('selfcheck-tree')) await window.inkdown.unwatch(f)
+          if (f.includes('selfcheck-')) await window.inkdown.unwatch(f)
         }
         return true
       })()`

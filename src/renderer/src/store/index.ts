@@ -74,6 +74,10 @@ export const state = reactive({
   preferencesVisible: false,
   aboutVisible: false,
   shortcutsVisible: false,
+  /** 全库搜索面板是否可见。 */
+  folderSearchVisible: false,
+  /** 命令面板是否可见。 */
+  paletteVisible: false,
   statusMessage: '',
   /** 非阻塞提示条：用于外部改动等需要告知但不打断写作的情况 */
   notice: null as { text: string; action?: string; filePath?: string } | null,
