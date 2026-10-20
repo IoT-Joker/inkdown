@@ -1,0 +1,32 @@
+{
+  "name": "typra2",
+  "version": "0.1.0",
+  "description": "Typra2 - a Typora-like WYSIWYG markdown editor built on marktext's muya engine",
+  "main": "./out/main/index.js",
+  "author": "typra2",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "smoke": "node scripts/smoke-test.js",
+    "verify": "electron-vite build && node scripts/smoke-test.js",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web"
+  },
+  "dependencies": {
+    "@muyajs/core": "0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "electron": "33.4.11",
+    "electron-vite": "^3.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vue": "^3.5.13",
+    "vue-tsc": "^2.2.0"
+  }
+}

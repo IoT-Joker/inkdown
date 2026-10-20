@@ -1,0 +1,101 @@
+/* 基础重置与应用级变量 */
+:root {
+  --ty-font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC',
+    'Hiragino Sans GB', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--ty-font-ui);
+  background: var(--ty-bg);
+  color: var(--ty-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.ty-btn {
+  border: 1px solid var(--ty-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ty-text);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.ty-btn:hover {
+  background: var(--ty-hover);
+}
+
+/* 专注模式：淡化非当前段落，模拟 Typora 的专注写作 */
+body.focus-mode .muya-container .muya-block:not(.muya-focused) {
+  opacity: 0.28;
+  transition: opacity 0.2s ease;
+}
+
+body.focus-mode .muya-container .muya-block.muya-focused {
+  opacity: 1;
+}
+
+/* 打字机模式：光标所在行保持在视口垂直中心附近 */
+body.typewriter-mode .editor-scroll {
+  scroll-padding-top: 45vh;
+}
+
+/* 编辑器排版：还原 Typora 的居中窄栏阅读体验 */
+.muya-container {
+  max-width: 100%;
+}
+
+.muya-container .muya-editor {
+  padding: 36px 56px 160px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* 让滚动条更接近 Typora 的克制风格 */
+.editor-scroll::-webkit-scrollbar,
+.source-scroll::-webkit-scrollbar,
+.tree::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.editor-scroll::-webkit-scrollbar-thumb,
+.source-scroll::-webkit-scrollbar-thumb,
+.tree::-webkit-scrollbar-thumb {
+  background: var(--ty-scrollbar);
+  border-radius: 5px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.editor-scroll::-webkit-scrollbar-thumb:hover,
+.source-scroll::-webkit-scrollbar-thumb:hover,
+.tree::-webkit-scrollbar-thumb:hover {
+  background: var(--ty-scrollbar-hover);
+  background-clip: content-box;
+}

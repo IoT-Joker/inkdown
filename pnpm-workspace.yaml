@@ -1,0 +1,8 @@
+# pnpm 11 从本文件读取设置（package.json 的 pnpm 字段已废弃）
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+# @marktext/file-icons 的 file-icons 依赖指向 GitHub git 仓库，
+# 这里放开子依赖限制，让 git 依赖能正常安装
+blockExoticSubdeps: false
+verifyDepsBeforeRun: false

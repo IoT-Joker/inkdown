@@ -1,0 +1,139 @@
+/* Typra2 主题。每个主题只覆盖变量，编辑器结构样式由 muya 提供。 */
+
+/* 默认浅色（接近 Typora 的 Github 主题） */
+:root,
+body.theme-light {
+  --ty-bg: #ffffff;
+  --ty-text: #24292f;
+  --ty-muted: #6e7781;
+  --ty-border: #d8dee4;
+  --ty-hover: rgba(0, 0, 0, 0.045);
+  --ty-hover-strong: rgba(0, 0, 0, 0.09);
+  --ty-active: rgba(9, 105, 218, 0.1);
+  --ty-accent: #0969da;
+  --ty-sidebar-bg: #f6f8fa;
+  --ty-tabbar-bg: #f6f8fa;
+  --ty-statusbar-bg: #f6f8fa;
+  --ty-scrollbar: rgba(0, 0, 0, 0.22);
+  --ty-scrollbar-hover: rgba(0, 0, 0, 0.38);
+  --ty-code-bg: #f6f8fa;
+  --ty-quote-border: #d0d7de;
+  --ty-selection: rgba(9, 105, 218, 0.22);
+}
+
+body.theme-dark {
+  --ty-bg: #1e1e1e;
+  --ty-text: #d4d4d4;
+  --ty-muted: #8a8a8a;
+  --ty-border: #333333;
+  --ty-hover: rgba(255, 255, 255, 0.06);
+  --ty-hover-strong: rgba(255, 255, 255, 0.12);
+  --ty-active: rgba(86, 156, 214, 0.18);
+  --ty-accent: #569cd6;
+  --ty-sidebar-bg: #252526;
+  --ty-tabbar-bg: #252526;
+  --ty-statusbar-bg: #252526;
+  --ty-scrollbar: rgba(255, 255, 255, 0.2);
+  --ty-scrollbar-hover: rgba(255, 255, 255, 0.34);
+  --ty-code-bg: #2d2d2d;
+  --ty-quote-border: #444444;
+  --ty-selection: rgba(86, 156, 214, 0.3);
+}
+
+body.theme-github {
+  --ty-bg: #ffffff;
+  --ty-text: #1f2328;
+  --ty-muted: #656d76;
+  --ty-border: #d0d7de;
+  --ty-hover: rgba(0, 0, 0, 0.04);
+  --ty-hover-strong: rgba(0, 0, 0, 0.08);
+  --ty-active: rgba(9, 105, 218, 0.12);
+  --ty-accent: #0969da;
+  --ty-sidebar-bg: #f6f8fa;
+  --ty-tabbar-bg: #f6f8fa;
+  --ty-statusbar-bg: #f6f8fa;
+  --ty-scrollbar: rgba(0, 0, 0, 0.2);
+  --ty-scrollbar-hover: rgba(0, 0, 0, 0.35);
+  --ty-code-bg: #f6f8fa;
+  --ty-quote-border: #d0d7de;
+  --ty-selection: rgba(9, 105, 218, 0.2);
+}
+
+/* 报刊：偏暖的纸张底色，适合长文阅读 */
+body.theme-newsprint {
+  --ty-bg: #fbfaf7;
+  --ty-text: #2f2a24;
+  --ty-muted: #7a7266;
+  --ty-border: #ddd8cd;
+  --ty-hover: rgba(120, 100, 60, 0.06);
+  --ty-hover-strong: rgba(120, 100, 60, 0.12);
+  --ty-active: rgba(160, 110, 40, 0.14);
+  --ty-accent: #a06e28;
+  --ty-sidebar-bg: #f4f1ea;
+  --ty-tabbar-bg: #f4f1ea;
+  --ty-statusbar-bg: #f4f1ea;
+  --ty-scrollbar: rgba(90, 75, 50, 0.22);
+  --ty-scrollbar-hover: rgba(90, 75, 50, 0.4);
+  --ty-code-bg: #f1ede4;
+  --ty-quote-border: #d5cfc2;
+  --ty-selection: rgba(160, 110, 40, 0.22);
+}
+
+/* 夜间：低饱和深色，减少蓝光 */
+body.theme-night {
+  --ty-bg: #16161a;
+  --ty-text: #c9c7c3;
+  --ty-muted: #7d7b78;
+  --ty-border: #2b2b30;
+  --ty-hover: rgba(255, 255, 255, 0.05);
+  --ty-hover-strong: rgba(255, 255, 255, 0.1);
+  --ty-active: rgba(200, 170, 120, 0.16);
+  --ty-accent: #c8aa78;
+  --ty-sidebar-bg: #1c1c20;
+  --ty-tabbar-bg: #1c1c20;
+  --ty-statusbar-bg: #1c1c20;
+  --ty-scrollbar: rgba(255, 255, 255, 0.16);
+  --ty-scrollbar-hover: rgba(255, 255, 255, 0.3);
+  --ty-code-bg: #1f1f24;
+  --ty-quote-border: #34343a;
+  --ty-selection: rgba(200, 170, 120, 0.26);
+}
+
+/* 编辑器内容随主题着色：muya 自身使用较中性的颜色 */
+.muya-container {
+  color: var(--ty-text);
+  background: var(--ty-bg);
+}
+
+.muya-container .muya-editor {
+  background: var(--ty-bg);
+  color: var(--ty-text);
+}
+
+.muya-container ::selection {
+  background: var(--ty-selection);
+}
+
+/* 标题与正文继承主题前景色 */
+.muya-container h1,
+.muya-container h2,
+.muya-container h3,
+.muya-container h4,
+.muya-container h5,
+.muya-container h6 {
+  color: var(--ty-text);
+}
+
+.muya-container blockquote {
+  border-left-color: var(--ty-quote-border);
+  color: var(--ty-muted);
+}
+
+.muya-container pre,
+.muya-container .muya-code-block {
+  background: var(--ty-code-bg);
+}
+
+.muya-container a {
+  color: var(--ty-accent);
+}
