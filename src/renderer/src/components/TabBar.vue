@@ -3,7 +3,9 @@ import { computed } from 'vue'
 import { getActiveTab, isDirty, state, closeTab, tabLabel } from '../store'
 import { executeCommand } from '../composables/useCommands'
 import { useFile } from '../composables/useFile'
+import { useI18n } from '../composables/useI18n'
 
+const { t } = useI18n()
 const tabs = computed(() => state.tabs)
 
 function selectTab(id: string): void {
@@ -29,18 +31,18 @@ async function onClose(id: string, e: MouseEvent): Promise<void> {
         :key="tab.id"
         class="tab"
         :class="{ active: tab.id === state.activeId }"
-        :title="(tab.filePath || tab.title) + (isDirty(tab) ? '（未保存）' : '')"
+        :title="(tab.filePath || tab.title) + (isDirty(tab) ? t('tab.unsaved') : '')"
         @click="selectTab(tab.id)"
         @mousedown.middle="onClose(tab.id, $event)"
       >
         <span class="tab-title">{{ tabLabel(tab) }}</span>
-        <button class="tab-close" title="关闭标签页 (Ctrl+W)" @click="onClose(tab.id, $event)">×</button>
+        <button class="tab-close" :title="`${t('tab.close')} (Ctrl+W)`" @click="onClose(tab.id, $event)">×</button>
       </div>
     </div>
-    <button class="tab-new" title="新建标签页 (Ctrl+N)" @click="executeCommand('file:new')">+</button>
+    <button class="tab-new" :title="`${t('tab.new')} (Ctrl+N)`" @click="executeCommand('file:new')">+</button>
     <button
       class="tab-settings"
-      title="偏好设置 (Ctrl+,)"
+      :title="`${t('tab.settings')} (Ctrl+,)`"
       @click="executeCommand('app:preferences')"
     >
       ⚙

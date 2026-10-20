@@ -8,7 +8,7 @@ export function getMainWindow(): BrowserWindow | null {
 }
 
 /**
- * 创建主窗口。渲染进程通过 preload 暴露的 window.typra API 与主进程通信。
+ * 创建主窗口。渲染进程通过 preload 暴露的 window.inkdown API 与主进程通信。
  */
 export function createWindow(): BrowserWindow {
   const win = new BrowserWindow({

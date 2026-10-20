@@ -1,5 +1,5 @@
 /**
- * 一键启动 Typra2。
+ * 一键启动 Inkdown。
  *
  * 用法：
  *   node scripts/start.js          # 直接运行已构建的版本
@@ -31,9 +31,9 @@ const dev = process.argv.includes('--dev')
 
 if (dev) {
   // 开发模式交给 electron-vite dev（需要 node 在 PATH）
-  const pnpm = process.env.TYPRA2_PNPM
+  const pnpm = process.env.INKDOWN_PNPM
   if (!pnpm) {
-    console.error('开发模式需要 Node.js 在 PATH 中，或设置 TYPRA2_PNPM 指向 pnpm.mjs')
+    console.error('开发模式需要 Node.js 在 PATH 中，或设置 INKDOWN_PNPM 指向 pnpm.mjs')
     console.error('提示：直接运行已构建版本请用  node scripts/start.js')
     process.exit(1)
   }
@@ -49,7 +49,7 @@ if (dev) {
     console.error('尚未构建。请先执行：pnpm build')
     process.exit(1)
   }
-  console.log('正在启动 Typra2 …（关闭窗口即退出）')
+  console.log('正在启动 Inkdown …（关闭窗口即退出）')
   const child = spawn(electron, ['.'], { cwd: root, env, stdio: 'inherit' })
   child.on('exit', (code) => process.exit(code ?? 0))
 }

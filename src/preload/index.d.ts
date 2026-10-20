@@ -1,8 +1,8 @@
-import type { TypraApi } from './index'
+import type { InkdownApi } from './index'
 
 declare global {
   interface Window {
-    typra: TypraApi
+    inkdown: InkdownApi
   }
 }
 

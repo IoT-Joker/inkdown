@@ -1,21 +1,23 @@
 <script setup lang="ts">
-import { reactive } from 'vue'
-import { settings, state, persistSettings, persistView, type ViewMode } from '../store'
+import { computed, reactive } from 'vue'
+import { settings, state, persistSettings, persistView } from '../store'
+import { useI18n } from '../composables/useI18n'
 
+const { t, locale, localeOptions, setAppLocale } = useI18n()
 const draft = reactive({ ...settings })
 
-const themeOptions: Array<{ value: typeof state.theme; label: string }> = [
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-  { value: 'github', label: 'GitHub' },
-  { value: 'newsprint', label: '报刊' },
-  { value: 'night', label: '夜间' }
-]
+const themeOptions = computed(() => [
+  { value: 'light' as const, label: t('theme.light') },
+  { value: 'dark' as const, label: t('theme.dark') },
+  { value: 'github' as const, label: t('theme.github') },
+  { value: 'newsprint' as const, label: t('theme.newsprint') },
+  { value: 'night' as const, label: t('theme.night') }
+])
 
 function save(): void {
   Object.assign(settings, draft)
   persistSettings()
-  window.dispatchEvent(new CustomEvent('typra:settings-changed'))
+  window.dispatchEvent(new CustomEvent('inkdown:settings-changed'))
   state.preferencesVisible = false
 }
 
@@ -33,158 +35,170 @@ function setTheme(theme: typeof state.theme): void {
   <div class="dialog-mask" @click.self="cancel">
     <div class="dialog">
       <header class="dialog-head">
-        <h2>偏好设置</h2>
+        <h2>{{ t('pref.title') }}</h2>
         <button class="ty-btn" @click="cancel">×</button>
       </header>
 
       <div class="dialog-body">
         <section class="group">
-          <h3>外观</h3>
+          <h3>{{ t('pref.appearance') }}</h3>
           <div class="row">
-            <label>主题</label>
+            <label>{{ t('pref.language') }}</label>
+            <select
+              class="sel"
+              :value="locale"
+              @change="setAppLocale(($event.target as HTMLSelectElement).value as 'zh-CN' | 'en')"
+            >
+              <option v-for="opt in localeOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+          <div class="row">
+            <label>{{ t('pref.theme') }}</label>
             <div class="theme-list">
               <button
-                v-for="t in themeOptions"
-                :key="t.value"
+                v-for="opt in themeOptions"
+                :key="opt.value"
                 class="theme-chip"
-                :class="{ on: state.theme === t.value }"
-                @click="setTheme(t.value)"
+                :class="{ on: state.theme === opt.value }"
+                @click="setTheme(opt.value)"
               >
-                {{ t.label }}
+                {{ opt.label }}
               </button>
             </div>
           </div>
           <div class="row">
-            <label>编辑器字号</label>
+            <label>{{ t('pref.fontSize') }}</label>
             <input v-model.number="draft.fontSize" type="range" min="12" max="28" step="1" />
             <span class="value">{{ draft.fontSize }} px</span>
           </div>
           <div class="row">
-            <label>行高</label>
+            <label>{{ t('pref.lineHeight') }}</label>
             <input v-model.number="draft.lineHeight" type="range" min="1.2" max="2.4" step="0.1" />
             <span class="value">{{ draft.lineHeight.toFixed(1) }}</span>
           </div>
           <div class="row">
-            <label>代码字号</label>
+            <label>{{ t('pref.codeFontSize') }}</label>
             <input v-model.number="draft.codeFontSize" type="range" min="10" max="22" step="1" />
             <span class="value">{{ draft.codeFontSize }} px</span>
           </div>
           <div class="row">
-            <label>代码折行</label>
+            <label>{{ t('pref.wrapCode') }}</label>
             <input v-model="draft.wrapCodeBlocks" type="checkbox" />
           </div>
         </section>
 
         <section class="group">
-          <h3>文件</h3>
+          <h3>{{ t('pref.file') }}</h3>
           <div class="row">
-            <label>自动保存</label>
+            <label>{{ t('pref.autoSave') }}</label>
             <input v-model="draft.autoSave" type="checkbox" />
-            <span class="hint">停止输入后自动写盘（仅对已保存过的文件生效）</span>
+            <span class="hint">{{ t('pref.autoSaveHint') }}</span>
           </div>
           <div class="row">
-            <label>自动保存延迟</label>
+            <label>{{ t('pref.autoSaveDelay') }}</label>
             <input v-model.number="draft.autoSaveDelay" type="range" min="500" max="5000" step="100" />
             <span class="value">{{ draft.autoSaveDelay }} ms</span>
           </div>
           <div class="row">
-            <label>默认列表标记</label>
+            <label>{{ t('pref.bulletMarker') }}</label>
             <select v-model="draft.bulletListMarker" class="sel">
-              <option value="-">- 短横线</option>
-              <option value="*">* 星号</option>
-              <option value="+">+ 加号</option>
+              <option value="-">{{ t('pref.bulletDash') }}</option>
+              <option value="*">{{ t('pref.bulletStar') }}</option>
+              <option value="+">{{ t('pref.bulletPlus') }}</option>
             </select>
           </div>
         </section>
 
         <section class="group">
-          <h3>编辑</h3>
+          <h3>{{ t('pref.editing') }}</h3>
           <div class="row">
-            <label>自动配对括号</label>
+            <label>{{ t('pref.autoPairBracket') }}</label>
             <input v-model="draft.autoPairBracket" type="checkbox" />
           </div>
           <div class="row">
-            <label>自动配对 Markdown 语法</label>
+            <label>{{ t('pref.autoPairMarkdown') }}</label>
             <input v-model="draft.autoPairMarkdownSyntax" type="checkbox" />
           </div>
           <div class="row">
-            <label>自动配对引号</label>
+            <label>{{ t('pref.autoPairQuote') }}</label>
             <input v-model="draft.autoPairQuote" type="checkbox" />
           </div>
           <div class="row">
-            <label>Tab 宽度</label>
+            <label>{{ t('pref.tabSize') }}</label>
             <input v-model.number="draft.tabSize" type="number" min="1" max="8" class="num" />
           </div>
           <div class="row">
-            <label>列表缩进</label>
+            <label>{{ t('pref.listIndentation') }}</label>
             <input v-model.number="draft.listIndentation" type="number" min="1" max="4" class="num" />
           </div>
           <div class="row">
-            <label>松散列表项</label>
+            <label>{{ t('pref.looseListItem') }}</label>
             <input v-model="draft.preferLooseListItem" type="checkbox" />
           </div>
         </section>
 
         <section class="group">
-          <h3>Markdown 语法</h3>
+          <h3>{{ t('pref.markdown') }}</h3>
           <div class="row">
-            <label>YAML 前言</label>
+            <label>{{ t('pref.frontMatter') }}</label>
             <input v-model="draft.frontMatter" type="checkbox" />
           </div>
           <div class="row">
-            <label>上下标</label>
+            <label>{{ t('pref.superSubScript') }}</label>
             <input v-model="draft.superSubScript" type="checkbox" />
           </div>
           <div class="row">
-            <label>脚注</label>
+            <label>{{ t('pref.footnote') }}</label>
             <input v-model="draft.footnote" type="checkbox" />
           </div>
           <div class="row">
-            <label>行内公式（$…$）</label>
+            <label>{{ t('pref.texMathDollars') }}</label>
             <input v-model="draft.texMathDollars" type="checkbox" />
           </div>
           <div class="row">
-            <label>GFM 公式（```math）</label>
+            <label>{{ t('pref.texMathGfm') }}</label>
             <input v-model="draft.texMathGfm" type="checkbox" />
           </div>
           <div class="row">
-            <label>代码块行号</label>
+            <label>{{ t('pref.codeLineNumbers') }}</label>
             <input v-model="draft.codeBlockLineNumbers" type="checkbox" />
           </div>
           <div class="row">
-            <label>GitHub 告警块</label>
+            <label>{{ t('pref.githubAlerts') }}</label>
             <input v-model="draft.githubAlerts" type="checkbox" />
           </div>
           <div class="row">
-            <label>多行引用</label>
+            <label>{{ t('pref.multilineBlockquote') }}</label>
             <input v-model="draft.multilineBlockquote" type="checkbox" />
           </div>
         </section>
 
         <section class="group">
-          <h3>视图</h3>
+          <h3>{{ t('pref.view') }}</h3>
           <div class="row">
-            <label>拼写检查</label>
+            <label>{{ t('pref.spellcheck') }}</label>
             <input v-model="draft.spellcheckEnabled" type="checkbox" />
           </div>
           <div class="row">
-            <label>隐藏快捷插入提示</label>
+            <label>{{ t('pref.hideQuickInsert') }}</label>
             <input v-model="draft.hideQuickInsertHint" type="checkbox" />
           </div>
           <div class="row">
-            <label>隐藏链接浮层</label>
+            <label>{{ t('pref.hideLinkPopup') }}</label>
             <input v-model="draft.hideLinkPopup" type="checkbox" />
           </div>
           <div class="row">
-            <label>禁用 HTML</label>
+            <label>{{ t('pref.disableHtml') }}</label>
             <input v-model="draft.disableHtml" type="checkbox" />
           </div>
         </section>
       </div>
 
       <footer class="dialog-foot">
-        <button class="ty-btn" @click="cancel">取消</button>
-        <button class="ty-btn primary" @click="save">保存</button>
+        <button class="ty-btn" @click="cancel">{{ t('pref.cancel') }}</button>
+        <button class="ty-btn primary" @click="save">{{ t('pref.save') }}</button>
       </footer>
     </div>
   </div>

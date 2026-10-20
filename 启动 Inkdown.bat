@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-rem Double-click this file to launch Typra2.
+rem Double-click this file to launch Inkdown.
 rem It uses the bundled Node runtime and strips ELECTRON_RUN_AS_NODE,
 rem which would otherwise make Electron run as plain Node and crash.
 

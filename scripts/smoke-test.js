@@ -2,16 +2,17 @@
 const { spawn } = require('child_process')
 const path = require('path')
 
-const root = 'E:\\Desktop\\JX\\07-DSH\\02-typra2'
+// 从脚本位置推导项目根，避免硬编码路径（目录改名后仍可用）
+const root = __dirname.replace(/[\\/]scripts$/, '')
 const electron = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 
 // 宿主环境可能带有 ELECTRON_RUN_AS_NODE=1，会让 Electron 退化成纯 Node 模式，
 // 必须剔除后才能正常启动窗口。
 const env = {
   ...process.env,
-  TYPRA2_SELF_CHECK: '1',
-  TYPRA2_NO_SESSION_RESTORE: '1',
-  TYPRA2_NO_SESSION_PERSIST: '1'
+  INKDOWN_SELF_CHECK: '1',
+  INKDOWN_NO_SESSION_RESTORE: '1',
+  INKDOWN_NO_SESSION_PERSIST: '1'
 }
 delete env.ELECTRON_RUN_AS_NODE
 

@@ -1,8 +1,15 @@
 """采样截图关键区域的像素颜色，客观判断主题是否真正生效。"""
+import os
 import sys
 from PIL import Image
 
-path = sys.argv[1] if len(sys.argv) > 1 else r'E:\Desktop\JX\07-DSH\02-typra2\screenshots\03-dark.png'
+# 默认取项目 screenshots 下的深色主题截图（从脚本位置推导，不硬编码路径）
+_default = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'screenshots',
+    '03-dark.png',
+)
+path = sys.argv[1] if len(sys.argv) > 1 else _default
 im = Image.open(path).convert('RGB')
 w, h = im.size
 print(f'图像尺寸: {w}x{h}')

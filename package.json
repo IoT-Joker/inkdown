@@ -1,9 +1,9 @@
 {
-  "name": "typra2",
+  "name": "inkdown",
   "version": "0.1.0",
-  "description": "Typra2 - a Typora-like WYSIWYG markdown editor built on marktext's muya engine",
+  "description": "Inkdown - a Typora-like WYSIWYG markdown editor built on marktext's muya engine",
   "main": "./out/main/index.js",
-  "author": "typra2",
+  "author": "inkdown",
   "license": "MIT",
   "private": true,
   "scripts": {

@@ -1,34 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { getActiveTab, isDirty, state, settings } from '../store'
+import { getActiveTab, isDirty, state } from '../store'
 import { executeCommand } from '../composables/useCommands'
+import { useI18n } from '../composables/useI18n'
 
+const { t } = useI18n()
 const tab = computed(() => getActiveTab())
 
-const themeLabel = computed(
-  () =>
-    ({
-      light: '浅色',
-      dark: '深色',
-      github: 'GitHub',
-      newsprint: '报刊',
-      night: '夜间'
-    })[state.theme] ?? state.theme
-)
+const themeLabel = computed(() => t(`theme.${state.theme}`))
 
 const savedLabel = computed(() => {
-  const t = tab.value
-  if (!t) return ''
-  if (!t.filePath) return '未保存到文件'
-  return isDirty(t) ? '未保存' : '已保存'
+  const t0 = tab.value
+  if (!t0) return ''
+  if (!t0.filePath) return t('status.notSavedToFile')
+  return isDirty(t0) ? t('status.unsaved') : t('status.saved')
 })
 
 const cursorLabel = computed(() => {
-  const t = tab.value
-  const anchor = t?.cursor?.anchor
-  if (!anchor) return '行 —'
+  const anchor = tab.value?.cursor?.anchor
+  if (!anchor) return t('status.lineNone')
   // cursor 是源码模式的行列坐标，取行号展示（从 1 开始计数更符合直觉）
-  return `行 ${anchor.line + 1}`
+  return t('status.line', { n: anchor.line + 1 })
 })
 </script>
 
@@ -42,23 +34,23 @@ const cursorLabel = computed(() => {
     </div>
     <div class="status-right">
       <button class="status-btn" :class="{ on: state.viewMode === 'source' }" @click="executeCommand('view:toggleSource')">
-        {{ state.viewMode === 'source' ? '源码' : '所见即所得' }}
+        {{ state.viewMode === 'source' ? t('status.source') : t('status.wysiwyg') }}
       </button>
-      <button class="status-btn" :class="{ on: state.focusMode }" title="专注模式 F8" @click="executeCommand('view:toggleFocus')">
-        专注
+      <button class="status-btn" :class="{ on: state.focusMode }" :title="`${t('menu.view.toggleFocus')} F8`" @click="executeCommand('view:toggleFocus')">
+        {{ t('status.focus') }}
       </button>
       <button
         class="status-btn"
         :class="{ on: state.typewriterMode }"
-        title="打字机模式 F9"
+        :title="`${t('menu.view.toggleTypewriter')} F9`"
         @click="executeCommand('view:toggleTypewriter')"
       >
-        打字机
+        {{ t('status.typewriter') }}
       </button>
-      <button class="status-btn" :title="`切换主题（当前 ${themeLabel}）`" @click="executeCommand('view:toggleTheme')">
+      <button class="status-btn" :title="t('status.switchTheme', { theme: themeLabel })" @click="executeCommand('view:toggleTheme')">
         {{ themeLabel }}
       </button>
-      <span class="status-item">{{ state.wordCount }} 字</span>
+      <span class="status-item">{{ t('status.words', { n: state.wordCount }) }}</span>
       <span class="status-item">{{ cursorLabel }}</span>
       <span class="status-item zoom">{{ Math.round(state.zoom * 100) }}%</span>
     </div>

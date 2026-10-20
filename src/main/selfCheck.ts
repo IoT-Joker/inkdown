@@ -5,7 +5,7 @@ import { join } from 'node:path'
 /**
  * 端到端自检：在真实渲染进程里验证编辑器内核是否成功挂载、
  * 能否读写 Markdown、大纲与字数统计是否工作。
- * 通过 TYPRA2_SELF_CHECK=1 触发，结果以退出码表示（0 通过 / 1 失败）。
+ * 通过 INKDOWN_SELF_CHECK=1 触发，结果以退出码表示（0 通过 / 1 失败）。
  */
 export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 为文件树用例准备一个临时目录（含子目录与文件）
@@ -55,7 +55,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 2b. 导出运行时真实可用的 Muya 方法，用于核对内核 API 适配情况
   const apiList = await win.webContents.executeJavaScript(`
     (() => {
-      const muya = window.__typraMuya
+      const muya = window.__inkdownMuya
       if (!muya) return { error: 'no instance' }
       const proto = Object.getPrototypeOf(muya)
       return Object.getOwnPropertyNames(proto)
@@ -102,8 +102,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const roundTrip = await win.webContents.executeJavaScript(`
     (async () => {
       const w = window
-      // EditorHost 把实例挂到 window.__typraMuya 供自检使用
-      const muya = w.__typraMuya
+      // EditorHost 把实例挂到 window.__inkdownMuya 供自检使用
+      const muya = w.__inkdownMuya
       if (!muya) return { error: 'no muya instance' }
       const input = '# 标题一\\n\\n正文段落，含 **加粗** 与 \\\`行内代码\\\`。\\n\\n## 二级标题\\n\\n- 项目一\\n- 项目二\\n'
       muya.setContent(input, false)
@@ -136,7 +136,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 4b. 验证进阶语法：表格、数学公式、任务列表、代码块都能渲染
   const features = await win.webContents.executeJavaScript(`
     (async () => {
-      const muya = window.__typraMuya
+      const muya = window.__inkdownMuya
       if (!muya) return { error: 'no muya instance' }
       const input = [
         '| 列A | 列B |',
@@ -182,7 +182,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 注意 2：createTable 的签名是 createTable({ rows, columns })，不是两个位置参数
   const commandEffect = await win.webContents.executeJavaScript(`
     (async () => {
-      const muya = window.__typraMuya
+      const muya = window.__inkdownMuya
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const at = (line, ch) => ({ anchor: { line, ch }, focus: { line, ch } })
       const results = {}
@@ -320,7 +320,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 4b-3. 验证查找替换与专注模式
   const findResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const muya = window.__typraMuya
+      const muya = window.__inkdownMuya
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
       // 等渲染稳定后再搜索
@@ -365,8 +365,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const focusVisual = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-      const muya = window.__typraMuya
-      window.__typraLoad('# 标题\\n\\n第一段内容。\\n\\n第二段内容。\\n\\n第三段内容。\\n')
+      const muya = window.__inkdownMuya
+      window.__inkdownLoad('# 标题\\n\\n第一段内容。\\n\\n第二段内容。\\n\\n第三段内容。\\n')
       await wait(700)
       muya.setCursorByOffset({ anchor: { line: 2, ch: 1 }, focus: { line: 2, ch: 1 } })
       await wait(300)
@@ -407,7 +407,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 4b-4. 验证命令中心已注册全部菜单命令，且主题切换真的改变配色
   const cmdCheck = await win.webContents.executeJavaScript(`
     (async () => {
-      const c = window.__typraCommands
+      const c = window.__inkdownCommands
       if (!c) return { error: '命令中心未暴露' }
       const ids = c.ids()
       const required = [
@@ -459,12 +459,12 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 4b-5. 验证源码模式：内容能双向同步，切回所见即所得不丢改动
   const sourceCheck = await win.webContents.executeJavaScript(`
     (async () => {
-      const c = window.__typraCommands
-      const app = window.__typraApp
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
       // 先写入初始内容
-      window.__typraLoad('# 源码模式测试\\n\\n初始段落。\\n')
+      window.__inkdownLoad('# 源码模式测试\\n\\n初始段落。\\n')
       await wait(500)
 
       // 切到源码模式
@@ -483,7 +483,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       // 切回所见即所得
       await c.execute('view:toggleSource')
       await wait(700)
-      const backToWysiwyg = window.__typraMuya.getMarkdown()
+      const backToWysiwyg = window.__inkdownMuya.getMarkdown()
       const isSourceVisible = !!document.querySelector('.source-editor')
 
       return { sourceText, tabAfterEdit, backToWysiwyg, isSourceVisible }
@@ -527,7 +527,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         '\\\`\\\`\\\`',
         ''
       ].join('\\n')
-      window.__typraLoad(md)
+      window.__inkdownLoad(md)
       await wait(3500)
       const c = document.querySelector('.muya-container')
       const tokens = c.querySelectorAll('.token, [class*="token"]')
@@ -564,12 +564,12 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const typewriterCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-      const c = window.__typraCommands
-      const muya = window.__typraMuya
+      const c = window.__inkdownCommands
+      const muya = window.__inkdownMuya
 
       // 造一篇足够长的文档，让光标可以远离视口中心
       const long = Array.from({ length: 40 }, (_, i) => '第 ' + (i + 1) + ' 段落内容。').join('\\n\\n')
-      window.__typraLoad(long)
+      window.__inkdownLoad(long)
       await wait(800)
 
       // 先关闭打字机模式，把光标放到很靠后的位置
@@ -593,7 +593,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         before,
         after,
         scrollerHeight: scroller.clientHeight,
-        diag: window.__typraTypewriterDiag,
+        diag: window.__inkdownTypewriterDiag,
         rangeCount: document.getSelection() ? document.getSelection().rangeCount : -1
       }
     })()
@@ -617,19 +617,19 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const tabsCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-      const app = window.__typraApp
-      const muya = window.__typraMuya
+      const app = window.__inkdownApp
+      const muya = window.__inkdownMuya
 
       // 新建第二个标签并写入不同内容
-      window.__typraLoad('# 标签一\\n\\n第一个标签的内容。\\n')
+      window.__inkdownLoad('# 标签一\\n\\n第一个标签的内容。\\n')
       await wait(500)
       const firstId = app.activeTab().id
       const firstContent = app.activeTab().content
 
-      const c = window.__typraCommands
+      const c = window.__inkdownCommands
       await c.execute('file:new')
       await wait(600)
-      window.__typraLoad('# 标签二\\n\\n第二个标签的内容。\\n')
+      window.__inkdownLoad('# 标签二\\n\\n第二个标签的内容。\\n')
       await wait(500)
       const secondId = app.activeTab().id
       const secondContent = app.activeTab().content
@@ -665,8 +665,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const treeCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-      const app = window.__typraApp
-      const dir = await window.typra.readDir(${JSON.stringify(workDirForTree)})
+      const app = window.__inkdownApp
+      const dir = await window.inkdown.readDir(${JSON.stringify(workDirForTree)})
       return {
         name: dir.name,
         childCount: dir.children.length,
@@ -689,7 +689,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const dropCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       const before = app.tabs().length
       const host = document.querySelector('.editor-host')
       if (!host) return { error: '找不到 editor-host' }
@@ -700,8 +700,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       dt.items.add(file)
 
       // 拦截路径解析：jsdom/无头环境无法从 File 取真实磁盘路径
-      const original = window.typra.getPathForFile
-      window.typra.getPathForFile = () => ${JSON.stringify(dropFile)}
+      const original = window.inkdown.getPathForFile
+      window.inkdown.getPathForFile = () => ${JSON.stringify(dropFile)}
 
       const over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt })
       host.dispatchEvent(over)
@@ -711,15 +711,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       // 合成 DragEvent 的 dataTransfer.files 在无头环境不可用，
       // 因此这里直接驱动同一套投放逻辑（openDroppedFiles）；
       // contextBridge 暴露的对象只读，路径解析改用可注入钩子。
-      window.__typraDrop.setPathHook(() => ${JSON.stringify(dropFile)})
-      const openedCount = await window.__typraDrop.openFiles([file])
+      window.__inkdownDrop.setPathHook(() => ${JSON.stringify(dropFile)})
+      const openedCount = await window.__inkdownDrop.openFiles([file])
       await wait(900)
 
       // 关闭提示层（模拟 drop 结束后隐藏）
       host.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
       await wait(200)
 
-      window.__typraDrop.setPathHook(null)
+      window.__inkdownDrop.setPathHook(null)
       const files = app.tabs().map((t) => t.filePath).filter(Boolean)
       return {
         before,
@@ -754,15 +754,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const dropBad = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       const before = app.tabs().length
       app.clearNotice()
       await wait(150)
       const file = new File(['{}'], 'blocked.json', { type: 'application/json' })
-      window.__typraDrop.setPathHook(() => 'E:\\\\tmp\\\\blocked.json')
-      const openedCount = await window.__typraDrop.openFiles([file])
+      window.__inkdownDrop.setPathHook(() => 'E:\\\\tmp\\\\blocked.json')
+      const openedCount = await window.__inkdownDrop.openFiles([file])
       await wait(400)
-      window.__typraDrop.setPathHook(null)
+      window.__inkdownDrop.setPathHook(null)
       return {
         before,
         after: app.tabs().length,
@@ -785,9 +785,9 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   //     先载入确定的文档内容，避免受前序用例（拖入等）改变当前标签的影响。
   const exported = await win.webContents.executeJavaScript(`
     (async () => {
-      const mod = window.__typraExport
+      const mod = window.__inkdownExport
       if (!mod) return { error: 'export module not exposed' }
-      window.__typraLoad('# 导出标题\\n\\n正文段落。\\n\\n| 列A | 列B |\\n| --- | --- |\\n| 1 | 2 |\\n')
+      window.__inkdownLoad('# 导出标题\\n\\n正文段落。\\n\\n| 列A | 列B |\\n| --- | --- |\\n| 1 | 2 |\\n')
       await new Promise((r) => setTimeout(r, 700))
       const html = await mod.buildHtmlForCheck()
       return {
@@ -821,10 +821,10 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 5b. 字数统计必须随文档内容变化（用较长文档验证，而非空文档）
   const countCheck = await win.webContents.executeJavaScript(`
     (async () => {
-      const muya = window.__typraMuya
+      const muya = window.__inkdownMuya
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const long = '# 中文标题\\n\\n' + '这是一段用于统计的中文正文内容。'.repeat(20) + '\\n'
-      window.__typraLoad(long)
+      window.__inkdownLoad(long)
       await wait(900)
       const text = document.querySelector('.status-bar')?.innerText || ''
       const m = text.match(/(\\d+)\\s*字/)
@@ -837,15 +837,60 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log(`[selfcheck] 字数统计 OK: ${countCheck.shown} 字`)
 
+  // 5c. 验证中英文切换：界面文案应随语言改变并正确还原
+  const i18nCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const i18n = window.__inkdownI18n
+      if (!i18n) return { error: 'i18n 未暴露' }
+      const read = () => ({
+        statusbar: document.querySelector('.status-bar')?.innerText || '',
+        sidebarFiles: document.querySelector('.sidebar-tab')?.innerText.trim() || ''
+      })
+
+      await i18n.setAppLocale('zh-CN')
+      await wait(500)
+      const zh = read()
+
+      await i18n.setAppLocale('en')
+      await wait(500)
+      const en = read()
+
+      // 切回中文，避免影响后续用例与真实使用
+      await i18n.setAppLocale('zh-CN')
+      await wait(400)
+      const back = read()
+
+      return { zh, en, back }
+    })()
+  `)
+  if (i18nCheck.error) {
+    console.error('[selfcheck] FAIL: i18n 检查无法执行:', i18nCheck.error)
+    return false
+  }
+  if (i18nCheck.zh.sidebarFiles !== '文件' || !/专注/.test(i18nCheck.zh.statusbar)) {
+    console.error('[selfcheck] FAIL: 中文界面文案异常:', JSON.stringify(i18nCheck.zh))
+    return false
+  }
+  if (i18nCheck.en.sidebarFiles !== 'Files' || !/Focus/.test(i18nCheck.en.statusbar)) {
+    console.error('[selfcheck] FAIL: 英文界面文案异常:', JSON.stringify(i18nCheck.en))
+    return false
+  }
+  if (i18nCheck.back.sidebarFiles !== '文件') {
+    console.error('[selfcheck] FAIL: 切回中文未生效:', JSON.stringify(i18nCheck.back))
+    return false
+  }
+  console.log('[selfcheck] 中英文切换 OK: 界面文案随语言改变并正确还原')
+
   // 清理自检用的临时目录（所有依赖它的用例都已执行完）。
   // 先停掉该目录下文件的监听器：fs.watch 持有句柄时删除会失败或挂住。
   await win.webContents
     .executeJavaScript(
       `(async () => {
-        const app = window.__typraApp
+        const app = window.__inkdownApp
         const files = app.tabs().map((t) => t.filePath).filter(Boolean)
         for (const f of files) {
-          if (f.includes('selfcheck-tree')) await window.typra.unwatch(f)
+          if (f.includes('selfcheck-tree')) await window.inkdown.unwatch(f)
         }
         return true
       })()`

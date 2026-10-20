@@ -1,5 +1,12 @@
 import { state, type Tab } from '../store'
 import { getActiveTab, isDirty, pushRecent } from '../store'
+import { translate } from '../../../shared/i18n'
+import { currentLocale } from './useI18n'
+
+/** 取当前语言的文案（useFile 是普通函数，不经过组件上下文）。 */
+function t(key: string, params?: Record<string, string | number>): string {
+  return translate(currentLocale.value, key, params)
+}
 
 /** 文件读写与标签页管理。所有磁盘操作都经由 preload 桥接。 */
 export function useFile() {
@@ -10,16 +17,16 @@ export function useFile() {
       pushRecent(filePath)
       return
     }
-    const { content, mtimeMs } = await window.typra.readFile(filePath)
+    const { content, mtimeMs } = await window.inkdown.readFile(filePath)
     const tab = createTabFromFile(filePath, content, mtimeMs)
     state.tabs.push(tab)
     state.activeId = tab.id
-    void window.typra.watch(filePath)
+    void window.inkdown.watch(filePath)
     pushRecent(filePath)
   }
 
   async function openDialog(): Promise<void> {
-    const files = await window.typra.openFileDialog()
+    const files = await window.inkdown.openFileDialog()
     for (const f of files) {
       const existing = state.tabs.find((t) => t.filePath === f.filePath)
       if (existing) {
@@ -31,7 +38,7 @@ export function useFile() {
         state.tabs.push(tab)
         state.activeId = tab.id
       }
-      window.typra.watch(f.filePath)
+      window.inkdown.watch(f.filePath)
     }
   }
 
@@ -39,19 +46,19 @@ export function useFile() {
     if (!tab) return false
     let target = tab.filePath
     if (!target || forceDialog) {
-      const picked = await window.typra.saveAsDialog(tab.title.endsWith('.md') ? tab.title : `${tab.title}.md`)
+      const picked = await window.inkdown.saveAsDialog(tab.title.endsWith('.md') ? tab.title : `${tab.title}.md`)
       if (!picked) return false
       target = picked
     }
     // 显式判空，让类型收窄到 string
     if (!target) return false
     const finalPath: string = target
-    const { mtimeMs } = await window.typra.writeFile(finalPath, tab.content)
+    const { mtimeMs } = await window.inkdown.writeFile(finalPath, tab.content)
     tab.filePath = finalPath
     tab.title = baseName(finalPath)
     tab.savedContent = tab.content
     tab.mtimeMs = mtimeMs
-    void window.typra.watch(finalPath)
+    void window.inkdown.watch(finalPath)
     return true
   }
 
@@ -69,10 +76,10 @@ export function useFile() {
    */
   async function confirmClose(tab: Tab): Promise<boolean> {
     if (!isDirty(tab)) return true
-    const answer = await window.typra.messageBox(
-      '是否保存改动？',
-      `「${tab.title}」有未保存的改动。`,
-      ['保存', '不保存', '取消']
+    const answer = await window.inkdown.messageBox(
+      t('dialog.saveChanges'),
+      t('dialog.saveChangesDetail', { name: tab.title }),
+      [t('dialog.save'), t('dialog.dontSave'), t('dialog.cancel')]
     )
     if (answer === 0) return await saveTab(tab)
     if (answer === 1) return true
@@ -81,7 +88,7 @@ export function useFile() {
 
   /** 打开文件夹作为工作区，供文件树使用。 */
   async function openFolder(): Promise<void> {
-    const dir = await window.typra.openFolderDialog()
+    const dir = await window.inkdown.openFolderDialog()
     if (!dir) return
     state.workspace = dir
     state.sidebarVisible = true
@@ -90,7 +97,7 @@ export function useFile() {
 
   async function refreshWorkspace(): Promise<void> {
     if (!state.workspace) return
-    state.workspace = await window.typra.readDir(state.workspace.path, 1)
+    state.workspace = await window.inkdown.readDir(state.workspace.path, 1)
   }
 
   return { openPath, openDialog, saveTab, saveAll, confirmClose, openFolder, refreshWorkspace }

@@ -67,11 +67,11 @@ export function registerGlobalCommands(): void {
       state.zoom = 1
       persistView()
     },
-    'view:devtools': () => window.typra.toggleDevTools(),
+    'view:devtools': () => window.inkdown.toggleDevTools(),
     'app:preferences': () => {
       state.preferencesVisible = true
     },
-    'app:quit': () => window.typra.quit(),
+    'app:quit': () => window.inkdown.quit(),
     'file:new': () => {
       createTab({ content: '' })
     },
@@ -110,7 +110,7 @@ export function registerGlobalCommands(): void {
       for (const tab of state.tabs) {
         if (!(await confirmClose(tab))) return
       }
-      window.typra.quit()
+      window.inkdown.quit()
     },
     'edit:find': () => {
       state.findMode = 'find'

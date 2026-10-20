@@ -17,14 +17,14 @@ const workDir = path.join(root, '.tmp-session-test')
 
 function run(phase) {
   return new Promise((resolve) => {
-    const env = { ...process.env, TYPRA2_SESSION_TEST: workDir, TYPRA2_SESSION_PHASE: phase }
+    const env = { ...process.env, INKDOWN_SESSION_TEST: workDir, INKDOWN_SESSION_PHASE: phase }
     // 第一阶段要求干净起点（不恢复旧会话）但仍要记录新会话；
     // 第二阶段才真正验证「重启后自动恢复」。
-    if (phase === 'first') env.TYPRA2_NO_SESSION_RESTORE = '1'
+    if (phase === 'first') env.INKDOWN_NO_SESSION_RESTORE = '1'
     delete env.ELECTRON_RUN_AS_NODE
-    delete env.TYPRA2_SELF_CHECK
-    delete env.TYPRA2_SCREENSHOT
-    delete env.TYPRA2_FILE_TEST
+    delete env.INKDOWN_SELF_CHECK
+    delete env.INKDOWN_SCREENSHOT
+    delete env.INKDOWN_FILE_TEST
 
     const child = spawn(electron, ['.'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''

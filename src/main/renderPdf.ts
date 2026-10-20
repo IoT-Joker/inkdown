@@ -1,6 +1,6 @@
 /**
  * 把导出的 PDF 渲染成 PNG，用于人工核对导出内容。
- * 用法：electron . （带 TYPRA2_RENDER_PDF=<pdf路径>）
+ * 用法：electron . （带 INKDOWN_RENDER_PDF=<pdf路径>）
  */
 import type { BrowserWindow } from 'electron'
 import { promises as fsp } from 'node:fs'

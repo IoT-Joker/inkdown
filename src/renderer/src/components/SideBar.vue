@@ -2,8 +2,10 @@
 import { computed, ref } from 'vue'
 import { state } from '../store'
 import { executeCommand } from '../composables/useCommands'
+import { useI18n } from '../composables/useI18n'
 import FileTreeNode from './FileTreeNode.vue'
 
+const { t } = useI18n()
 const filter = ref('')
 
 const filteredChildren = computed(() => {
@@ -27,7 +29,7 @@ function onOutlineClick(index: number): void {
   const headings = document.querySelectorAll('.muya-container .mu-atx-heading, .muya-container .mu-setext-heading')
   const el = headings[index] as HTMLElement | undefined
   if (!el) return
-  const muya = (window as unknown as { __typraMuya?: { revealElement(e: Element): void } }).__typraMuya
+  const muya = (window as unknown as { __inkdownMuya?: { revealElement(e: Element): void } }).__inkdownMuya
   muya?.revealElement(el)
   el.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
@@ -46,33 +48,33 @@ function outlineIndent(level: number): string {
         :class="{ active: state.sidebarTab === 'files' }"
         @click="state.sidebarTab = 'files'"
       >
-        文件
+        {{ t('sidebar.files') }}
       </button>
       <button
         class="sidebar-tab"
         :class="{ active: state.sidebarTab === 'outline' }"
         @click="state.sidebarTab = 'outline'"
       >
-        大纲
+        {{ t('sidebar.outline') }}
       </button>
-      <button class="sidebar-hide" title="隐藏侧边栏" @click="state.sidebarVisible = false">«</button>
+      <button class="sidebar-hide" :title="t('sidebar.hide')" @click="state.sidebarVisible = false">«</button>
     </div>
 
     <div v-show="state.sidebarTab === 'files'" class="sidebar-body">
       <div class="sidebar-actions">
-        <button class="mini-btn" title="打开文件夹" @click="executeCommand('file:openFolder')">
-          打开文件夹
+        <button class="mini-btn" :title="t('sidebar.openFolder')" @click="executeCommand('file:openFolder')">
+          {{ t('sidebar.openFolder') }}
         </button>
         <button
           class="mini-btn"
-          title="刷新"
+          :title="t('sidebar.refresh')"
           :disabled="!state.workspace"
           @click="$emit('refresh')"
         >
-          刷新
+          {{ t('sidebar.refresh') }}
         </button>
       </div>
-      <input v-if="state.workspace" v-model="filter" class="sidebar-filter" placeholder="按名称筛选…" />
+      <input v-if="state.workspace" v-model="filter" class="sidebar-filter" :placeholder="t('sidebar.filter')" />
       <div class="tree">
         <template v-if="state.workspace">
           <div class="workspace-name">{{ state.workspace.name }}</div>
@@ -84,13 +86,13 @@ function outlineIndent(level: number): string {
             @refresh="$emit('refresh')"
           />
         </template>
-        <p v-else class="sidebar-empty">尚未打开文件夹</p>
+        <p v-else class="sidebar-empty">{{ t('sidebar.noFolder') }}</p>
       </div>
     </div>
 
     <div v-show="state.sidebarTab === 'outline'" class="sidebar-body">
       <div class="tree">
-        <p v-if="!state.outline.length" class="sidebar-empty">当前文档没有标题</p>
+        <p v-if="!state.outline.length" class="sidebar-empty">{{ t('sidebar.noHeadings') }}</p>
         <div
           v-for="(item, index) in state.outline"
           :key="item.slug + index"

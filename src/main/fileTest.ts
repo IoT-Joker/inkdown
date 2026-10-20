@@ -1,7 +1,7 @@
 /**
  * 真实文件工作流验证：通过主进程驱动渲染层，
  * 走「打开文件 → 编辑 → 保存 → 另存为 → 导出 HTML」完整链路。
- * 用 TYPRA2_FILE_TEST=1 触发，结果以退出码表示。
+ * 用 INKDOWN_FILE_TEST=1 触发，结果以退出码表示。
  */
 import type { BrowserWindow } from 'electron'
 import { promises as fsp } from 'node:fs'
@@ -43,7 +43,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   // 1. 打开文件（走应用的真实打开路径）
   const openResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       if (!app) return { error: 'app bridge 未暴露' }
       await app.openPath(${JSON.stringify(source)})
       await new Promise((r) => setTimeout(r, 800))
@@ -60,7 +60,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   // 2. 编辑内容（模拟用户输入）
   const editResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const muya = window.__typraMuya
+      const muya = window.__inkdownMuya
       muya.setContent('# 文件工作流测试\\n\\n已编辑的新正文。\\n\\n- 项目一\\n', false)
       await new Promise((r) => setTimeout(r, 700))
       return { markdown: muya.getMarkdown() }
@@ -75,10 +75,10 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   // 3. 保存到新路径（模拟另存为）
   const saveResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       const tab = app.activeTab()
       tab.filePath = ${JSON.stringify(saved)}
-      tab.content = window.__typraMuya.getMarkdown()
+      tab.content = window.__inkdownMuya.getMarkdown()
       await app.saveTab(tab)
       return { filePath: app.activeTab().filePath, saved: app.activeTab().savedContent }
     })()
@@ -98,7 +98,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   //     （这正是「勾选复选框就提示重新载入」的根因）
   const selfWriteResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const tab = app.activeTab()
 
@@ -108,7 +108,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
 
       // 模拟「勾选复选框」：改内容 → 自动保存（走应用真实的保存路径）
       tab.content = tab.content + '\\n\\n- [x] 勾选测试\\n'
-      window.__typraMuya.setContent(tab.content, false)
+      window.__inkdownMuya.setContent(tab.content, false)
       await wait(400)
       await app.saveTab(tab)
       // 等超过自动保存防抖与 fs.watch 触发窗口
@@ -133,7 +133,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   // 3c. 对照测试：真实的外部改动必须能检测到
   const externalResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       app.clearNotice && app.clearNotice()
       await wait(200)
@@ -150,7 +150,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   await fsp.writeFile(saved, '# 外部改动\n\n这段内容由外部写入。\n', 'utf8')
   await new Promise((r) => setTimeout(r, 3000))
   const externalNotice = await win.webContents.executeJavaScript(
-    `(window.__typraApp.notice ? window.__typraApp.notice.text : null)`
+    `(window.__inkdownApp.notice ? window.__inkdownApp.notice.text : null)`
   )
   if (!externalNotice) {
     console.error('[filetest] FAIL: 真实外部改动未被检测到（漏报）')
@@ -161,7 +161,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   // 4. 导出 HTML
   const exportResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const html = await window.__typraExport.buildHtmlForCheck()
+      const html = await window.__inkdownExport.buildHtmlForCheck()
       return { length: html.length, html }
     })()
   `)
@@ -183,8 +183,8 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   const pdfPath = join(workDir, 'exported.pdf')
   const pdfResult = await win.webContents.executeJavaScript(`
     (async () => {
-      const html = await window.__typraExport.buildHtmlForCheck()
-      return window.typra.exportPdf(${JSON.stringify(pdfPath)}, html)
+      const html = await window.__inkdownExport.buildHtmlForCheck()
+      return window.inkdown.exportPdf(${JSON.stringify(pdfPath)}, html)
     })()
   `)
   if (!pdfResult) {
@@ -213,7 +213,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   await fsp.writeFile(join(mixedDir, 'data.json'), '{}', 'utf8')
   await fsp.writeFile(join(mixedDir, 'script.js'), '// x', 'utf8')
   const treeFiltered = await win.webContents.executeJavaScript(
-    `window.typra.readDir(${JSON.stringify(mixedDir)})`
+    `window.inkdown.readDir(${JSON.stringify(mixedDir)})`
   )
   const names = treeFiltered.children.map((c: { name: string }) => c.name).sort()
   const hasNonMd = names.some((n: string) => /\.(png|json|js)$/i.test(n))
@@ -230,7 +230,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   // 8. 会话恢复：记录当前标签，模拟重启后应能恢复
   const sessionSaved = await win.webContents.executeJavaScript(`
     (async () => {
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       // 打开两个文件作为会话内容
       await app.openPath(${JSON.stringify(source)})
@@ -265,7 +265,7 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
  * 第一次打开文件并退出，第二次启动时检查是否自动恢复。
  */
 export async function runSessionRestoreTest(win: BrowserWindow, workDir: string): Promise<boolean> {
-  const phase = process.env['TYPRA2_SESSION_PHASE'] ?? 'first'
+  const phase = process.env['INKDOWN_SESSION_PHASE'] ?? 'first'
   const fileA = join(workDir, 'session-a.md')
   const fileB = join(workDir, 'session-b.md')
 
@@ -297,7 +297,7 @@ export async function runSessionRestoreTest(win: BrowserWindow, workDir: string)
     // 打开两个文件，让会话被记录
     await win.webContents.executeJavaScript(`
       (async () => {
-        const app = window.__typraApp
+        const app = window.__inkdownApp
         const wait = (ms) => new Promise((r) => setTimeout(r, ms))
         await app.openPath(${JSON.stringify(fileA)})
         await wait(400)
@@ -315,7 +315,7 @@ export async function runSessionRestoreTest(win: BrowserWindow, workDir: string)
   // 第二阶段：新进程启动，应当自动恢复上次的标签
   const restored = await win.webContents.executeJavaScript(`
     (async () => {
-      const app = window.__typraApp
+      const app = window.__inkdownApp
       // 启动流程会异步恢复，轮询等待
       for (let i = 0; i < 40; i++) {
         const files = app.tabs().map((t) => t.filePath).filter(Boolean)

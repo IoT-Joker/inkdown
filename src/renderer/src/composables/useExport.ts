@@ -60,7 +60,7 @@ function exportName(ext: string): string {
 async function buildHtml(): Promise<string> {
   const tab = getActiveTab()
   if (!tab) return ''
-  const muya = (window as unknown as { __typraMuya?: unknown }).__typraMuya
+  const muya = (window as unknown as { __inkdownMuya?: unknown }).__inkdownMuya
   if (muya) {
     try {
       const converter = new MarkdownToHtml(tab.content, muya as never)
@@ -116,14 +116,14 @@ export async function buildHtmlForCheck(): Promise<string> {
 }
 
 // 暴露给主进程自检使用
-;(window as unknown as Record<string, unknown>).__typraExport = { buildHtmlForCheck }
+;(window as unknown as Record<string, unknown>).__inkdownExport = { buildHtmlForCheck }
 
 /** 导出为 HTML 文件。 */
 export async function exportHtml(): Promise<boolean> {
   const tab = getActiveTab()
   if (!tab) return false
   const html = await buildHtml()
-  const saved = await window.typra.saveFileDialog(exportName('html'), html)
+  const saved = await window.inkdown.saveFileDialog(exportName('html'), html)
   return !!saved
 }
 
@@ -135,9 +135,9 @@ export async function exportHtml(): Promise<boolean> {
 export async function exportPdf(): Promise<boolean> {
   const tab = getActiveTab()
   if (!tab) return false
-  const target = await window.typra.saveAsDialog(exportName('pdf'))
+  const target = await window.inkdown.saveAsDialog(exportName('pdf'))
   if (!target) return false
 
   const html = await buildHtml()
-  return window.typra.exportPdf(target, html)
+  return window.inkdown.exportPdf(target, html)
 }

@@ -1,4 +1,4 @@
-# Typra2
+# Inkdown
 
 一个模仿 [Typora](https://typora.io/) 的桌面 Markdown 编辑器，以 [marktext](https://github.com/marktext/marktext) 的编辑器内核 **muya**（`@muyajs/core`）为基础构建。
 
@@ -10,7 +10,7 @@
 
 marktext 已重构为 monorepo：`packages/muya`（纯 JS/DOM 的编辑器内核）与 `packages/desktop`（Electron 外壳）。
 
-Typra2 把 marktext 的 **muya 内核源码**（develop 分支）以 workspace 包的形式内联到 `packages/muya`，
+Inkdown 把 marktext 的 **muya 内核源码**（develop 分支）以 workspace 包的形式内联到 `packages/muya`，
 直接作为编辑器内核复用；外壳、交互与 Typora 式功能全部自行实现。这样做的原因：
 
 - npm 上发布的 `@muyajs/core@0.2.0` 是**精简快照**，只暴露 18 个方法，
@@ -26,7 +26,7 @@ Typra2 把 marktext 的 **muya 内核源码**（develop 分支）以 workspace �
 ```
 src/
   main/        Electron 主进程：窗口、IPC、菜单、端到端自检、截图
-  preload/     上下文隔离桥接（window.typra）
+  preload/     上下文隔离桥接（window.inkdown）
   renderer/    Vue 3 界面
     src/components/   编辑器宿主、标签栏、侧边栏、状态栏、查找栏、偏好设置
     src/composables/  命令总线、文件操作、导出
@@ -47,6 +47,18 @@ examples/demo.md     功能演示文档
 | 视图 | 大纲、文件树、专注模式、打字机模式、5 套主题、缩放 |
 | 文件 | 新建/打开/保存/另存为、打开文件夹、多标签、自动保存、外部改动检测、会话恢复 |
 | 工具 | 查找与替换（正则/大小写/全词）、字数统计、导出 HTML/PDF |
+| 界面 | **中英文切换**（含原生菜单与对话框） |
+
+### 界面语言
+
+偏好设置 → 外观 → **界面语言**，可选简体中文 / English。
+
+切换后立即生效，并且：
+
+- 应用内所有文案（标签栏、侧边栏、状态栏、查找栏、偏好设置、提示条）随之切换
+- **原生菜单栏与系统对话框**也会重建为对应语言
+- 编辑器内部的浮动工具（表格菜单、图片工具等）由 muya 内核语言包负责，同样跟随切换
+- 选择结果持久化，下次启动沿用（首次启动按系统语言自动选择）
 
 ### 文件树与拖入
 
@@ -82,7 +94,7 @@ pnpm shots      # 生成界面截图到 screenshots/
 
 ### 如何启动
 
-**方式一：双击** `启动 Typra2.bat`（Windows 最省事）
+**方式一：双击** `启动 Inkdown.bat`（Windows 最省事）
 
 **方式二：命令行**
 
@@ -127,6 +139,7 @@ node_modules\electron\dist\electron.exe .
 | 文件树 | 读取含子目录的目录结构 |
 | 导出 | 产物为完整独立 HTML |
 | 大纲与字数 | 大纲条目数正确、字数随长文档更新 |
+| 中英文切换 | 界面文案随语言改变并正确还原 |
 
 **2. 真实文件工作流测试**（`pnpm filetest`）——验证完整链路：
 
@@ -142,7 +155,7 @@ node_modules\electron\dist\electron.exe .
 避免仅凭肉眼判断主题是否生效。
 
 **4. PDF 内容核对**：主进程支持把导出的 PDF 渲染成图片
-（`TYPRA2_RENDER_PDF=<pdf>`），用于确认导出内容不含应用界面。
+（`INKDOWN_RENDER_PDF=<pdf>`），用于确认导出内容不含应用界面。
 
 ## 已知环境问题
 

@@ -3,6 +3,9 @@ import { promises as fsp } from 'node:fs'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { getMainWindow } from './window'
+import { buildAppMenu } from './menu'
+import { getLocale, setLocale } from './locale'
+import { translate, type LocaleCode } from '../shared/i18n'
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
 const watchers = new Map<string, FSWatcher>()
@@ -74,6 +77,21 @@ async function readDirTree(dir: string, depth: number): Promise<DirEntry[]> {
 }
 
 export function registerIpc(): void {
+  // 语言：渲染层启动时读取，切换时写回并重建菜单
+  ipcMain.handle('i18n:getLocale', () => getLocale())
+  ipcMain.handle('i18n:setLocale', async (_e, locale: LocaleCode) => {
+    await setLocale(locale)
+    buildAppMenu()
+    return true
+  })
+  /** 渲染层批量取词：避免逐条 IPC 往返。 */
+  ipcMain.handle('i18n:translate', (_e, keys: string[]) => {
+    const locale = getLocale()
+    const out: Record<string, string> = {}
+    for (const k of keys) out[k] = translate(locale, k)
+    return out
+  })
+
   ipcMain.handle('fs:readFile', async (_e, filePath: string) => {
     const content = await fsp.readFile(filePath, 'utf8')
     const stat = await fsp.stat(filePath)
@@ -196,7 +214,7 @@ export function registerIpc(): void {
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'txt'] },
-        { name: 'All Files', extensions: ['*'] }
+        { name: translate(getLocale(), 'dialog.allFiles'), extensions: ['*'] }
       ]
     })
     if (result.canceled) return []

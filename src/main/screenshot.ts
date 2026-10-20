@@ -1,9 +1,10 @@
 import type { BrowserWindow } from 'electron'
 import { promises as fsp } from 'node:fs'
+import { join } from 'node:path'
 
 /**
  * 截图模式：把演示文档灌入编辑器，等渲染稳定后分别截图并写出 PNG。
- * 通过 TYPRA2_SCREENSHOT=<输出目录> 触发，用于人工核对界面效果。
+ * 通过 INKDOWN_SCREENSHOT=<输出目录> 触发，用于人工核对界面效果。
  */
 export async function captureScreenshots(win: BrowserWindow, outDir: string): Promise<boolean> {
   win.webContents.on('console-message', (_e, level, message) => {
@@ -26,10 +27,11 @@ export async function captureScreenshots(win: BrowserWindow, outDir: string): Pr
   }
 
   // 灌入演示文档（走应用级载入路径，字数统计与大纲同步刷新）
-  const demo = await fsp.readFile('E:\\Desktop\\JX\\07-DSH\\02-typra2\\examples\\demo.md', 'utf8')
+  // 从进程工作目录推导，避免硬编码绝对路径
+  const demo = await fsp.readFile(join(process.cwd(), 'examples', 'demo.md'), 'utf8')
   await win.webContents.executeJavaScript(`
     (async () => {
-      window.__typraLoad(${JSON.stringify(demo)})
+      window.__inkdownLoad(${JSON.stringify(demo)})
       await new Promise((r) => setTimeout(r, 1500))
       return true
     })()
@@ -62,7 +64,7 @@ export async function captureScreenshots(win: BrowserWindow, outDir: string): Pr
   // 诊断：确认命令中心已注册哪些命令，以及主题命令是否可执行
   const cmdDiag = await win.webContents.executeJavaScript(`
     (async () => {
-      const c = window.__typraCommands
+      const c = window.__inkdownCommands
       if (!c) return { error: '命令中心未暴露' }
       const ids = c.ids()
       const before = document.body.className
@@ -82,7 +84,7 @@ export async function captureScreenshots(win: BrowserWindow, outDir: string): Pr
   // 深色主题：通过命令中心连续切换，直到进入深色
   const darkInfo = await win.webContents.executeJavaScript(`
     (async () => {
-      const c = window.__typraCommands
+      const c = window.__inkdownCommands
       for (let i = 0; i < 8; i++) {
         if (document.body.classList.contains('theme-dark')) break
         await c.execute('view:toggleTheme')
@@ -116,7 +118,7 @@ export async function captureScreenshots(win: BrowserWindow, outDir: string): Pr
   // 恢复浅色与所见即所得
   await win.webContents.executeJavaScript(`
     (async () => {
-      const c = window.__typraCommands
+      const c = window.__inkdownCommands
       for (let i = 0; i < 8; i++) {
         if (document.body.classList.contains('theme-light')) break
         await c.execute('view:toggleTheme')

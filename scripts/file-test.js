@@ -1,7 +1,7 @@
 /**
  * 真实文件工作流验证脚本。
  * 用法：node scripts/file-test.js
- * 通过 TYPRA2_FILE_TEST 驱动 Electron，验证打开 → 编辑 → 保存 → 导出全链路。
+ * 通过 INKDOWN_FILE_TEST 驱动 Electron，验证打开 → 编辑 → 保存 → 导出全链路。
  */
 const { spawn } = require('child_process')
 const path = require('path')
@@ -12,15 +12,15 @@ const workDir = path.join(root, '.tmp-file-test')
 
 const env = {
   ...process.env,
-  TYPRA2_FILE_TEST: workDir,
-  TYPRA2_NO_SESSION_RESTORE: '1',
+  INKDOWN_FILE_TEST: workDir,
+  INKDOWN_NO_SESSION_RESTORE: '1',
   // 测试不记录会话，避免污染真实使用的会话数据
-  TYPRA2_NO_SESSION_PERSIST: '1'
+  INKDOWN_NO_SESSION_PERSIST: '1'
 }
 delete env.ELECTRON_RUN_AS_NODE
-delete env.TYPRA2_SELF_CHECK
-delete env.TYPRA2_SCREENSHOT
-delete env.TYPRA2_SESSION_TEST
+delete env.INKDOWN_SELF_CHECK
+delete env.INKDOWN_SCREENSHOT
+delete env.INKDOWN_SESSION_TEST
 
 const child = spawn(electron, ['.'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
 

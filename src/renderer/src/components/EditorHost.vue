@@ -3,14 +3,16 @@ import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
 import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds } from '../composables/useCommands'
 import { exportHtml, exportPdf, buildHtmlForCheck } from '../composables/useExport'
+import { useI18n } from '../composables/useI18n'
 
 // 供主进程端到端自检调用
-;(window as unknown as Record<string, unknown>).__typraExport = { buildHtmlForCheck }
+;(window as unknown as Record<string, unknown>).__inkdownExport = { buildHtmlForCheck }
 import { getActiveTab, isDirty, state, settings, type Tab } from '../store'
 import { baseName } from '../composables/useFile'
 
 const containerRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
+const { t } = useI18n()
 let muya: Muya | null = null
 let suppress = false
 /** 源码模式的等宽字体回退栈（通过 CSS 变量传给样式，避免 v-bind 依赖构建插件） */
@@ -109,7 +111,7 @@ function keepCursorCentered(): void {
 
 /** 打字机模式的诊断信息（供端到端自检读取，定位为何未滚动）。 */
 const typewriterDiag: Record<string, unknown> = { reason: 'not-called' }
-;(window as unknown as Record<string, unknown>).__typraTypewriterDiag = typewriterDiag
+;(window as unknown as Record<string, unknown>).__inkdownTypewriterDiag = typewriterDiag
 
 function mountEditor(): void {
   const el = containerRef.value
@@ -120,8 +122,8 @@ function mountEditor(): void {
   muya = new Muya(el, buildMuyaOptions({ markdown: tab?.content ?? '' }))
   muya.init()
 
-  // 暴露实例供主进程端到端自检使用（TYPRA2_SELF_CHECK 时才有意义）
-  ;(window as unknown as Record<string, unknown>).__typraMuya = muya
+  // 暴露实例供主进程端到端自检使用（INKDOWN_SELF_CHECK 时才有意义）
+  ;(window as unknown as Record<string, unknown>).__inkdownMuya = muya
 
   muya.on('json-change', () => {
     if (suppress) return
@@ -146,7 +148,7 @@ function mountEditor(): void {
 
   // 应用级载入钩子：走与界面相同的路径（载入内容 + 刷新字数与大纲），
   // 供主进程自检与截图使用，避免直接调用 muya.setContent 绕过 Vue 状态。
-  ;(window as unknown as Record<string, unknown>).__typraLoad = (markdown: string) => {
+  ;(window as unknown as Record<string, unknown>).__inkdownLoad = (markdown: string) => {
     const t = activeTab.value
     if (!t || !muya) return false
     suppress = true
@@ -300,11 +302,11 @@ function registerEditorCommands(): void {
 }
 
 async function insertImage(): Promise<void> {
-  const files = await window.typra.openFileDialog()
+  const files = await window.inkdown.openFileDialog()
   const src = files[0]?.filePath
   if (!src) return
   const docPath = activeTab.value?.filePath ?? null
-  const finalSrc = await window.typra.copyImage(docPath, src)
+  const finalSrc = await window.inkdown.copyImage(docPath, src)
   muya?.insertImage({ src: finalSrc, alt: baseName(src) })
 }
 
@@ -365,7 +367,7 @@ function reportMatches(): void {
   if (!muya) return
   const matches = (muya as unknown as { searchMatches?: unknown[] }).searchMatches
   window.dispatchEvent(
-    new CustomEvent('typra:find-result', { detail: { count: matches?.length ?? 0 } })
+    new CustomEvent('inkdown:find-result', { detail: { count: matches?.length ?? 0 } })
   )
 }
 
@@ -449,7 +451,7 @@ async function openDroppedFiles(files: File[]): Promise<number> {
   const { openPath } = useFile()
   let opened = 0
   for (const file of files) {
-    const p = pathForFileHook ? pathForFileHook(file) : window.typra.getPathForFile(file)
+    const p = pathForFileHook ? pathForFileHook(file) : window.inkdown.getPathForFile(file)
     if (!p) continue
     // 只接受 Markdown 文档，其它类型忽略
     if (!MD_RE.test(p)) continue
@@ -457,7 +459,7 @@ async function openDroppedFiles(files: File[]): Promise<number> {
     opened += 1
   }
   if (!opened) {
-    state.notice = { text: '仅支持拖入 Markdown 文档（.md / .markdown / .txt）' }
+    state.notice = { text: t('notice.onlyMarkdown') }
   }
   return opened
 }
@@ -467,25 +469,25 @@ onMounted(() => {
   mountEditor()
   registerEditorCommands()
   // 暴露命令中心与已注册命令，供主进程自检核对
-  ;(window as unknown as Record<string, unknown>).__typraCommands = {
+  ;(window as unknown as Record<string, unknown>).__inkdownCommands = {
     execute: executeCommand,
     has: (id: string) => hasCommand(id),
     ids: () => listCommandIds()
   }
   // 供端到端自检直接驱动拖入逻辑（合成事件无法携带真实文件路径）
-  ;(window as unknown as Record<string, unknown>).__typraDrop = {
+  ;(window as unknown as Record<string, unknown>).__inkdownDrop = {
     openFiles: openDroppedFiles,
     setPathHook: setPathForFileHook
   }
-  window.addEventListener('typra:find', onFind)
-  window.addEventListener('typra:find-close', onFindClose)
-  window.addEventListener('typra:settings-changed', onSettingsChanged)
+  window.addEventListener('inkdown:find', onFind)
+  window.addEventListener('inkdown:find-close', onFindClose)
+  window.addEventListener('inkdown:settings-changed', onSettingsChanged)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('typra:find', onFind)
-  window.removeEventListener('typra:find-close', onFindClose)
-  window.removeEventListener('typra:settings-changed', onSettingsChanged)
+  window.removeEventListener('inkdown:find', onFind)
+  window.removeEventListener('inkdown:find-close', onFindClose)
+  window.removeEventListener('inkdown:settings-changed', onSettingsChanged)
   muya?.destroy()
   muya = null
 })
@@ -520,12 +522,12 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
       />
     </div>
     <div v-if="!activeTab" class="empty-state">
-      <p class="empty-title">Typra2</p>
-      <p class="empty-hint">按 Ctrl+N 新建文档，或 Ctrl+O 打开文件</p>
+      <p class="empty-title">{{ t('app.name') }}</p>
+      <p class="empty-hint">{{ t('editor.emptyHint') }}</p>
     </div>
     <!-- 拖入提示层 -->
     <div v-if="dragging" class="drop-overlay">
-      <div class="drop-box">松开以打开 Markdown 文档</div>
+      <div class="drop-box">{{ t('editor.dropHint') }}</div>
     </div>
   </div>
 </template>

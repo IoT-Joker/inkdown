@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, ref, reactive } from 'vue'
 import { state } from '../store'
-import { baseName } from '../composables/useFile'
 import { executeCommand } from '../composables/useCommands'
+import { useI18n } from '../composables/useI18n'
 
 interface Entry {
   name: string
@@ -13,13 +13,12 @@ interface Entry {
 
 const props = defineProps<{ entry: Entry; depth?: number }>()
 const emit = defineEmits<{ refresh: [] }>()
+const { t } = useI18n()
 const depth = computed(() => props.depth ?? 0)
 const expanded = ref(depth.value < 1)
 const renaming = ref(false)
 const renameValue = ref('')
 const menu = reactive({ visible: false, x: 0, y: 0 })
-
-import { computed } from 'vue'
 
 function toggle(): void {
   if (!props.entry.isDirectory) return
@@ -30,7 +29,7 @@ function toggle(): void {
 }
 
 async function loadChildren(): Promise<void> {
-  const dir = await window.typra.readDir(props.entry.path, 1)
+  const dir = await window.inkdown.readDir(props.entry.path, 1)
   props.entry.children = dir.children
 }
 
@@ -82,20 +81,20 @@ function parentDir(): string {
 
 async function createChild(kind: 'file' | 'folder'): Promise<void> {
   const dir = props.entry.isDirectory ? props.entry.path : parentDir()
-  const name = window.prompt(kind === 'file' ? '新建文件名（含 .md）' : '新建文件夹名')
+  const name = window.prompt(kind === 'file' ? t('tree.promptFileName') : t('tree.promptFolderName'))
   if (!name) return
   const sep = props.entry.path.includes('\\') ? '\\' : '/'
   const target = `${dir}${sep}${name}`
   try {
-    if (kind === 'file') await window.typra.createFile(target)
-    else await window.typra.createFolder(target)
+    if (kind === 'file') await window.inkdown.createFile(target)
+    else await window.inkdown.createFolder(target)
     emit('refresh')
     if (props.entry.isDirectory) {
       expanded.value = true
       await loadChildren()
     }
   } catch (err) {
-    window.alert(`创建失败：${(err as Error).message}`)
+    window.alert(t('tree.errCreate', { msg: (err as Error).message }))
   }
 }
 
@@ -111,26 +110,26 @@ async function commitRename(): Promise<void> {
   const sep = props.entry.path.includes('\\') ? '\\' : '/'
   const target = `${parentDir()}${sep}${name}`
   try {
-    await window.typra.rename(props.entry.path, target)
+    await window.inkdown.rename(props.entry.path, target)
     emit('refresh')
   } catch (err) {
-    window.alert(`重命名失败：${(err as Error).message}`)
+    window.alert(t('tree.errRename', { msg: (err as Error).message }))
   }
 }
 
 async function removeEntry(): Promise<void> {
-  const ok = window.confirm(`确定删除「${props.entry.name}」？文件会移入系统回收站。`)
+  const ok = window.confirm(t('tree.confirmDelete', { name: props.entry.name }))
   if (!ok) return
   try {
-    await window.typra.remove(props.entry.path)
+    await window.inkdown.remove(props.entry.path)
     emit('refresh')
   } catch (err) {
-    window.alert(`删除失败：${(err as Error).message}`)
+    window.alert(t('tree.errDelete', { msg: (err as Error).message }))
   }
 }
 
 function revealInExplorer(): void {
-  void window.typra.showItemInFolder(props.entry.path)
+  void window.inkdown.showItemInFolder(props.entry.path)
 }
 </script>
 
@@ -174,13 +173,13 @@ function revealInExplorer(): void {
       :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
       @click.stop
     >
-      <div class="ctx-item" @click="createChild('file')">新建文件</div>
-      <div class="ctx-item" @click="createChild('folder')">新建文件夹</div>
+      <div class="ctx-item" @click="createChild('file')">{{ t('tree.newFile') }}</div>
+      <div class="ctx-item" @click="createChild('folder')">{{ t('tree.newFolder') }}</div>
       <div class="ctx-sep" />
-      <div class="ctx-item" @click="startRename">重命名</div>
-      <div class="ctx-item" @click="revealInExplorer">在资源管理器中显示</div>
+      <div class="ctx-item" @click="startRename">{{ t('tree.rename') }}</div>
+      <div class="ctx-item" @click="revealInExplorer">{{ t('tree.reveal') }}</div>
       <div class="ctx-sep" />
-      <div class="ctx-item danger" @click="removeEntry">删除</div>
+      <div class="ctx-item danger" @click="removeEntry">{{ t('tree.delete') }}</div>
     </div>
   </div>
 </template>

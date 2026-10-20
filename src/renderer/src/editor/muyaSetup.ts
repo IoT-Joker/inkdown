@@ -46,23 +46,23 @@ export function registerMuyaPlugins(): void {
   Muya.use(ImageResizeBar)
   Muya.use(ImageEditTool, {
     imagePathPicker: async () => {
-      const files = await window.typra.openFileDialog()
+      const files = await window.inkdown.openFileDialog()
       return files[0]?.filePath ?? ''
     },
     imageAction: async (state: { src: string; alt: string; title: string }) => {
       const docPath = currentDocPath
       // 粘贴的位图以 data: URL 传入，落盘到 assets 目录并改写成相对路径
       if (state.src.startsWith('data:')) {
-        return window.typra.saveImage(docPath, state.alt || 'image.png', state.src)
+        return window.inkdown.saveImage(docPath, state.alt || 'image.png', state.src)
       }
-      return window.typra.copyImage(docPath, state.src)
+      return window.inkdown.copyImage(docPath, state.src)
     }
   })
   Muya.use(CodeBlockLanguageSelector)
   Muya.use(LinkTools, {
     jumpClick: (linkInfo: { href?: string } | null) => {
       const href = linkInfo?.href
-      if (href && /^https?:\/\//.test(href)) window.typra.openExternal(href)
+      if (href && /^https?:\/\//.test(href)) window.inkdown.openExternal(href)
     }
   })
   Muya.use(ParagraphFrontButton)
@@ -119,7 +119,7 @@ export function buildMuyaOptions(extra: Partial<IMuyaOptions> = {}): Partial<IMu
     autoMoveCheckedToEnd: settings.autoMoveCheckedToEnd,
     disableHtml: settings.disableHtml,
     locale: zhCN,
-    clipboardText: () => window.typra.readClipboardText(),
+    clipboardText: () => window.inkdown.readClipboardText(),
     fetchLinkHtml: async (url: string) => {
       try {
         const res = await fetch(url)
@@ -129,7 +129,7 @@ export function buildMuyaOptions(extra: Partial<IMuyaOptions> = {}): Partial<IMu
         return ''
       }
     },
-    getPathForFile: (file: File) => window.typra.getPathForFile(file),
+    getPathForFile: (file: File) => window.inkdown.getPathForFile(file),
     ...extra
   }
 }

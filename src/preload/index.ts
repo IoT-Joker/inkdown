@@ -49,6 +49,10 @@ const api = {
     ipcRenderer.invoke('app:getPath', name),
   quit: () => ipcRenderer.invoke('app:quit'),
 
+  /** 界面语言：由主进程持有（菜单需在渲染层就绪前确定语言）。 */
+  getLocale: () => ipcRenderer.invoke('i18n:getLocale'),
+  setLocale: (locale: 'zh-CN' | 'en') => ipcRenderer.invoke('i18n:setLocale', locale),
+
   /** 拖拽文件时把 File 对象解析为磁盘路径（Electron 33 的 webUtils）。 */
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 
@@ -57,9 +61,9 @@ const api = {
    * 与下面「禁用会话记录」相互独立——会话恢复测试需要
    * 「不恢复旧会话，但要记录新会话」的组合。
    */
-  skipSessionRestore: process.env.TYPRA2_NO_SESSION_RESTORE === '1',
+  skipSessionRestore: process.env.INKDOWN_NO_SESSION_RESTORE === '1',
   /** 自动化测试标记：不记录会话，避免测试数据污染真实使用。 */
-  skipSessionPersist: process.env.TYPRA2_NO_SESSION_PERSIST === '1',
+  skipSessionPersist: process.env.INKDOWN_NO_SESSION_PERSIST === '1',
 
   onMenuCommand: (fn: (id: string) => void) => {
     const listener = (_e: unknown, id: string) => fn(id)
@@ -68,6 +72,6 @@ const api = {
   }
 }
 
-export type TypraApi = typeof api
+export type InkdownApi = typeof api
 
-contextBridge.exposeInMainWorld('typra', api)
+contextBridge.exposeInMainWorld('inkdown', api)

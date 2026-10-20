@@ -11,13 +11,13 @@ const outDir = path.join(root, 'screenshots')
 
 const env = {
   ...process.env,
-  TYPRA2_SCREENSHOT: outDir,
-  TYPRA2_NO_SESSION_RESTORE: '1',
-  TYPRA2_NO_SESSION_PERSIST: '1'
+  INKDOWN_SCREENSHOT: outDir,
+  INKDOWN_NO_SESSION_RESTORE: '1',
+  INKDOWN_NO_SESSION_PERSIST: '1'
 }
 delete env.ELECTRON_RUN_AS_NODE
-delete env.TYPRA2_SELF_CHECK
-delete env.TYPRA2_FILE_TEST
+delete env.INKDOWN_SELF_CHECK
+delete env.INKDOWN_FILE_TEST
 
 const child = spawn(electron, ['.'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { state } from '../store'
-import { executeCommand } from '../composables/useCommands'
+import { useI18n } from '../composables/useI18n'
 
+const { t } = useI18n()
 const searchInput = ref<HTMLInputElement | null>(null)
 const keyword = ref('')
 const replacement = ref('')
@@ -16,7 +17,7 @@ const isReplace = computed(() => state.findMode === 'replace')
 /** 查找请求转发给编辑器：EditorHost 监听该事件并调用 muya.search。 */
 function emitFind(action: 'search' | 'next' | 'previous' | 'replace' | 'replaceAll'): void {
   window.dispatchEvent(
-    new CustomEvent('typra:find', {
+    new CustomEvent('inkdown:find', {
       detail: {
         action,
         keyword: keyword.value,
@@ -45,7 +46,7 @@ watch(
 
 function close(): void {
   state.findVisible = false
-  window.dispatchEvent(new CustomEvent('typra:find-close'))
+  window.dispatchEvent(new CustomEvent('inkdown:find-close'))
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -60,7 +61,7 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 // 由 EditorHost 回传匹配数量
-window.addEventListener('typra:find-result', ((e: Event) => {
+window.addEventListener('inkdown:find-result', ((e: Event) => {
   matchCount.value = (e as CustomEvent).detail?.count ?? 0
 }) as EventListener)
 </script>
@@ -71,34 +72,34 @@ window.addEventListener('typra:find-result', ((e: Event) => {
       ref="searchInput"
       v-model="keyword"
       class="find-input"
-      placeholder="查找"
+      :placeholder="t('find.placeholder')"
       @keydown="onKeydown"
     />
     <input
       v-if="isReplace"
       v-model="replacement"
       class="find-input"
-      placeholder="替换为"
+      :placeholder="t('find.replacePlaceholder')"
       @keydown="onKeydown"
     />
     <div class="find-tools">
-      <label class="find-toggle" title="区分大小写">
+      <label class="find-toggle" :title="t('find.caseSensitive')">
         <input v-model="isCaseSensitive" type="checkbox" /> Aa
       </label>
-      <label class="find-toggle" title="全词匹配">
-        <input v-model="isWholeWord" type="checkbox" /> 全词
+      <label class="find-toggle" :title="t('find.wholeWord')">
+        <input v-model="isWholeWord" type="checkbox" /> {{ t('find.wholeWordShort') }}
       </label>
-      <label class="find-toggle" title="正则表达式">
+      <label class="find-toggle" :title="t('find.regexp')">
         <input v-model="isRegexp" type="checkbox" /> .*
       </label>
     </div>
     <div class="find-actions">
-      <button class="ty-btn" title="上一个 (Shift+Enter)" @click="emitFind('previous')">↑</button>
-      <button class="ty-btn" title="下一个 (Enter)" @click="emitFind('next')">↓</button>
-      <button v-if="isReplace" class="ty-btn" @click="emitFind('replace')">替换</button>
-      <button v-if="isReplace" class="ty-btn" @click="emitFind('replaceAll')">全部替换</button>
-      <span class="find-count">{{ matchCount }} 处</span>
-      <button class="ty-btn close" title="关闭 (Esc)" @click="close">×</button>
+      <button class="ty-btn" :title="`${t('find.previous')} (Shift+Enter)`" @click="emitFind('previous')">↑</button>
+      <button class="ty-btn" :title="`${t('find.next')} (Enter)`" @click="emitFind('next')">↓</button>
+      <button v-if="isReplace" class="ty-btn" @click="emitFind('replace')">{{ t('find.replace') }}</button>
+      <button v-if="isReplace" class="ty-btn" @click="emitFind('replaceAll')">{{ t('find.replaceAll') }}</button>
+      <span class="find-count">{{ t('find.count', { n: matchCount }) }}</span>
+      <button class="ty-btn close" :title="`${t('find.close')} (Esc)`" @click="close">×</button>
     </div>
   </div>
 </template>

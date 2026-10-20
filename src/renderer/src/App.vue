@@ -8,10 +8,12 @@ import FindBar from './components/FindBar.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import { executeCommand, registerGlobalCommands } from './composables/useCommands'
 import { useFile } from './composables/useFile'
+import { useI18n, initLocale } from './composables/useI18n'
 import { loadSettings, loadRecent, loadSession, persistSession, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs, tabLabel } from './store'
 
 const { openPath, refreshWorkspace, saveTab, saveAll, openFolder } = useFile()
 const editorRef = ref<InstanceType<typeof EditorHost> | null>(null)
+const { t } = useI18n()
 
 /** 自动保存：仅对已有磁盘路径的标签生效，避免频繁弹保存对话框。 */
 let autoSaveTimer: number | undefined
@@ -30,11 +32,11 @@ watch(
 
 const windowTitle = computed(() => {
   const tab = getActiveTab()
-  if (!tab) return 'Typra2'
-  return `${tabLabel(tab)} — Typra2`
+  if (!tab) return t('app.name')
+  return `${tabLabel(tab)} — ${t('app.name')}`
 })
 
-watch(windowTitle, (t) => window.typra.setTitle(t), { immediate: true })
+watch(windowTitle, (t) => window.inkdown.setTitle(t), { immediate: true })
 
 /** 应用主题类到 body，主题切换即时生效。 */
 watch(
@@ -64,11 +66,13 @@ function onBeforeUnload(e: BeforeUnloadEvent): void {
 }
 
 onMounted(async () => {
+  // 语言需尽早载入：窗口标题与界面文案都依赖它
+  await initLocale()
   registerGlobalCommands()
   loadSettings()
   loadRecent()
   // 暴露应用级文件 API 与退出入口，供主进程端到端文件测试使用
-  ;(window as unknown as Record<string, unknown>).__typraApp = {
+  ;(window as unknown as Record<string, unknown>).__inkdownApp = {
     openPath,
     saveTab,
     saveAll,
@@ -84,21 +88,21 @@ onMounted(async () => {
     }
   }
   // notice 需要实时反映 state，用 getter 代理
-  Object.defineProperty((window as unknown as Record<string, unknown>).__typraApp, 'notice', {
+  Object.defineProperty((window as unknown as Record<string, unknown>).__inkdownApp, 'notice', {
     get: () => state.notice
   })
-  ;(window as unknown as Record<string, unknown>).__typraQuit = () => executeCommand('file:quit')
+  ;(window as unknown as Record<string, unknown>).__inkdownQuit = () => executeCommand('file:quit')
 
-  const off = window.typra.onMenuCommand(onMenuCommand)
+  const off = window.inkdown.onMenuCommand(onMenuCommand)
   window.addEventListener('beforeunload', onBeforeUnload)
 
   // 外部修改文件时给出非阻塞提示（不再用模态对话框打断写作）。
   // 主进程已过滤掉应用自身的写盘动作，这里只负责提示。
-  const offFs = window.typra.onFileChanged((filePath: string) => {
+  const offFs = window.inkdown.onFileChanged((filePath: string) => {
     const tab = state.tabs.find((t) => t.filePath === filePath)
     if (!tab) return
     state.notice = {
-      text: `「${tab.title}」已在 Typra2 之外被修改`,
+      text: t('notice.externalChange', { name: tab.title }),
       action: 'reload',
       filePath
     }
@@ -108,7 +112,7 @@ onMounted(async () => {
   const argv = (window as any).process?.argv as string[] | undefined
   const fileArg = argv?.find((a) => /\.(md|markdown|txt)$/i.test(a))
   // 自动化测试需要干净的初始状态，此时不恢复上次会话
-  const skipRestore = !!window.typra.skipSessionRestore
+  const skipRestore = !!window.inkdown.skipSessionRestore
   if (fileArg) {
     await openPath(fileArg)
   } else if (skipRestore) {
@@ -119,7 +123,7 @@ onMounted(async () => {
     if (session?.files.length) {
       for (const p of session.files) {
         try {
-          if (await window.typra.exists(p)) await openPath(p)
+          if (await window.inkdown.exists(p)) await openPath(p)
         } catch {
           /* 文件不可用则跳过 */
         }
@@ -133,7 +137,7 @@ onMounted(async () => {
   }
 
   // 会话内容变化时记录，供下次启动恢复（测试可选择不记录，避免污染）
-  if (!window.typra.skipSessionPersist) {
+  if (!window.inkdown.skipSessionPersist) {
     watch(
       () => state.tabs.map((t) => t.filePath).join('|') + '#' + state.activeId,
       () => persistSession(),
@@ -155,7 +159,7 @@ async function onNoticeAction(): Promise<void> {
   if (notice.action === 'reload' && notice.filePath) {
     const tab = state.tabs.find((t) => t.filePath === notice.filePath)
     if (tab) {
-      const { content, mtimeMs } = await window.typra.readFile(notice.filePath)
+      const { content, mtimeMs } = await window.inkdown.readFile(notice.filePath)
       tab.content = content
       tab.savedContent = content
       tab.mtimeMs = mtimeMs
@@ -180,7 +184,7 @@ async function tryQuit(): Promise<void> {
         <button
           v-if="!state.sidebarVisible"
           class="sidebar-show"
-          title="显示侧边栏 (Ctrl+Shift+L)"
+          :title="`${t('sidebar.show')} (Ctrl+Shift+L)`"
           @click="state.sidebarVisible = true"
         >
           »
@@ -192,8 +196,8 @@ async function tryQuit(): Promise<void> {
     <!-- 非阻塞提示条：告知外部改动等，不打断写作 -->
     <div v-if="state.notice" class="notice-bar">
       <span class="notice-text">{{ state.notice.text }}</span>
-      <button v-if="state.notice.action" class="ty-btn" @click="onNoticeAction">重新载入</button>
-      <button class="ty-btn" @click="state.notice = null">忽略</button>
+      <button v-if="state.notice.action" class="ty-btn" @click="onNoticeAction">{{ t('notice.reload') }}</button>
+      <button class="ty-btn" @click="state.notice = null">{{ t('notice.ignore') }}</button>
     </div>
     <StatusBar />
     <PreferencesDialog v-if="state.preferencesVisible" />

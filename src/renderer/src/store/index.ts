@@ -1,4 +1,6 @@
 import { reactive, ref } from 'vue'
+import { translate } from '../../../shared/i18n'
+import { currentLocale } from '../composables/useI18n'
 
 export type ViewMode = 'wysiwyg' | 'source'
 
@@ -73,11 +75,15 @@ export function getActiveTab(): Tab | undefined {
   return state.tabs.find((t) => t.id === state.activeId)
 }
 
-export function createTab(partial: Partial<Tab> = {}): Tab {
-  const tab: Tab = {
+/** 未命名标签的显示名（随界面语言）。 */
+export function untitledLabel(): string {
+  return translate(currentLocale.value, 'tab.untitled')
+}
+
+export function createTab(partial: Partial<Tab> = {}): Tab {  const tab: Tab = {
     id: nextId(),
     filePath: null,
-    title: '未命名',
+    title: untitledLabel(),
     content: '',
     savedContent: '',
     mtimeMs: 0,
@@ -161,7 +167,7 @@ export const settings = reactive({
   sequenceTheme: 'hand' as 'hand' | 'simple'
 })
 
-const STORAGE_KEY = 'typra2-settings'
+const STORAGE_KEY = 'inkdown-settings'
 
 export function loadSettings(): void {
   try {
@@ -170,9 +176,9 @@ export function loadSettings(): void {
   } catch {
     /* 忽略损坏的设置 */
   }
-  const t = localStorage.getItem('typra2-theme')
+  const t = localStorage.getItem('inkdown-theme')
   if (t) state.theme = t as typeof state.theme
-  const z = localStorage.getItem('typra2-zoom')
+  const z = localStorage.getItem('inkdown-zoom')
   if (z) state.zoom = Number(z) || 1
 }
 
@@ -185,8 +191,8 @@ export function persistSettings(): void {
 }
 
 export function persistView(): void {
-  localStorage.setItem('typra2-theme', state.theme)
-  localStorage.setItem('typra2-zoom', String(state.zoom))
+  localStorage.setItem('inkdown-theme', state.theme)
+  localStorage.setItem('inkdown-zoom', String(state.zoom))
 }
 
 /** 最近打开的文件列表，用于「文件」菜单与欢迎页。 */
@@ -197,7 +203,7 @@ export function pushRecent(filePath: string): void {
   list.unshift(filePath)
   recentFiles.value = list.slice(0, 12)
   try {
-    localStorage.setItem('typra2-recent', JSON.stringify(recentFiles.value))
+    localStorage.setItem('inkdown-recent', JSON.stringify(recentFiles.value))
   } catch {
     /* ignore */
   }
@@ -205,7 +211,7 @@ export function pushRecent(filePath: string): void {
 
 export function loadRecent(): void {
   try {
-    const raw = localStorage.getItem('typra2-recent')
+    const raw = localStorage.getItem('inkdown-recent')
     if (raw) recentFiles.value = JSON.parse(raw)
   } catch {
     /* ignore */
@@ -214,7 +220,7 @@ export function loadRecent(): void {
 
 /* ------------------------------ 会话恢复 ------------------------------ */
 
-const SESSION_KEY = 'typra2-session'
+const SESSION_KEY = 'inkdown-session'
 
 /** 上次退出时打开的标签页（文件路径），重启后据此恢复。 */
 export interface SessionSnapshot {

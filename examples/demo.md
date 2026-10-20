@@ -1,6 +1,6 @@
-# Typra2 功能演示
+# Inkdown 功能演示
 
-这是一份用于验证 Typra2 各项能力的示例文档。用 `Ctrl+O` 打开本文件，
+这是一份用于验证 Inkdown 各项能力的示例文档。用 `Ctrl+O` 打开本文件，
 即可体验边写边渲染的实时排版效果。
 
 ## 一、文本格式
@@ -89,7 +89,7 @@ graph LR
 
 ## 八、脚注与链接
 
-Typra2 基于 marktext 的编辑器内核构建[^1]，并参考了 Typora 的交互设计。
+Inkdown 基于 marktext 的编辑器内核构建[^1]，并参考了 Typora 的交互设计。
 
 [^1]: muya（`@muyajs/core`）是 marktext 抽离出的独立 Markdown 编辑器内核。
 
