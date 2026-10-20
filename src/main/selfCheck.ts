@@ -279,6 +279,58 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 查找替换与专注模式 OK')
 
+  // 4b-4. 验证命令中心已注册全部菜单命令，且主题切换真的改变配色
+  const cmdCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const c = window.__typraCommands
+      if (!c) return { error: '命令中心未暴露' }
+      const ids = c.ids()
+      const required = [
+        'file:new','file:open','file:openFolder','file:save','file:saveAs',
+        'file:exportHtml','file:exportPdf',
+        'edit:undo','edit:redo','edit:find','edit:replace',
+        'paragraph:h1','paragraph:h6','paragraph:p','paragraph:ul','paragraph:ol',
+        'paragraph:task','paragraph:quote','paragraph:code','paragraph:math','paragraph:table',
+        'format:strong','format:emphasis','format:strike','format:inlineCode','format:link',
+        'view:toggleSidebar','view:toggleOutline','view:toggleSource','view:toggleFocus',
+        'view:toggleTypewriter','view:toggleTheme','view:zoomIn','view:zoomOut',
+        'app:preferences'
+      ]
+      const missing = required.filter((r) => !ids.includes(r))
+      // 主题切换：连续切换到深色，读回编辑区背景色
+      for (let i = 0; i < 8; i++) {
+        if (document.body.classList.contains('theme-dark')) break
+        await c.execute('view:toggleTheme')
+        await new Promise((r) => setTimeout(r, 120))
+      }
+      const editor = document.querySelector('.muya-editor') || document.querySelector('.muya-container')
+      const darkBg = getComputedStyle(editor).backgroundColor
+      const darkClass = document.body.className
+      // 切回浅色
+      for (let i = 0; i < 8; i++) {
+        if (document.body.classList.contains('theme-light')) break
+        await c.execute('view:toggleTheme')
+        await new Promise((r) => setTimeout(r, 120))
+      }
+      const lightBg = getComputedStyle(editor).backgroundColor
+      return { missing, total: ids.length, darkBg, darkClass, lightBg }
+    })()
+  `)
+  if (cmdCheck.error || cmdCheck.missing?.length) {
+    console.error('[selfcheck] FAIL: 命令中心缺少命令:', JSON.stringify(cmdCheck))
+    return false
+  }
+  const bg = (s: string) => (String(s).match(/\d+/g) || []).slice(0, 3).map(Number)
+  const darkLum = bg(cmdCheck.darkBg).reduce((a, b) => a + b, 0) / 3
+  const lightLum = bg(cmdCheck.lightBg).reduce((a, b) => a + b, 0) / 3
+  if (!(darkLum < 90 && lightLum > 200)) {
+    console.error('[selfcheck] FAIL: 主题配色未生效:', JSON.stringify(cmdCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 命令中心 ${cmdCheck.total} 条命令齐备，主题切换 OK（深色 ${darkLum.toFixed(0)} / 浅色 ${lightLum.toFixed(0)}）`
+  )
+
   // 4c. 验证导出：静态 HTML 生成且包含标题与表格
   const exported = await win.webContents.executeJavaScript(`
     (async () => {
@@ -312,6 +364,25 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 状态栏行号格式错误:', statusText)
     return false
   }
+
+  // 5b. 字数统计必须随文档内容变化（用较长文档验证，而非空文档）
+  const countCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const muya = window.__typraMuya
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const long = '# 中文标题\\n\\n' + '这是一段用于统计的中文正文内容。'.repeat(20) + '\\n'
+      window.__typraLoad(long)
+      await wait(900)
+      const text = document.querySelector('.status-bar')?.innerText || ''
+      const m = text.match(/(\\d+)\\s*字/)
+      return { shown: m ? Number(m[1]) : -1, expected: long.length, raw: text }
+    })()
+  `)
+  if (countCheck.shown <= 0) {
+    console.error('[selfcheck] FAIL: 长文档下字数统计仍为 0:', JSON.stringify(countCheck.raw))
+    return false
+  }
+  console.log(`[selfcheck] 字数统计 OK: ${countCheck.shown} 字`)
 
   console.log('[selfcheck] shell:', JSON.stringify(shell))
   console.log('[selfcheck] statusbar:', statusText.replace(/\s+/g, ' ').trim())

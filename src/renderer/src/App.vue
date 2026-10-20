@@ -67,6 +67,8 @@ onMounted(async () => {
   registerGlobalCommands()
   loadSettings()
   loadRecent()
+  // 标题栏/状态栏的未保存改动检查在应用退出前触发
+  ;(window as unknown as Record<string, unknown>).__typraQuit = () => executeCommand('file:quit')
 
   const off = window.typra.onMenuCommand(onMenuCommand)
   window.addEventListener('beforeunload', onBeforeUnload)
@@ -106,23 +108,7 @@ onMounted(async () => {
 
 /** 未保存改动时先询问，避免直接关窗丢内容。 */
 async function tryQuit(): Promise<void> {
-  if (!hasUnsavedTabs()) {
-    window.typra.quit()
-    return
-  }
-  const answer = await window.typra.messageBox('有未保存的改动', '是否保存后再退出？', [
-    '保存并退出',
-    '直接退出',
-    '取消'
-  ])
-  if (answer === 0) {
-    for (const tab of state.tabs) {
-      if (isDirty(tab)) await saveTab(tab)
-    }
-    window.typra.quit()
-  } else if (answer === 1) {
-    window.typra.quit()
-  }
+  await executeCommand('file:quit')
 }
 </script>
 

@@ -25,13 +25,12 @@ export async function captureScreenshots(win: BrowserWindow, outDir: string): Pr
     return false
   }
 
-  // 灌入演示文档
+  // 灌入演示文档（走应用级载入路径，字数统计与大纲同步刷新）
   const demo = await fsp.readFile('E:\\Desktop\\JX\\07-DSH\\02-typra2\\examples\\demo.md', 'utf8')
   await win.webContents.executeJavaScript(`
     (async () => {
-      const muya = window.__typraMuya
-      muya.setContent(${JSON.stringify(demo)}, false)
-      await new Promise((r) => setTimeout(r, 1200))
+      window.__typraLoad(${JSON.stringify(demo)})
+      await new Promise((r) => setTimeout(r, 1500))
       return true
     })()
   `)
@@ -60,15 +59,46 @@ export async function captureScreenshots(win: BrowserWindow, outDir: string): Pr
   await new Promise((r) => setTimeout(r, 600))
   await shoot('02-outline')
 
-  // 深色主题
-  await win.webContents.executeJavaScript(`
-    (() => {
-      document.body.className = document.body.className.replace(/theme-[a-z]+/g, '').trim()
-      document.body.classList.add('theme-dark')
-      return true
+  // 诊断：确认命令中心已注册哪些命令，以及主题命令是否可执行
+  const cmdDiag = await win.webContents.executeJavaScript(`
+    (async () => {
+      const c = window.__typraCommands
+      if (!c) return { error: '命令中心未暴露' }
+      const ids = c.ids()
+      const before = document.body.className
+      await c.execute('view:toggleTheme')
+      await new Promise((r) => setTimeout(r, 200))
+      return {
+        hasToggleTheme: c.has('view:toggleTheme'),
+        totalCommands: ids.length,
+        sample: ids.slice(0, 12),
+        before,
+        after: document.body.className
+      }
     })()
   `)
-  await new Promise((r) => setTimeout(r, 600))
+  console.log('[shot] 命令诊断:', JSON.stringify(cmdDiag))
+
+  // 深色主题：通过命令中心连续切换，直到进入深色
+  const darkInfo = await win.webContents.executeJavaScript(`
+    (async () => {
+      const c = window.__typraCommands
+      for (let i = 0; i < 8; i++) {
+        if (document.body.classList.contains('theme-dark')) break
+        await c.execute('view:toggleTheme')
+        await new Promise((r) => setTimeout(r, 150))
+      }
+      const editor = document.querySelector('.muya-editor') || document.querySelector('.muya-container')
+      const cs = getComputedStyle(editor)
+      return {
+        bodyClass: document.body.className,
+        editorBg: cs.backgroundColor,
+        editorColor: cs.color
+      }
+    })()
+  `)
+  console.log('[shot] 深色主题:', JSON.stringify(darkInfo))
+  await new Promise((r) => setTimeout(r, 800))
   await shoot('03-dark')
 
   // 源码模式
@@ -80,20 +110,23 @@ export async function captureScreenshots(win: BrowserWindow, outDir: string): Pr
       return true
     })()
   `)
-  await new Promise((r) => setTimeout(r, 800))
+  await new Promise((r) => setTimeout(r, 1000))
   await shoot('04-source')
 
   // 恢复浅色与所见即所得
   await win.webContents.executeJavaScript(`
-    (() => {
-      document.body.className = document.body.className.replace(/theme-[a-z]+/g, '').trim()
-      document.body.classList.add('theme-light')
-      const btns = [...document.querySelectorAll('.status-btn')]
-      const src = btns.find((b) => b.textContent.includes('源码'))
-      src && src.click()
+    (async () => {
+      const c = window.__typraCommands
+      for (let i = 0; i < 8; i++) {
+        if (document.body.classList.contains('theme-light')) break
+        await c.execute('view:toggleTheme')
+        await new Promise((r) => setTimeout(r, 150))
+      }
+      await c.execute('view:toggleSource')
       return true
     })()
   `)
+  await new Promise((r) => setTimeout(r, 600))
 
   console.log('[shot] PASS: 截图完成')
   return true

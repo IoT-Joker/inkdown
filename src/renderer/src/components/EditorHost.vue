@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
-import { registerCommands, registerGlobalCommands } from '../composables/useCommands'
+import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds } from '../composables/useCommands'
 import { exportHtml, exportPdf, buildHtmlForCheck } from '../composables/useExport'
 
 // 供主进程端到端自检调用
@@ -114,6 +114,20 @@ function mountEditor(): void {
 
   updateCounts(tab?.content ?? '')
   refreshOutline()
+
+  // 应用级载入钩子：走与界面相同的路径（载入内容 + 刷新字数与大纲），
+  // 供主进程自检与截图使用，避免直接调用 muya.setContent 绕过 Vue 状态。
+  ;(window as unknown as Record<string, unknown>).__typraLoad = (markdown: string) => {
+    const t = activeTab.value
+    if (!t || !muya) return false
+    suppress = true
+    muya.setContent(markdown, false)
+    suppress = false
+    t.content = markdown
+    updateCounts(markdown)
+    refreshOutline()
+    return true
+  }
 }
 
 /** 把某个标签的内容载入编辑器。 */
@@ -359,6 +373,12 @@ onMounted(() => {
   registerGlobalCommands()
   mountEditor()
   registerEditorCommands()
+  // 暴露命令中心与已注册命令，供主进程自检核对
+  ;(window as unknown as Record<string, unknown>).__typraCommands = {
+    execute: executeCommand,
+    has: (id: string) => hasCommand(id),
+    ids: () => listCommandIds()
+  }
   window.addEventListener('typra:find', onFind)
   window.addEventListener('typra:find-close', onFindClose)
   window.addEventListener('typra:settings-changed', onSettingsChanged)
