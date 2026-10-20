@@ -1,6 +1,6 @@
 {
   "name": "inkdown",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Inkdown - a Typora-like WYSIWYG markdown editor built on marktext's muya engine",
   "main": "./out/main/index.js",
   "author": "inkdown",
@@ -23,8 +23,10 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "check": "npm run typecheck && npm run verify",
     "icons": "node scripts/make-icons.js",
+    "version:bump": "node scripts/version.js",
     "package": "node scripts/package.js",
-    "package:dir": "node scripts/package.js --dir"
+    "package:dir": "node scripts/package.js --dir",
+    "release": "node scripts/package.js && node scripts/publish-release.js"
   },
   "build": {
     "appId": "com.iotjoker.inkdown",
@@ -97,7 +99,8 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Inkdown"
+      "shortcutName": "Inkdown",
+      "artifactName": "Inkdown-Setup-${version}.${ext}"
     },
     "publish": [
       {

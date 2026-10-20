@@ -94,13 +94,25 @@ function uploadAsset(uploadUrl, filePath, name) {
     process.exit(1)
   }
 
-  // 待上传的产物：安装程序 + 更新清单
+  // 待上传的产物：安装程序 + 更新清单。
+  // 文件名必须与 latest.yml 里声明的一致（artifactName 为 Inkdown-Setup-<版本>.exe），
+  // 否则 electron-updater 按清单名字下载会 404。
   const relDir = path.join(root, 'release')
   const assets = []
-  for (const f of ['latest.yml', `Inkdown Setup ${version}.exe`]) {
+  const candidates = [
+    `Inkdown-Setup-${version}.exe`,
+    // 兼容旧命名（含空格），GitHub 会把空格转成点号
+    `Inkdown Setup ${version}.exe`
+  ]
+  for (const f of ['latest.yml', ...candidates]) {
     const p = path.join(relDir, f)
     if (fs.existsSync(p)) assets.push({ path: p, name: f })
-    else console.warn('缺少产物:', f)
+  }
+  if (!assets.some((a) => a.name === 'latest.yml')) {
+    console.warn('缺少产物: latest.yml')
+  }
+  if (assets.length < 2) {
+    console.warn('缺少安装包，已找到:', assets.map((a) => a.name).join(', '))
   }
   if (!assets.length) {
     console.error('release/ 下没有可上传的产物，请先执行 pnpm package')

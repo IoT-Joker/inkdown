@@ -39,7 +39,10 @@ const finish = (code, reason) => {
   process.exit(code)
 }
 
-const timer = setTimeout(() => finish(1, 'FAILED - 自检超时'), 60000)
+// 自检内部有大量固定等待（合计约 37 秒），加上进程启动与渲染开销，
+// 阈值必须留足余量：60 秒会在机器稍慢时误判为超时。
+// 这里放到 150 秒，同时保留「超时即失败」的兜底。
+const timer = setTimeout(() => finish(1, 'FAILED - 自检超时（150s）'), 150000)
 
 child.on('exit', (code) => {
   clearTimeout(timer)

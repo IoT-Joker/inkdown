@@ -646,7 +646,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         ''
       ].join('\\n')
       window.__inkdownLoad(md)
-      await wait(3500)
+      // 轮询等图表与公式渲染完成（Mermaid 异步渲染，固定等待既慢又不稳）
+      for (let i = 0; i < 60; i++) {
+        const host = document.querySelector('.muya-container')
+        const hasSvg = !!host?.querySelector('svg')
+        const hasKatex = !!host?.querySelector('.katex')
+        if (hasSvg && hasKatex) break
+        await wait(150)
+      }
+      await wait(400)
       const c = document.querySelector('.muya-container')
       const tokens = c.querySelectorAll('.token, [class*="token"]')
       const codeEl = c.querySelector('.mu-fence-code, pre')
