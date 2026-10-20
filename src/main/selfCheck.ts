@@ -178,7 +178,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   console.log('[selfcheck] 进阶语法 OK: 表格/代码块/任务列表/公式')
 
   // 4b-2. 验证段落/格式命令真的能改变内容（命令中心是否生效）
-  // 注意：setCursorByOffset 接收源码模式的 { line, ch } 坐标，不是扁平数字
+  // 注意 1：setCursorByOffset 接收源码模式的 { line, ch } 坐标，不是扁平数字
+  // 注意 2：createTable 的签名是 createTable({ rows, columns })，不是两个位置参数
   const commandEffect = await win.webContents.executeJavaScript(`
     (async () => {
       const muya = window.__typraMuya
@@ -186,50 +187,110 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const at = (line, ch) => ({ anchor: { line, ch }, focus: { line, ch } })
       const results = {}
 
+      // 等待编辑器渲染稳定：轮询直到段落块数量符合预期，避免固定延时不足
+      const settle = async (expectParagraphs) => {
+        for (let i = 0; i < 60; i++) {
+          const n = document.querySelectorAll('.muya-container .mu-paragraph').length
+          if (n >= expectParagraphs) return true
+          await wait(100)
+        }
+        return false
+      }
+
+      /** 读内部选区：确认光标真的落在某个块上（setCursorByOffset 内部会重建文档，
+       *  重建完成后选区才有效，因此必须轮询而不是固定等待）。 */
+      const readSel = () => {
+        try {
+          const cs = muya.editor?.selection?.getSelection?.()
+          if (!cs || !cs.anchor || !cs.anchor.block) return null
+          return { block: cs.anchor.block.blockName, offset: cs.anchor.offset }
+        } catch {
+          return null
+        }
+      }
+
+      const waitCursor = async () => {
+        for (let i = 0; i < 40; i++) {
+          const s = readSel()
+          if (s) return s
+          await wait(100)
+        }
+        return null
+      }
+
+      // 载入内容 → 等渲染稳定 → 聚焦 → 设光标 → 等选区就位
+      const load = async (md, line, ch, expectParagraphs = 1) => {
+        muya.setContent(md, false)
+        await settle(expectParagraphs)
+        muya.focus()
+        await wait(200)
+        muya.setCursorByOffset(at(line, ch))
+        return waitCursor()
+      }
+
       // 段落：把光标放到首段，执行「标题 1」
-      muya.setContent('普通段落文字\\n\\n第二段\\n', false)
-      await wait(400)
-      muya.setCursorByOffset(at(0, 2))
-      await wait(300)
+      results.cursorHeading = await load('普通段落文字\\n\\n第二段\\n', 0, 2, 2)
+      results.preHeading = { md: muya.getMarkdown(), cursor: results.cursorHeading }
       muya.updateParagraph('heading 1')
       await wait(400)
       results.afterHeading = muya.getMarkdown()
 
       // 无序列表
-      muya.setContent('列表项内容\\n', false)
-      await wait(400)
-      muya.setCursorByOffset(at(0, 2))
-      await wait(300)
+      results.cursorBullet = await load('列表项内容\\n', 0, 2)
       muya.updateParagraph('ul-bullet')
       await wait(400)
       results.afterBullet = muya.getMarkdown()
 
       // 任务列表
-      muya.setContent('待办事项\\n', false)
-      await wait(400)
-      muya.setCursorByOffset(at(0, 2))
-      await wait(300)
+      results.cursorTask = await load('待办事项\\n', 0, 2)
       muya.updateParagraph('ul-task')
       await wait(400)
       results.afterTask = muya.getMarkdown()
 
-      // 行内格式：选中前两个字后加粗
-      muya.setContent('加粗这段\\n', false)
-      await wait(400)
-      muya.setCursorByOffset({ anchor: { line: 0, ch: 0 }, focus: { line: 0, ch: 2 } })
-      await wait(300)
+      // 行内格式：全选后加粗
+      muya.setContent('加粗这段文字\\n', false)
+      await settle(1)
+      muya.focus()
+      await wait(250)
+      muya.selectAll()
+      results.cursorStrong = await waitCursor()
       muya.format('strong')
       await wait(400)
       results.afterStrong = muya.getMarkdown()
 
-      // 表格：插入 3x3
-      muya.setContent('表格段落\\n', false)
-      await wait(400)
-      muya.setCursorByOffset(at(0, 1))
-      await wait(300)
-      muya.createTable(3, 3)
-      await wait(500)
+      // 表格：内核不把有内容的块转成表格（table 属于 WHOLE_BLOCK_NAMES），
+      // 必须用 createTable({ rows, columns }) 插入；光标需落在空段落上
+      muya.setContent('\\n', false)
+      await settle(1)
+      muya.focus()
+      await wait(250)
+      muya.setCursorByOffset(at(0, 0))
+      results.cursorTable = await waitCursor()
+      muya.createTable({ rows: 3, columns: 3 })
+      await wait(600)
       results.afterTable = muya.getMarkdown()
+
+      // 诊断：编辑器与窗口的焦点状态
+      results.diag = {
+        muyaHasFocus: muya.hasFocus(),
+        docHasFocus: document.hasFocus(),
+        activeEl: document.activeElement && document.activeElement.tagName,
+        activeClass: document.activeElement && document.activeElement.className,
+        internalSel: (() => {
+          try {
+            const cs = muya.editor.selection.getSelection()
+            return cs
+              ? {
+                  sameBlock: cs.isSelectionInSameBlock,
+                  block: cs.anchor && cs.anchor.block && cs.anchor.block.blockName,
+                  offset: cs.anchor && cs.anchor.offset
+                }
+              : null
+          } catch (e) {
+            return String(e)
+          }
+        })()
+      }
 
       return results
     })()
@@ -238,7 +299,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     ['afterHeading', /^#\s/, '标题命令未生成 # 标题'],
     ['afterBullet', /^[-*]\s/m, '无序列表命令未生成列表项'],
     ['afterTask', /^[-*]\s\[[ x]\]/m, '任务列表命令未生成复选框'],
-    ['afterStrong', /\*\*加粗\*\*|\*\*这段\*\*/, '加粗命令未生成 ** 标记'],
+    ['afterStrong', /\*\*[^*]+\*\*/, '加粗命令未生成 ** 标记'],
     ['afterTable', /\|/, '表格命令未生成表格']
   ]
   const failures: string[] = []
@@ -250,6 +311,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   if (failures.length) {
     console.error('[selfcheck] FAIL: 命令中心未生效:')
     failures.forEach((f) => console.error('   -', f))
+    console.error('[selfcheck] 首次载入后状态:', JSON.stringify(commandEffect.preHeading, null, 1))
+    console.error('[selfcheck] 诊断信息:', JSON.stringify(commandEffect.diag, null, 1))
     return false
   }
   console.log('[selfcheck] 命令中心 OK: 标题/列表/任务/加粗/表格均生效')
@@ -259,15 +322,27 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     (async () => {
       const muya = window.__typraMuya
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+      // 等渲染稳定后再搜索
       muya.setContent('苹果 香蕉 苹果 橙子\\n', false)
-      await wait(400)
+      for (let i = 0; i < 30; i++) {
+        if (document.querySelectorAll('.muya-container .mu-paragraph').length > 0) break
+        await wait(100)
+      }
+      await wait(300)
       muya.search('苹果', { isRegexp: false, isCaseSensitive: false, isWholeWord: false })
       await wait(300)
-      const found = muya.find('next')
-      await wait(200)
-      muya.replace('梨', { isSingle: false, isRegexp: false })
-      await wait(400)
-      const afterReplace = muya.getMarkdown()
+      muya.find('next')
+      await wait(250)
+
+      // 替换依赖搜索状态，轮询确认替换生效（最多重试几次）
+      let afterReplace = ''
+      for (let i = 0; i < 5; i++) {
+        muya.replace('梨', { isSingle: false, isRegexp: false })
+        await wait(400)
+        afterReplace = muya.getMarkdown()
+        if (!/苹果/.test(afterReplace)) break
+      }
 
       // 专注模式开关
       muya.setFocusMode(true)
@@ -310,8 +385,12 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       return { count: ops.length, ops, afterOff }
     })()
   `)
-  const dimmed = focusVisual.ops.filter((o) => !o.active && o.opacity < 0.9)
-  const activeOnes = focusVisual.ops.filter((o) => o.active && o.opacity > 0.9)
+  const dimmed = (focusVisual.ops as Array<{ active: boolean; opacity: number }>).filter(
+    (o) => !o.active && o.opacity < 0.9
+  )
+  const activeOnes = (focusVisual.ops as Array<{ active: boolean; opacity: number }>).filter(
+    (o) => o.active && o.opacity > 0.9
+  )
   if (!focusVisual.count || !dimmed.length || !activeOnes.length) {
     console.error('[selfcheck] FAIL: 专注模式未淡化非当前块:', JSON.stringify(focusVisual))
     return false
