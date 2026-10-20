@@ -331,6 +331,57 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     `[selfcheck] 命令中心 ${cmdCheck.total} 条命令齐备，主题切换 OK（深色 ${darkLum.toFixed(0)} / 浅色 ${lightLum.toFixed(0)}）`
   )
 
+  // 4b-5. 验证源码模式：内容能双向同步，切回所见即所得不丢改动
+  const sourceCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const c = window.__typraCommands
+      const app = window.__typraApp
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+      // 先写入初始内容
+      window.__typraLoad('# 源码模式测试\\n\\n初始段落。\\n')
+      await wait(500)
+
+      // 切到源码模式
+      await c.execute('view:toggleSource')
+      await wait(500)
+      const ta = document.querySelector('.source-editor')
+      if (!ta) return { error: '源码编辑器未渲染' }
+      const sourceText = ta.value
+
+      // 在源码里改内容（模拟用户输入）
+      ta.value = '# 源码模式测试\\n\\n已修改的段落。\\n\\n- 新列表项\\n'
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+      await wait(500)
+      const tabAfterEdit = app.activeTab().content
+
+      // 切回所见即所得
+      await c.execute('view:toggleSource')
+      await wait(700)
+      const backToWysiwyg = window.__typraMuya.getMarkdown()
+      const isSourceVisible = !!document.querySelector('.source-editor')
+
+      return { sourceText, tabAfterEdit, backToWysiwyg, isSourceVisible }
+    })()
+  `)
+  if (sourceCheck.error) {
+    console.error('[selfcheck] FAIL: 源码模式异常:', sourceCheck.error)
+    return false
+  }
+  if (!/初始段落/.test(sourceCheck.sourceText)) {
+    console.error('[selfcheck] FAIL: 源码模式未载入当前内容:', JSON.stringify(sourceCheck.sourceText))
+    return false
+  }
+  if (!/已修改的段落/.test(sourceCheck.tabAfterEdit)) {
+    console.error('[selfcheck] FAIL: 源码模式编辑未同步到标签:', JSON.stringify(sourceCheck.tabAfterEdit))
+    return false
+  }
+  if (!/已修改的段落/.test(sourceCheck.backToWysiwyg) || !/新列表项/.test(sourceCheck.backToWysiwyg)) {
+    console.error('[selfcheck] FAIL: 切回所见即所得后内容丢失:', JSON.stringify(sourceCheck.backToWysiwyg))
+    return false
+  }
+  console.log('[selfcheck] 源码模式 OK: 双向同步且不丢改动')
+
   // 4c. 验证导出：静态 HTML 生成且包含标题与表格
   const exported = await win.webContents.executeJavaScript(`
     (async () => {
