@@ -1,7 +1,21 @@
 import { BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * 窗口图标路径。
+ * 开发时用 build/icon.png，打包后由 electron-builder 从同一目录取用。
+ */
+function resolveIcon(): string | undefined {
+  const candidates = [
+    join(process.cwd(), 'build', 'icon.png'),
+    join(__dirname, '../../build/icon.png'),
+    join(__dirname, '../../resources/icon.png')
+  ]
+  return candidates.find((p) => existsSync(p))
+}
 
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow
@@ -18,6 +32,8 @@ export function createWindow(): BrowserWindow {
     minHeight: 420,
     show: false,
     backgroundColor: '#ffffff',
+    icon: resolveIcon(),
+    // 应用内自绘菜单栏（MenuBar.vue），隐藏原生菜单栏避免重复
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

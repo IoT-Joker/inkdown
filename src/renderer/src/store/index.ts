@@ -72,6 +72,8 @@ export const state = reactive({
   findKeyword: '',
   findOptions: { isRegexp: false, isCaseSensitive: false, isWholeWord: false },
   preferencesVisible: false,
+  aboutVisible: false,
+  shortcutsVisible: false,
   statusMessage: '',
   /** 非阻塞提示条：用于外部改动等需要告知但不打断写作的情况 */
   notice: null as { text: string; action?: string; filePath?: string } | null,

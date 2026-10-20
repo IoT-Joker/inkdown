@@ -927,6 +927,10 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 菜单栏未渲染:', JSON.stringify(menuCheck))
     return false
   }
+  if (!menuCheck.labels.includes('帮助') && !menuCheck.labels.includes('Help')) {
+    console.error('[selfcheck] FAIL: 菜单栏缺少帮助菜单:', JSON.stringify(menuCheck.labels))
+    return false
+  }
   if (!menuCheck.hasRecentSub) {
     console.error('[selfcheck] FAIL: 文件菜单缺少「最近打开」子菜单:', JSON.stringify(menuCheck.fileItems))
     return false
@@ -1181,6 +1185,85 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   console.log('[selfcheck] 切标签搜索 OK: 返回后结果保留、回车仍可用')
+
+  // 5h. 关于对话框：能从命令打开，且显示真实版本号
+  const aboutCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      await c.execute('help:about')
+      await wait(500)
+      const el = document.querySelector('.about')
+      if (!el) return { error: '关于对话框未出现' }
+      const text = el.innerText
+      return {
+        visible: true,
+        hasIcon: !!el.querySelector('.about-icon'),
+        hasName: /Inkdown/.test(text),
+        version: (text.match(/\\d+\\.\\d+\\.\\d+/) || [null])[0],
+        hasElectron: /Electron \\d/.test(text),
+        text: text.replace(/\\s+/g, ' ').slice(0, 120)
+      }
+    })()
+  `)
+  if (aboutCheck.error) {
+    console.error('[selfcheck] FAIL: 关于对话框:', aboutCheck.error)
+    return false
+  }
+  if (!aboutCheck.hasIcon || !aboutCheck.hasName || !aboutCheck.version) {
+    console.error('[selfcheck] FAIL: 关于对话框内容不完整:', JSON.stringify(aboutCheck))
+    return false
+  }
+  if (!aboutCheck.hasElectron) {
+    console.error('[selfcheck] FAIL: 关于对话框缺少运行时版本:', JSON.stringify(aboutCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 关于对话框 OK: 图标+名称+版本 ${aboutCheck.version}+运行时信息`
+  )
+
+  // 5i. 快捷键面板可从帮助菜单打开
+  const shortcutsCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      // 先关掉关于对话框
+      const closeBtn = document.querySelector('.about-actions .primary')
+      closeBtn && closeBtn.click()
+      await wait(300)
+      await c.execute('help:shortcuts')
+      await wait(500)
+      const el = document.querySelector('.sc-dialog')
+      if (!el) return { error: '快捷键面板未出现' }
+      return {
+        visible: true,
+        groups: el.querySelectorAll('.sc-group').length,
+        rows: el.querySelectorAll('.sc-row').length,
+        firstKey: el.querySelector('.sc-key')?.innerText || ''
+      }
+    })()
+  `)
+  if (shortcutsCheck.error) {
+    console.error('[selfcheck] FAIL: 快捷键面板:', shortcutsCheck.error)
+    return false
+  }
+  if (shortcutsCheck.groups < 4 || shortcutsCheck.rows < 20) {
+    console.error('[selfcheck] FAIL: 快捷键面板内容不足:', JSON.stringify(shortcutsCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 快捷键面板 OK: ${shortcutsCheck.groups} 组、${shortcutsCheck.rows} 条`
+  )
+
+  // 关掉面板，避免影响后续用例
+  await win.webContents.executeJavaScript(`
+    (async () => {
+      const b = [...document.querySelectorAll('.sc-head .ty-btn')][0]
+      b && b.click()
+      await new Promise((r) => setTimeout(r, 200))
+      return true
+    })()
+  `)
 
   // 清理自检用的临时目录（所有依赖它的用例都已执行完）。
   // 先停掉该目录下文件的监听器：fs.watch 持有句柄时删除会失败或挂住。

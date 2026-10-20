@@ -102,6 +102,35 @@ const zhCN: Dict = {
   'menu.view.fullscreen': '全屏',
   'menu.view.devtools': '开发者工具',
 
+  // 帮助
+  'menu.help': '帮助',
+  'menu.help.about': '关于 Inkdown',
+  'menu.help.shortcuts': '键盘快捷键',
+  'menu.help.repo': '项目主页',
+  'menu.help.feedback': '反馈问题',
+
+  // 关于对话框
+  'about.title': '关于 Inkdown',
+  'about.version': '版本 {version}',
+  'about.tagline': '专注写作的 Markdown 编辑器',
+  'about.builtOn': '基于 marktext 的 muya 编辑器内核构建',
+  'about.license': 'MIT 许可',
+  'about.electron': 'Electron {electron}',
+  'about.chromium': 'Chromium {chromium}',
+  'about.node': 'Node {node}',
+  'about.close': '关闭',
+  'about.copy': '复制版本信息',
+  'about.copied': '已复制到剪贴板',
+  'about.thirdParty': '开源组件',
+
+  // 快捷键面板
+  'shortcuts.title': '键盘快捷键',
+  'shortcuts.file': '文件',
+  'shortcuts.edit': '编辑',
+  'shortcuts.paragraph': '段落',
+  'shortcuts.format': '格式',
+  'shortcuts.view': '视图',
+
   // 标签栏
   'tab.close': '关闭标签页',
   'tab.new': '新建标签页',
@@ -316,6 +345,32 @@ const en: Dict = {
   'menu.view.zoomReset': 'Reset Zoom',
   'menu.view.fullscreen': 'Full Screen',
   'menu.view.devtools': 'Developer Tools',
+
+  'menu.help': 'Help',
+  'menu.help.about': 'About Inkdown',
+  'menu.help.shortcuts': 'Keyboard Shortcuts',
+  'menu.help.repo': 'Project Home',
+  'menu.help.feedback': 'Report an Issue',
+
+  'about.title': 'About Inkdown',
+  'about.version': 'Version {version}',
+  'about.tagline': 'A focused Markdown editor',
+  'about.builtOn': 'Built on marktext\u2019s muya editor engine',
+  'about.license': 'MIT License',
+  'about.electron': 'Electron {electron}',
+  'about.chromium': 'Chromium {chromium}',
+  'about.node': 'Node {node}',
+  'about.close': 'Close',
+  'about.copy': 'Copy Version Info',
+  'about.copied': 'Copied to clipboard',
+  'about.thirdParty': 'Open Source Components',
+
+  'shortcuts.title': 'Keyboard Shortcuts',
+  'shortcuts.file': 'File',
+  'shortcuts.edit': 'Edit',
+  'shortcuts.paragraph': 'Paragraph',
+  'shortcuts.format': 'Format',
+  'shortcuts.view': 'View',
 
   'tab.close': 'Close Tab',
   'tab.new': 'New Tab',

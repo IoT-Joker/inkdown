@@ -21,7 +21,34 @@
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck:muya": "tsc --noEmit -p tsconfig.muya.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "check": "npm run typecheck && npm run verify"
+    "check": "npm run typecheck && npm run verify",
+    "icons": "node scripts/make-icons.js"
+  },
+  "build": {
+    "appId": "com.iotjoker.inkdown",
+    "productName": "Inkdown",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": ["out/**/*", "build/icon.png"],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": ["nsis"]
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Office",
+      "target": ["AppImage", "deb"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "dependencies": {
     "@muyajs/core": "workspace:*"

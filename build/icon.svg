@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <!-- 背景渐变：墨蓝 → 靛紫，沉稳且有辨识度 -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3B82F6" />
+      <stop offset="55%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#8B5CF6" />
+    </linearGradient>
+    <!-- 墨滴高光 -->
+    <linearGradient id="drop" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#E8ECFF" />
+    </linearGradient>
+    <!-- 顶部柔光 -->
+    <radialGradient id="glow" cx="0.5" cy="0.1" r="0.9">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- 圆角方形底 -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)" />
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#glow)" />
+
+  <!-- 墨滴：上尖下圆，向下收成一个尖 —— 既是「墨」也是「down」 -->
+  <path
+    d="M32 11 C 32 11, 49 31, 49 41 A 17 17 0 1 1 15 41 C 15 31, 32 11, 32 11 Z"
+    fill="url(#drop)"
+  />
+
+  <!-- 滴内的向下箭头：点出 Markdown 的下行语义 -->
+  <path
+    d="M32 27 L32 45 M25 38 L32 45 L39 38"
+    fill="none"
+    stroke="#4F46E5"
+    stroke-width="4.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

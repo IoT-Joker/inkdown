@@ -132,6 +132,16 @@ const menus = computed<MenuGroup[]>(() => [
       { labelKey: 'menu.view.fullscreen', command: 'view:fullscreen' },
       { labelKey: 'menu.view.devtools', command: 'view:devtools', accel: 'F12' }
     ]
+  },
+  {
+    labelKey: 'menu.help',
+    items: [
+      { labelKey: 'menu.help.shortcuts', command: 'help:shortcuts', accel: 'Ctrl+Shift+/' },
+      { labelKey: 'menu.help.repo', command: 'help:repo' },
+      { labelKey: 'menu.help.feedback', command: 'help:feedback' },
+      { labelKey: '', separator: true },
+      { labelKey: 'menu.help.about', command: 'help:about' }
+    ]
   }
 ])
 

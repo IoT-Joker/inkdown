@@ -48,6 +48,8 @@ const api = {
     ipcRenderer.invoke('app:exportPdf', filePath, html, options),
   getPath: (name: 'home' | 'documents' | 'pictures' | 'userData') =>
     ipcRenderer.invoke('app:getPath', name),
+  /** 关于对话框用：应用与运行时版本。 */
+  getVersions: () => ipcRenderer.invoke('app:getVersions'),
   quit: () => ipcRenderer.invoke('app:quit'),
 
   /** 界面语言：由主进程持有（菜单需在渲染层就绪前确定语言）。 */

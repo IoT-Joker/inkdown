@@ -7,6 +7,8 @@ import TabBar from './components/TabBar.vue'
 import StatusBar from './components/StatusBar.vue'
 import FindBar from './components/FindBar.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
+import AboutDialog from './components/AboutDialog.vue'
+import ShortcutsDialog from './components/ShortcutsDialog.vue'
 import { executeCommand, registerGlobalCommands } from './composables/useCommands'
 import { useFile } from './composables/useFile'
 import { useI18n, initLocale } from './composables/useI18n'
@@ -207,6 +209,8 @@ async function tryQuit(): Promise<void> {
     </div>
     <StatusBar />
     <PreferencesDialog v-if="state.preferencesVisible" />
+    <AboutDialog v-if="state.aboutVisible" />
+    <ShortcutsDialog v-if="state.shortcutsVisible" />
   </div>
 </template>
 

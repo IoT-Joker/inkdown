@@ -8,6 +8,7 @@ import { runFileTest, runSessionRestoreTest } from './fileTest'
 import { renderPdfToImages } from './renderPdf'
 import { captureEnglishScreenshot } from './screenshotEn'
 import { captureFindScreenshot } from './screenshotFind'
+import { makeIcons } from './makeIcons'
 import { loadLocale } from './locale'
 
 /**
@@ -65,6 +66,14 @@ app.whenReady().then(async () => {
   const shotFindDir = process.env['INKDOWN_SHOT_FIND']
   if (shotFindDir) {
     const ok = await captureFindScreenshot(win, shotFindDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_MAKE_ICONS=<目录> 时生成应用图标（PNG + ICO）
+  const iconDir = process.env['INKDOWN_MAKE_ICONS']
+  if (iconDir) {
+    const ok = await makeIcons(iconDir)
     app.exit(ok ? 0 : 1)
     return
   }

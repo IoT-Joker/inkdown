@@ -335,6 +335,14 @@ export function registerIpc(): void {
     app.getPath(name)
   )
 
+  /** 关于对话框用：应用与运行时版本。 */
+  ipcMain.handle('app:getVersions', () => ({
+    app: app.getVersion(),
+    electron: process.versions.electron ?? '',
+    chromium: process.versions.chrome ?? '',
+    node: process.versions.node ?? ''
+  }))
+
   ipcMain.handle('app:quit', () => app.quit())
 }
 

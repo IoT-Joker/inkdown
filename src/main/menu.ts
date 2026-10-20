@@ -176,6 +176,20 @@ export function buildAppMenu(): void {
         { role: 'togglefullscreen', label: t('menu.view.fullscreen') },
         { label: t('menu.view.devtools'), accelerator: 'F12', click: cmd('view:devtools') }
       ]
+    },
+    {
+      label: t('menu.help'),
+      submenu: [
+        {
+          label: t('menu.help.shortcuts'),
+          accelerator: 'CmdOrCtrl+Shift+/',
+          click: cmd('help:shortcuts')
+        },
+        { label: t('menu.help.repo'), click: cmd('help:repo') },
+        { label: t('menu.help.feedback'), click: cmd('help:feedback') },
+        { type: 'separator' },
+        { label: t('menu.help.about'), click: cmd('help:about') }
+      ]
     }
   ]
 

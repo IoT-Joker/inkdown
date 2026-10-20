@@ -118,6 +118,30 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
   const image = await win.webContents.capturePage()
   await fsp.writeFile(join(outDir, '07-find-bar.png'), image.toPNG())
   console.log('[shot] 已写出 07-find-bar.png')
+
+  // 顺带截「关于」与「快捷键」两个对话框
+  const dialogs = [
+    { cmd: 'help:about', selector: '.about', name: '08-about.png' },
+    { cmd: 'help:shortcuts', selector: '.sc-dialog', name: '09-shortcuts.png' }
+  ]
+  for (const d of dialogs) {
+    await win.webContents.executeJavaScript(`
+      (async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        // 关掉可能开着的其它面板
+        document.querySelectorAll('.about-actions .primary, .sc-head .ty-btn, .dialog-foot .ty-btn').forEach((b) => b.click())
+        await wait(250)
+        await window.__inkdownCommands.execute('${d.cmd}')
+        await wait(600)
+        return !!document.querySelector('${d.selector}')
+      })()
+    `)
+    await new Promise((r) => setTimeout(r, 400))
+    const shot = await win.webContents.capturePage()
+    await fsp.writeFile(join(outDir, d.name), shot.toPNG())
+    console.log(`[shot] 已写出 ${d.name}`)
+  }
+
   console.log('[shot] PASS: 查找栏截图完成')
   return true
 }

@@ -83,6 +83,19 @@ export function registerGlobalCommands(): void {
     'app:preferences': () => {
       state.preferencesVisible = true
     },
+    // 帮助菜单
+    'help:about': () => {
+      state.aboutVisible = true
+    },
+    'help:shortcuts': () => {
+      state.shortcutsVisible = true
+    },
+    'help:repo': () => {
+      void window.inkdown.openExternal('https://github.com/IoT-Joker/inkdown')
+    },
+    'help:feedback': () => {
+      void window.inkdown.openExternal('https://github.com/IoT-Joker/inkdown/issues')
+    },
     'app:quit': () => window.inkdown.quit(),
     // 最近打开：由菜单传文件路径进来
     'file:openRecent': async (payload?: unknown) => {
