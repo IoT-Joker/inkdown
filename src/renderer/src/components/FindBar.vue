@@ -14,8 +14,17 @@ const matchCount = ref(0)
 
 const isReplace = computed(() => state.findMode === 'replace')
 
-/** 查找请求转发给编辑器：EditorHost 监听该事件并调用 muya.search。 */
+/**
+ * 查找请求转发给编辑器：EditorHost 监听该事件并调用 muya.search。
+ * 关键词同时写进 store，切标签后由 EditorHost 按它重搜。
+ */
 function emitFind(action: 'search' | 'next' | 'previous' | 'replace' | 'replaceAll'): void {
+  state.findKeyword = keyword.value
+  state.findOptions = {
+    isRegexp: isRegexp.value,
+    isCaseSensitive: isCaseSensitive.value,
+    isWholeWord: isWholeWord.value
+  }
   window.dispatchEvent(
     new CustomEvent('inkdown:find', {
       detail: {
@@ -30,11 +39,28 @@ function emitFind(action: 'search' | 'next' | 'previous' | 'replace' | 'replaceA
   )
 }
 
+/** 匹配数与当前序号（由 EditorHost 回传）。 */
+const matchIndex = ref(0)
+
 let timer: number | undefined
 watch([keyword, isRegexp, isCaseSensitive, isWholeWord], () => {
   if (timer) window.clearTimeout(timer)
   timer = window.setTimeout(() => emitFind('search'), 120)
 })
+
+/**
+ * 兜底：直接监听输入框的原生 input 事件。
+ * 自动化测试（以及某些输入法）通过原生 setter 改值再派发 input，
+ * Vue 的 v-model 在个别情况下收不到，导致搜索不触发。
+ */
+function onInputNative(e: Event): void {
+  const el = e.target as HTMLInputElement
+  if (el.classList.contains('find-input')) {
+    const idx = [...document.querySelectorAll('.find-input')].indexOf(el)
+    if (idx === 0) keyword.value = el.value
+    else if (idx === 1) replacement.value = el.value
+  }
+}
 
 watch(
   () => state.findVisible,
@@ -56,18 +82,38 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (e.key === 'Enter') {
     e.preventDefault()
+    // 若当前没有有效匹配（例如刚切标签回来），回车先重搜再跳转
+    if (!matchCount.value && keyword.value) {
+      emitFind('search')
+      window.setTimeout(() => emitFind(e.shiftKey ? 'previous' : 'next'), 250)
+      return
+    }
     emitFind(e.shiftKey ? 'previous' : 'next')
   }
 }
 
-// 由 EditorHost 回传匹配数量
+// 由 EditorHost 回传匹配数量与当前序号
 window.addEventListener('inkdown:find-result', ((e: Event) => {
-  matchCount.value = (e as CustomEvent).detail?.count ?? 0
+  const d = (e as CustomEvent).detail ?? {}
+  matchCount.value = d.count ?? 0
+  matchIndex.value = d.index ?? 0
 }) as EventListener)
 </script>
 
 <template>
-  <div v-if="state.findVisible" class="find-bar">
+  <div v-if="state.findVisible" class="find-bar" @input="onInputNative">
+    <!-- 放大镜图标：表明这是查找输入框 -->
+    <span class="find-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="13" height="13">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          d="M6.8 11.6a4.8 4.8 0 1 0 0-9.6 4.8 4.8 0 0 0 0 9.6Zm3.4-1.4L14 14"
+        />
+      </svg>
+    </span>
     <input
       ref="searchInput"
       v-model="keyword"
@@ -75,6 +121,18 @@ window.addEventListener('inkdown:find-result', ((e: Event) => {
       :placeholder="t('find.placeholder')"
       @keydown="onKeydown"
     />
+    <span v-if="isReplace" class="find-icon replace-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="13" height="13">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M2 5h9l-2.2-2.2M14 11H5l2.2 2.2"
+        />
+      </svg>
+    </span>
     <input
       v-if="isReplace"
       v-model="replacement"
@@ -98,7 +156,7 @@ window.addEventListener('inkdown:find-result', ((e: Event) => {
       <button class="ty-btn" :title="`${t('find.next')} (Enter)`" @click="emitFind('next')">↓</button>
       <button v-if="isReplace" class="ty-btn" @click="emitFind('replace')">{{ t('find.replace') }}</button>
       <button v-if="isReplace" class="ty-btn" @click="emitFind('replaceAll')">{{ t('find.replaceAll') }}</button>
-      <span class="find-count">{{ t('find.count', { n: matchCount }) }}</span>
+      <span class="find-count">{{ matchCount ? `${matchIndex} / ${matchCount}` : t('find.count', { n: 0 }) }}</span>
       <button class="ty-btn close" :title="`${t('find.close')} (Esc)`" @click="close">×</button>
     </div>
   </div>
@@ -114,6 +172,20 @@ window.addEventListener('inkdown:find-result', ((e: Event) => {
   border-top: 1px solid var(--ty-border);
   background: var(--ty-sidebar-bg);
   font-size: 12px;
+}
+/* 放大镜图标：放在输入框左侧，表明这是查找框 */
+.find-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--ty-muted);
+}
+.replace-icon {
+  margin-left: 4px;
 }
 .find-input {
   width: 180px;

@@ -147,7 +147,8 @@ export function registerGlobalCommands(): void {
       const mode = payload === 'crlf' ? 'crlf' : 'lf'
       settings.lineEnding = mode
       persistSettings()
-      // 立刻按新行尾写盘一次，让磁盘文件与设置一致
+      // 仅当标签已有磁盘路径时才立即按新行尾写盘；
+      // 未保存过的文档只改设置，等用户首次保存时生效（避免弹出保存对话框）
       const tab = getActiveTab()
       if (tab?.filePath) {
         const { saveTab } = useFile()

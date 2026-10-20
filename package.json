@@ -15,6 +15,7 @@
     "filetest": "node scripts/file-test.js",
     "sessiontest": "node scripts/session-test.js",
     "shots": "node scripts/capture-shots.js",
+    "shot:find": "node scripts/capture-find-shot.js",
     "verify": "electron-vite build && node scripts/smoke-test.js && node scripts/file-test.js && node scripts/session-test.js",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",

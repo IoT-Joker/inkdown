@@ -367,11 +367,26 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const muya = window.__inkdownMuya
       window.__inkdownLoad('# 标题\\n\\n第一段内容。\\n\\n第二段内容。\\n\\n第三段内容。\\n')
-      await wait(700)
+      for (let i = 0; i < 40; i++) {
+        if (document.querySelectorAll('.muya-container .mu-paragraph').length >= 3) break
+        await wait(100)
+      }
+      muya.focus()
+      await wait(200)
       muya.setCursorByOffset({ anchor: { line: 2, ch: 1 }, focus: { line: 2, ch: 1 } })
-      await wait(300)
+      // 轮询确认选区落到目标块——专注模式需要活动块，而活动块依赖选区就位
+      for (let i = 0; i < 30; i++) {
+        const cs = muya.editor?.selection?.getSelection?.()
+        if (cs && cs.anchor && cs.anchor.block) break
+        await wait(100)
+      }
       muya.setFocusMode(true)
-      await wait(600)
+      // 等淡化生效（依赖活动块标记）
+      for (let i = 0; i < 30; i++) {
+        const b = [...document.querySelectorAll('.mu-focus-mode .mu-container > *')]
+        if (b.some((el) => el.classList.contains('mu-active'))) break
+        await wait(100)
+      }
       const blocks = [...document.querySelectorAll('.mu-focus-mode .mu-container > *')]
       const ops = blocks.map((b) => ({
         active: b.classList.contains('mu-active'),
@@ -932,47 +947,240 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const muya = window.__inkdownMuya
       const app = window.__inkdownApp
 
-      // 段落复制：一段变两段
-      window.__inkdownLoad('第一段内容\\n')
-      await wait(600)
-      muya.setCursorByOffset({ anchor: { line: 0, ch: 2 }, focus: { line: 0, ch: 2 } })
-      await wait(300)
-      await c.execute('edit:duplicate')
-      await wait(500)
-      const afterDuplicate = muya.getMarkdown()
+      // 先关掉可能开着的查找框：它会抢走编辑器焦点，导致段落命令失效
+      if (app.findVisible()) {
+        const closeBtn = document.querySelector('.find-actions .close')
+        closeBtn && closeBtn.click()
+        await wait(300)
+      }
+
+      // setCursorByOffset 内部会重建文档，必须轮询确认选区就位后再执行命令
+      const readSel = () => {
+        try {
+          const cs = muya.editor?.selection?.getSelection?.()
+          return cs && cs.anchor && cs.anchor.block ? cs.anchor.block.blockName : null
+        } catch {
+          return null
+        }
+      }
+      // 段落复制：一段变两段。
+      // duplicate 依赖「当前活动块」，而活动块需要光标真正落在块内且编辑器有焦点；
+      // 无头环境下这一步偶发未就位，因此校验后重试。
+      const loadAt = async (md, ch) => {
+        window.__inkdownLoad(md)
+        for (let i = 0; i < 40; i++) {
+          if (document.querySelectorAll('.muya-container .mu-paragraph').length > 0) break
+          await wait(100)
+        }
+        muya.focus()
+        await wait(250)
+        muya.setCursorByOffset({ anchor: { line: 0, ch }, focus: { line: 0, ch } })
+        // 等选区就位
+        for (let i = 0; i < 40; i++) {
+          const cs = (() => {
+            try {
+              return muya.editor?.selection?.getSelection?.()
+            } catch {
+              return null
+            }
+          })()
+          if (cs && cs.anchor && cs.anchor.block) break
+          await wait(100)
+        }
+        await wait(200)
+      }
+
+      // 段落复制：一段变两段（失败则重试，最多 4 次）
+      let afterDuplicate = ''
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await loadAt('第一段内容\\n', 2)
+        await c.execute('edit:duplicate')
+        await wait(500)
+        afterDuplicate = muya.getMarkdown()
+        if (/第一段内容[\s\S]+第一段内容/.test(afterDuplicate)) break
+      }
 
       // 插入段落
-      window.__inkdownLoad('唯一段落\\n')
-      await wait(600)
-      muya.setCursorByOffset({ anchor: { line: 0, ch: 2 }, focus: { line: 0, ch: 2 } })
-      await wait(300)
+      await loadAt('唯一段落\\n', 2)
       await c.execute('edit:insertParagraph')
       await wait(500)
       const afterInsert = muya.getMarkdown()
 
-      // 换行符：切到 CRLF
-      await c.execute('edit:lineEnding', 'crlf')
-      await wait(400)
-      const crlfSetting = app.settings().lineEnding
-      // 切回 LF
-      await c.execute('edit:lineEnding', 'lf')
-      await wait(400)
-      const lfSetting = app.settings().lineEnding
+      // 换行符：切到 CRLF（捕获异常，避免命令中断导致后续读不到值）
+      let crlfSetting = null
+      let lfSetting = null
+      let lineEndingError = null
+      try {
+        await c.execute('edit:lineEnding', 'crlf')
+        await wait(400)
+        crlfSetting = app.settings().lineEnding
+        await c.execute('edit:lineEnding', 'lf')
+        await wait(400)
+        lfSetting = app.settings().lineEnding
+      } catch (err) {
+        lineEndingError = String(err)
+      }
 
-      return { afterDuplicate, afterInsert, crlfSetting, lfSetting }
+      return { afterDuplicate, afterInsert, crlfSetting, lfSetting, lineEndingError }
     })()
   `)
   // 复制后段落数应增加
   const dupCount = (paraCheck.afterDuplicate.match(/第一段内容/g) || []).length
   if (dupCount < 2) {
     console.error('[selfcheck] FAIL: 复制段落未生效:', JSON.stringify(paraCheck.afterDuplicate))
+    console.error('[selfcheck] 复制段落诊断:', JSON.stringify(paraCheck.dupDiag))
     return false
   }
   if (paraCheck.crlfSetting !== 'crlf' || paraCheck.lfSetting !== 'lf') {
-    console.error('[selfcheck] FAIL: 换行符设置未生效:', JSON.stringify(paraCheck))
+    console.error(
+      '[selfcheck] FAIL: 换行符设置未生效:',
+      JSON.stringify({ crlf: paraCheck.crlfSetting, lf: paraCheck.lfSetting, all: paraCheck })
+    )
     return false
   }
   console.log('[selfcheck] 段落操作与换行符 OK: 复制段落生效，LF/CRLF 可切换')
+
+  // 5f. 搜索：计数正确、翻页高亮不丢失（含同段落多匹配）
+  const searchCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+      const setInput = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      const readCount = () => document.querySelector('.find-count')?.innerText || ''
+      // 内核规格：当前匹配 span.mu-highlight，其余匹配 span.mu-selection
+      const total = () =>
+        document.querySelectorAll('.muya-container span.mu-highlight').length +
+        document.querySelectorAll('.muya-container span.mu-selection').length
+      const clickNext = async () => {
+        const b = [...document.querySelectorAll('.find-actions .ty-btn')].find((x) => x.textContent.trim() === '↓')
+        b && b.click()
+        await wait(450)
+      }
+      const searchIn = async (md, keyword, expectBlocks) => {
+        window.__inkdownLoad(md)
+        for (let i = 0; i < 40; i++) {
+          if (document.querySelectorAll('.muya-container .mu-paragraph').length >= expectBlocks) break
+          await wait(100)
+        }
+        if (!app.findVisible()) {
+          await c.execute('edit:find')
+          await wait(300)
+        }
+        const input = document.querySelector('.find-input')
+        if (!input) return null
+        // 先清空再输入，确保 v-model 一定收到变化（否则同关键词不会重新搜索）
+        setInput(input, '')
+        await wait(250)
+        setInput(input, keyword)
+        await wait(800)
+        return readCount()
+      }
+
+      // 场景一：跨段落 5 处
+      const crossCount = await searchIn('苹果 一\\n\\n苹果 二\\n\\n苹果 三\\n\\n苹果 四\\n\\n苹果 五\\n', '苹果', 5)
+      const crossTotals = [total()]
+      for (let i = 0; i < 4; i++) {
+        await clickNext()
+        crossTotals.push(total())
+      }
+
+      // 场景二：同一段落内 4 处
+      const sameCount = await searchIn('苹果甲 苹果乙 苹果丙 苹果丁\\n', '苹果', 1)
+      const sameTotals = [total()]
+      for (let i = 0; i < 4; i++) {
+        await clickNext()
+        sameTotals.push(total())
+      }
+
+      return { crossCount, crossTotals, sameCount, sameTotals }
+    })()
+  `)
+  if (!/5/.test(searchCheck.crossCount)) {
+    console.error('[selfcheck] FAIL: 跨段落搜索计数不正确:', JSON.stringify(searchCheck.crossCount))
+    return false
+  }
+  if (searchCheck.crossTotals.some((n: number) => n !== 5)) {
+    console.error('[selfcheck] FAIL: 跨段落翻页时高亮总数不稳定:', JSON.stringify(searchCheck.crossTotals))
+    return false
+  }
+  if (!/4/.test(searchCheck.sameCount)) {
+    console.error('[selfcheck] FAIL: 同段落搜索计数不正确:', JSON.stringify(searchCheck.sameCount))
+    return false
+  }
+  if (searchCheck.sameTotals.some((n: number) => n !== 4)) {
+    console.error('[selfcheck] FAIL: 同段落翻页时高亮总数不稳定:', JSON.stringify(searchCheck.sameTotals))
+    return false
+  }
+  console.log(
+    `[selfcheck] 搜索 OK: 跨段落 5 处（翻页 ${searchCheck.crossTotals.join('/')}）、同段落 4 处（翻页 ${searchCheck.sameTotals.join('/')}）`
+  )
+
+  // 5g. 切标签再回来，搜索结果应保留且回车仍可用（用户报告的第三个问题）
+  const tabSwitchSearch = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+      const setInput = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+
+      // 标签一：含匹配的文档
+      window.__inkdownLoad('苹果 一\\n\\n苹果 二\\n')
+      for (let i = 0; i < 30; i++) {
+        if (document.querySelectorAll('.muya-container .mu-paragraph').length >= 2) break
+        await wait(100)
+      }
+      await c.execute('edit:find')
+      await wait(300)
+      setInput(document.querySelector('.find-input'), '苹果')
+      await wait(800)
+      const before = document.querySelector('.find-count')?.innerText || ''
+      const firstTabId = app.activeTab().id
+
+      // 新建标签二并切过去，再切回来
+      await c.execute('file:new')
+      await wait(600)
+      const secondTabId = app.activeTab().id
+      app.tabs().forEach((t) => { if (t.id === firstTabId) app.setActive(t.id) })
+      await wait(800)
+
+      const afterReturn = document.querySelector('.find-count')?.innerText || ''
+      const findVisible = app.findVisible()
+      const inputValue = document.querySelector('.find-input')?.value || ''
+      const highlights =
+        document.querySelectorAll('.muya-container span.mu-highlight').length +
+        document.querySelectorAll('.muya-container span.mu-selection').length
+
+      // 回车应仍能跳到下一处（不报错即可）
+      const input = document.querySelector('.find-input')
+      input && input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await wait(500)
+      const afterEnter = document.querySelector('.find-count')?.innerText || ''
+
+      return { before, afterReturn, findVisible, inputValue, highlights, afterEnter, secondTabId }
+    })()
+  `)
+  console.log('[selfcheck] 切标签搜索诊断:', JSON.stringify(tabSwitchSearch))
+  if (!/2/.test(tabSwitchSearch.afterReturn) || tabSwitchSearch.highlights < 2) {
+    console.error(
+      '[selfcheck] FAIL: 切标签返回后搜索结果丢失:',
+      JSON.stringify(tabSwitchSearch)
+    )
+    return false
+  }
+  if (!/2/.test(tabSwitchSearch.afterEnter)) {
+    console.error('[selfcheck] FAIL: 切标签返回后回车失效:', JSON.stringify(tabSwitchSearch))
+    return false
+  }
+  console.log('[selfcheck] 切标签搜索 OK: 返回后结果保留、回车仍可用')
 
   // 清理自检用的临时目录（所有依赖它的用例都已执行完）。
   // 先停掉该目录下文件的监听器：fs.watch 持有句柄时删除会失败或挂住。

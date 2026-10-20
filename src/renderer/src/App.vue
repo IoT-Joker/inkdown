@@ -81,15 +81,18 @@ onMounted(async () => {
     refreshWorkspace,
     activeTab: () => getActiveTab(),
     tabs: () => state.tabs,
+    setActive: (id: string) => {
+      state.activeId = id
+    },
     settings: () => settings,
+    findVisible: () => state.findVisible,
     persistSession,
     loadSession,
-    notice: null as null | { text: string },
     clearNotice: () => {
       state.notice = null
     }
   }
-  // notice 需要实时反映 state，用 getter 代理
+  // notice 需要实时反映 state，用 getter 代理（不能与上面的字面量属性重名）
   Object.defineProperty((window as unknown as Record<string, unknown>).__inkdownApp, 'notice', {
     get: () => state.notice
   })

@@ -64,6 +64,13 @@ export const state = reactive({
   charCount: 0,
   findVisible: false,
   findMode: 'find' as 'find' | 'replace',
+  /**
+   * 当前查找关键词与选项。
+   * 放在 store 里是为了切标签后能重新执行搜索：
+   * 内核在 setContent（切标签会触发）时会 reset 搜索状态，匹配会丢失。
+   */
+  findKeyword: '',
+  findOptions: { isRegexp: false, isCaseSensitive: false, isWholeWord: false },
   preferencesVisible: false,
   statusMessage: '',
   /** 非阻塞提示条：用于外部改动等需要告知但不打断写作的情况 */

@@ -7,6 +7,7 @@ import { captureScreenshots } from './screenshot'
 import { runFileTest, runSessionRestoreTest } from './fileTest'
 import { renderPdfToImages } from './renderPdf'
 import { captureEnglishScreenshot } from './screenshotEn'
+import { captureFindScreenshot } from './screenshotFind'
 import { loadLocale } from './locale'
 
 /**
@@ -56,6 +57,14 @@ app.whenReady().then(async () => {
   const shotEnDir = process.env['INKDOWN_SHOT_EN']
   if (shotEnDir) {
     const ok = await captureEnglishScreenshot(win, shotEnDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_SHOT_FIND=<目录> 时截取查找栏截图
+  const shotFindDir = process.env['INKDOWN_SHOT_FIND']
+  if (shotFindDir) {
+    const ok = await captureFindScreenshot(win, shotFindDir)
     app.exit(ok ? 0 : 1)
     return
   }

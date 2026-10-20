@@ -217,6 +217,7 @@ const zhCN: Dict = {
   'notice.reload': '重新载入',
   'notice.ignore': '忽略',
   'notice.onlyMarkdown': '仅支持拖入 Markdown 文档（.md / .markdown / .txt）',
+  'notice.lineEndingChanged': '存盘行尾已切换为 {mode}',
 
   // 对话框
   'dialog.allFiles': '所有文件',
@@ -422,6 +423,7 @@ const en: Dict = {
   'notice.reload': 'Reload',
   'notice.ignore': 'Ignore',
   'notice.onlyMarkdown': 'Only Markdown documents can be dropped (.md / .markdown / .txt)',
+  'notice.lineEndingChanged': 'Line ending for saving is now {mode}',
 
   'dialog.allFiles': 'All Files',
   'dialog.saveChanges': 'Save changes?',

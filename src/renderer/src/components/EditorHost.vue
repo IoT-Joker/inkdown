@@ -143,6 +143,11 @@ function mountEditor(): void {
     if (state.typewriterMode) keepCursorCentered()
   })
 
+  // 切标签或重载内容后，内核会重置搜索状态，这里按 store 里记的关键词重搜一次
+  muya.on('search-refreshed', () => {
+    restoreSearchIfNeeded()
+  })
+
   updateCounts(tab?.content ?? '')
   refreshOutline()
 
@@ -174,6 +179,8 @@ function loadTab(tab: Tab): void {
   suppress = false
   updateCounts(tab.content)
   refreshOutline()
+  // setContent 会清掉内核的搜索状态，切回来需要重新搜索
+  restoreSearchIfNeeded()
 }
 
 watch(
@@ -346,32 +353,101 @@ function onFind(e: Event): void {
     isWholeWord: d.isWholeWord,
     selectHighlight: true
   }
+  // 记住关键词与选项：切标签后要按它重搜（内核会清掉搜索状态）
+  state.findKeyword = d.keyword
+  state.findOptions = {
+    isRegexp: d.isRegexp,
+    isCaseSensitive: d.isCaseSensitive,
+    isWholeWord: d.isWholeWord
+  }
   switch (d.action) {
     case 'search':
-      muya.search(d.keyword, opts)
+      searchResult = muya.search(d.keyword, opts)
+      // 内核 search() 设完选区会重渲染当前块，抹掉该块的高亮；
+      // 补一次重放（只刷高亮、不动选区），避免「搜索后少一个高亮」。
+      replayHighlights(d.keyword, opts, searchResult?.index ?? 0)
       break
     case 'next':
-      muya.find('next')
+      searchResult = muya.find('next')
       break
     case 'previous':
-      muya.find('previous')
+      searchResult = muya.find('previous')
       break
     case 'replace':
-      muya.replace(d.replacement, { isSingle: true, isRegexp: d.isRegexp })
+      searchResult = muya.replace(d.replacement, { isSingle: true, isRegexp: d.isRegexp })
       break
     case 'replaceAll':
-      muya.replace(d.replacement, { isSingle: false, isRegexp: d.isRegexp })
+      searchResult = muya.replace(d.replacement, { isSingle: false, isRegexp: d.isRegexp })
       break
   }
   reportMatches()
 }
 
-/** 把匹配数量回传给 FindBar 显示。 */
+/**
+ * 重新应用当前搜索的高亮。
+ *
+ * 内核的 search() 结尾会 setCursor 选中当前匹配，随之触发该块重渲染；
+ * 重渲染默认不带 highlights，于是当前匹配的一级高亮被抹掉
+ * （表现为「搜索后少一个高亮、点一下下一处才恢复」）。
+ *
+ * 修法：用同一关键词、同一 highlightIndex 再搜一次，但 selectHighlight=false，
+ * 这样只重新渲染高亮、不再动选区，也不会移动当前项。
+ */
+function replayHighlights(keyword: string, opts: Record<string, unknown>, index: number): void {
+  if (!muya || !keyword) return
+  requestAnimationFrame(() => {
+    const m = muya
+    if (!m) return
+    try {
+      searchResult = m.search(keyword, {
+        ...opts,
+        highlightIndex: index,
+        selectHighlight: false
+      })
+      reportMatches()
+    } catch {
+      /* 忽略：重放失败不影响搜索本身 */
+    }
+  })
+}
+
+/**
+ * 切标签 / 内容重载后恢复搜索。
+ *
+ * 内核在 setContent 时会 reset 搜索状态（matches 清空），
+ * 导致「切到别的文件再回来，搜索结果就没了、回车也没反应」。
+ * 这里在文档重建后按记住的关键词重新搜一次。
+ */
+function restoreSearchIfNeeded(): void {
+  if (!muya || !state.findVisible || !state.findKeyword) return
+  const { findKeyword, findOptions } = state
+  requestAnimationFrame(() => {
+    const m = muya
+    if (!m) return
+    try {
+      searchResult = m.search(findKeyword, { ...findOptions, selectHighlight: false })
+      reportMatches()
+    } catch {
+      /* 忽略 */
+    }
+  })
+}
+
+/**
+ * 最近一次搜索的结果对象。
+ * muya 的 search/find/replace 都返回同一个 Search 实例，
+ * 匹配数据在它的 matches / index 上——不是 muya.searchMatches（该属性不存在）。
+ */
+let searchResult: { matches: unknown[]; index: number } | null = null
+
+/** 把匹配数量与当前序号回传给 FindBar 显示。 */
 function reportMatches(): void {
-  if (!muya) return
-  const matches = (muya as unknown as { searchMatches?: unknown[] }).searchMatches
+  const matches = searchResult?.matches ?? []
+  const index = searchResult?.index ?? -1
   window.dispatchEvent(
-    new CustomEvent('inkdown:find-result', { detail: { count: matches?.length ?? 0 } })
+    new CustomEvent('inkdown:find-result', {
+      detail: { count: matches.length, index: index >= 0 ? index + 1 : 0 }
+    })
   )
 }
 
