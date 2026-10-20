@@ -61,6 +61,28 @@ pnpm verify     # 构建 + 端到端自检 + 真实文件工作流测试
 pnpm shots      # 生成界面截图到 screenshots/
 ```
 
+### 如何启动
+
+**方式一：双击** `启动 Typra2.bat`（Windows 最省事）
+
+**方式二：命令行**
+
+```bash
+pnpm build      # 首次需先构建
+pnpm start       # 或：node scripts/start.js
+```
+
+**方式三：直接运行 Electron**（无需 Node 在 PATH）
+
+```bash
+node_modules\electron\dist\electron.exe .
+```
+
+启动脚本 `scripts/start.js` 会自动处理两个环境问题：
+`node` 不在 PATH 时改用内置运行时；剔除宿主的 `ELECTRON_RUN_AS_NODE=1`。
+
+启动后按 `Ctrl+O` 打开 [examples/demo.md](examples/demo.md) 体验全部功能。
+
 ### 验证方式
 
 项目自带两层自动化验证，都会启动真实的 Electron 进程：

@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "start": "electron-vite preview",
+    "start": "node scripts/start.js",
+    "launch": "node scripts/start.js",
     "smoke": "node scripts/smoke-test.js",
     "filetest": "node scripts/file-test.js",
     "shots": "node scripts/capture-shots.js",
