@@ -5,9 +5,13 @@
  */
 const { spawn } = require('child_process')
 const path = require('path')
+const { killStaleProcesses } = require('./cleanup')
 
 const root = __dirname.replace(/[\\/]scripts$/, '')
 const electron = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+
+// 清理残留进程：它们持有 localStorage 的 leveldb 锁，会让新进程读不到数据
+killStaleProcesses()
 const workDir = path.join(root, '.tmp-file-test')
 
 const env = {

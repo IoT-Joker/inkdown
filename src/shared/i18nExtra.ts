@@ -49,11 +49,13 @@ const folderSearch: Record<LocaleCode, Dict> = {
 const splitView: Record<LocaleCode, Dict> = {
   'zh-CN': {
     'view.splitPreview': '分栏预览',
-    'view.splitHint': '左侧源码，右侧预览'
+    'view.splitHint': '左侧编辑源码，右侧实时预览',
+    'view.splitPreviewHead': '预览'
   },
   en: {
     'view.splitPreview': 'Split Preview',
-    'view.splitHint': 'Source left, preview right'
+    'view.splitHint': 'Edit source on the left, preview on the right',
+    'view.splitPreviewHead': 'Preview'
   }
 }
 

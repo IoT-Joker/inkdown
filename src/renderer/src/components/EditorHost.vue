@@ -192,8 +192,10 @@ function mountEditor(): void {
 /** 把某个标签的内容载入编辑器。 */
 function loadTab(tab: Tab): void {
   setDocPathForImages(tab.filePath)
-  if (isSource.value) {
+  // 源码与分栏模式都用 textarea 承载内容，不走 muya
+  if (isSource.value || isSplit.value) {
     state.sourceContent = tab.content
+    if (isSplit.value) nextTick(() => refreshPreview())
     return
   }
   if (!muya) return
@@ -212,8 +214,10 @@ watch(
     if (oldId) stashViewState()
     const tab = activeTab.value
     if (!tab) return
-    if (isSource.value) {
+    // 源码与分栏都用 textarea 显示内容
+    if (isSource.value || isSplit.value) {
       state.sourceContent = tab.content
+      if (isSplit.value) nextTick(() => refreshPreview())
     } else {
       loadTab(tab)
       nextTick(() => applyViewState(tab))
@@ -227,37 +231,41 @@ watch(
     const tab = activeTab.value
     if (!tab) return
 
-    // 离开源码模式时，把源码里改动过的内容同步回标签
-    if (prev === 'source' && state.sourceContent !== tab.content) {
+    // 离开「有源码编辑」的模式（source / split）时，把 textarea 里的改动同步回标签。
+    // 这两种模式共用同一个 textarea，所以进入时都要把内容灌进去。
+    const hadSource = prev === 'source' || prev === 'split'
+    if (hadSource && state.sourceContent !== tab.content) {
       tab.content = state.sourceContent
       updateCounts(tab.content)
     }
 
-    if (mode === 'source') {
-      // 进入源码模式：把当前内容交给 textarea
+    if (mode === 'source' || mode === 'split') {
       state.sourceContent = tab.content
-      nextTick(() => sourceRef.value?.focus())
+      nextTick(() => {
+        if (mode === 'split') refreshPreview()
+        sourceRef.value?.focus()
+      })
       return
     }
 
-    // 分栏与所见即所得都需要 muya 渲染最新内容
+    // 回到所见即所得：让 muya 渲染最新内容
     nextTick(() => {
       loadTab(tab)
-      refreshPreview()
-      if (mode === 'wysiwyg') focus()
+      focus()
     })
   }
 )
 
-// 源码模式下编辑内容实时同步到标签
+// 源码 / 分栏模式下编辑内容实时同步到标签，并刷新分栏预览
 watch(
   () => state.sourceContent,
   (val) => {
-    if (!isSource.value) return
+    if (!isSource.value && !isSplit.value) return
     const tab = activeTab.value
     if (!tab) return
     tab.content = val
     updateCounts(val)
+    if (isSplit.value) refreshPreview()
   }
 )
 
@@ -272,7 +280,7 @@ watch(
 )
 
 function focus(): void {
-  if (isSource.value) sourceRef.value?.focus()
+  if (isSource.value || isSplit.value) sourceRef.value?.focus()
   else muya?.focus()
 }
 
@@ -490,8 +498,10 @@ function onFindClose(): void {
 function reloadFromTab(): void {
   const tab = activeTab.value
   if (!tab) return
-  if (isSource.value) {
+  // 源码与分栏都靠 textarea 显示内容
+  if (isSource.value || isSplit.value) {
     state.sourceContent = tab.content
+    if (isSplit.value) nextTick(() => refreshPreview())
     return
   }
   if (!muya) return
@@ -654,7 +664,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 <template>
   <div
     class="editor-host"
-    :class="{ 'is-split': isSplit && !isSource }"
+    :class="{ 'is-split': isSplit }"
     :style="{
       '--editor-zoom': state.zoom,
       '--editor-font-size': `${settings.fontSize}px`,
@@ -666,15 +676,17 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
-    <div v-show="!isSource" class="editor-scroll" :class="{ 'split-left': isSplit }">
+    <!--
+      三种视图：
+        所见即所得 —— 只显示 muya 编辑器
+        分栏预览   —— 左侧源码、右侧渲染效果（经典 Markdown 编辑器布局）
+        源码       —— 只显示源码编辑器
+      分栏与源码共用同一个 textarea，避免两份内容源不同步。
+    -->
+    <div v-show="!isSource && !isSplit" class="editor-scroll">
       <div ref="containerRef" class="muya-container" />
     </div>
-    <!-- 分栏预览：右侧渲染当前 Markdown 的静态 HTML -->
-    <div v-if="isSplit && !isSource" class="split-preview">
-      <div class="split-preview-head">{{ t('view.splitPreview') }}</div>
-      <div ref="previewRef" class="split-preview-body markdown-body" />
-    </div>
-    <div v-show="isSource" class="source-scroll">
+    <div v-show="isSource || isSplit" class="source-scroll" :class="{ 'split-left': isSplit }">
       <textarea
         ref="sourceRef"
         v-model="state.sourceContent"
@@ -682,6 +694,11 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
         spellcheck="false"
         @keydown="onSourceKeydown"
       />
+    </div>
+    <!-- 分栏预览：右侧渲染当前 Markdown 的静态 HTML -->
+    <div v-if="isSplit" class="split-preview">
+      <div class="split-preview-head">{{ t('view.splitPreviewHead') }}</div>
+      <div ref="previewRef" class="split-preview-body markdown-body" />
     </div>
     <div v-if="!activeTab" class="empty-state">
       <p class="empty-title">{{ t('app.name') }}</p>
@@ -713,8 +730,8 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* 分栏模式：左侧编辑器与右侧预览各占一半 */
-.editor-scroll.split-left {
+/* 分栏模式：左侧源码与右侧预览各占一半 */
+.source-scroll.split-left {
   flex: 1 1 50%;
   min-width: 0;
   border-right: 1px solid var(--ty-border);

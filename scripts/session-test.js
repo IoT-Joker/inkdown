@@ -10,6 +10,7 @@
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const { killStaleProcesses } = require('./cleanup')
 
 const root = __dirname.replace(/[\\/]scripts$/, '')
 const electron = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
@@ -51,6 +52,9 @@ function run(phase) {
 }
 
 ;(async () => {
+  // 先清理残留进程：它们可能持有 localStorage（leveldb）的文件锁，
+  // 导致本测试读不到会话数据而误报失败。
+  killStaleProcesses()
   // 每次验证前清空旧的会话数据，避免上一次的残留影响判断
   if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true })
 

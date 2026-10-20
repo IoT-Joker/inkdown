@@ -1,10 +1,14 @@
 // 冒烟测试：启动 Electron，执行主进程内的端到端自检，验证渲染层真正工作。
 const { spawn } = require('child_process')
 const path = require('path')
+const { killStaleProcesses } = require('./cleanup')
 
 // 从脚本位置推导项目根，避免硬编码路径（目录改名后仍可用）
 const root = __dirname.replace(/[\\/]scripts$/, '')
 const electron = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+
+// 清理残留进程：它们持有 localStorage 的 leveldb 锁，会让新进程读不到数据
+killStaleProcesses()
 
 // 宿主环境可能带有 ELECTRON_RUN_AS_NODE=1，会让 Electron 退化成纯 Node 模式，
 // 必须剔除后才能正常启动窗口。

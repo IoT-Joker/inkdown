@@ -553,7 +553,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 源码模式 OK: 双向同步且不丢改动')
 
-  // 4b-5b. 分栏预览：左侧编辑器 + 右侧静态预览，且内容随文档更新
+  // 4b-5b. 分栏预览：左侧编辑源码 + 右侧静态预览，且内容随文档更新
   const splitCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -568,11 +568,30 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         await c.execute('view:toggleSource')
         await wait(400)
       }
+      await wait(600)
       const modeAfter = app.viewMode()
       const hasPreview = !!document.querySelector('.split-preview')
       const body = document.querySelector('.split-preview-body')
       const html = body ? body.innerHTML : ''
-      const editorVisible = !!document.querySelector('.editor-scroll')
+
+      // 分栏的左侧必须是「源码编辑器」而不是所见即所得编辑器
+      const textarea = document.querySelector('.source-editor')
+      const textareaVisible = !!textarea && textarea.offsetParent !== null
+      const textareaHasSource = !!textarea && /^#\\s*分栏标题/.test(textarea.value)
+      // 所见即所得编辑器在分栏下应隐藏（v-show 用 display:none，元素仍在 DOM，
+      // 所以要判断是否可见，而不是是否存在）
+      const wysiwygEl = document.querySelector('.editor-scroll')
+      const wysiwygHidden = !wysiwygEl || wysiwygEl.offsetParent === null
+
+      // 布局：左半是源码、右半是预览
+      let leftIsSource = false
+      let rightIsPreview = false
+      if (textarea && body) {
+        const taRect = textarea.getBoundingClientRect()
+        const pvRect = body.getBoundingClientRect()
+        leftIsSource = taRect.left < pvRect.left
+        rightIsPreview = pvRect.left >= taRect.left
+      }
 
       // 改内容，预览应跟着更新
       window.__inkdownLoad('# 改后的标题\\n\\n新段落。\\n')
@@ -587,7 +606,11 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       return {
         modeAfter,
         hasPreview,
-        editorVisible,
+        textareaVisible,
+        textareaHasSource,
+        wysiwygHidden,
+        leftIsSource,
+        rightIsPreview,
         hasH1: /分栏标题/.test(html),
         hasStrong: /<strong>/.test(html),
         hasList: /<li>/.test(html),
@@ -603,8 +626,20 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 未切到分栏模式:', JSON.stringify(splitCheck))
     return false
   }
-  if (!splitCheck.hasPreview || !splitCheck.editorVisible) {
-    console.error('[selfcheck] FAIL: 分栏未同时显示编辑器与预览:', JSON.stringify(splitCheck))
+  if (!splitCheck.hasPreview || !splitCheck.textareaVisible) {
+    console.error('[selfcheck] FAIL: 分栏未同时显示源码与预览:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.textareaHasSource) {
+    console.error('[selfcheck] FAIL: 分栏左侧未显示源码内容:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.wysiwygHidden) {
+    console.error('[selfcheck] FAIL: 分栏下所见即所得编辑器应隐藏:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.leftIsSource || !splitCheck.rightIsPreview) {
+    console.error('[selfcheck] FAIL: 分栏布局应为左源码右预览:', JSON.stringify(splitCheck))
     return false
   }
   if (!splitCheck.hasH1 || !splitCheck.hasStrong || !splitCheck.hasList) {
@@ -623,7 +658,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 未能切回所见即所得:', JSON.stringify(splitCheck))
     return false
   }
-  console.log('[selfcheck] 分栏预览 OK: 编辑器+预览并排，标题/加粗/列表渲染正确且实时更新')
+  console.log('[selfcheck] 分栏预览 OK: 左源码 + 右预览，标题/加粗/列表渲染正确且实时更新')
 
   // 4b-6. 验证代码高亮、块级公式、Mermaid 图表真的渲染出来
   const renderCheck = await win.webContents.executeJavaScript(`
