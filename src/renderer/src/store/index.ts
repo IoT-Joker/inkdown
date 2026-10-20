@@ -2,6 +2,12 @@ import { reactive, ref } from 'vue'
 
 export type ViewMode = 'wysiwyg' | 'source'
 
+/** 源码模式坐标：行号与列号（与 muya 的 setCursorByOffset 一致）。 */
+export interface SourcePos {
+  line: number
+  ch: number
+}
+
 export interface Tab {
   id: string
   filePath: string | null
@@ -9,8 +15,8 @@ export interface Tab {
   content: string
   savedContent: string
   mtimeMs: number
-  /** 光标位置（muya 的 offset cursor），切标签时用于恢复 */
-  cursor: { anchor: number; focus: number } | null
+  /** 光标位置（源码模式行列坐标），切标签时用于恢复 */
+  cursor: { anchor: SourcePos; focus: SourcePos } | null
   scrollTop: number
 }
 

@@ -15,7 +15,7 @@ import {
   TableColumnToolbar,
   TableDragBar,
   TableRowColumMenu,
-  zh,
+  zhCN,
   type IMuyaOptions,
   type ITocItem
 } from '@muyajs/core'
@@ -23,8 +23,18 @@ import { settings } from '../store'
 
 let pluginsRegistered = false
 
+/** 当前文档路径，供图片落盘时确定 assets 目录。 */
+let currentDocPath: string | null = null
+
+export function setDocPathForImages(p: string | null): void {
+  currentDocPath = p
+}
+
 /**
- * 注册 muya �?UI 插件。muya 要求插件在创建实例前全局注册一次�? * 这里�?imageAction / clipboardFilePath / getPathForFile 钩子把图片与剪贴�? * 能力接到主进程，形成 Typora 那样的本地文件工作流�? */
+ * 注册 muya 的 UI 插件。muya 要求插件在创建实例前全局注册一次。
+ * 这里的 imageAction / clipboardText / getPathForFile 钩子把图片与剪贴板
+ * 能力接到主进程，形成 Typora 那样的本地文件工作流。
+ */
 export function registerMuyaPlugins(): void {
   if (pluginsRegistered) return
   pluginsRegistered = true
@@ -39,7 +49,7 @@ export function registerMuyaPlugins(): void {
       const files = await window.typra.openFileDialog()
       return files[0]?.filePath ?? ''
     },
-    imageAction: async (state) => {
+    imageAction: async (state: { src: string; alt: string; title: string }) => {
       const docPath = currentDocPath
       // 粘贴的位图以 data: URL 传入，落盘到 assets 目录并改写成相对路径
       if (state.src.startsWith('data:')) {
@@ -50,7 +60,7 @@ export function registerMuyaPlugins(): void {
   })
   Muya.use(CodeBlockLanguageSelector)
   Muya.use(LinkTools, {
-    jumpClick: (linkInfo) => {
+    jumpClick: (linkInfo: { href?: string } | null) => {
       const href = linkInfo?.href
       if (href && /^https?:\/\//.test(href)) window.typra.openExternal(href)
     }
@@ -64,13 +74,7 @@ export function registerMuyaPlugins(): void {
   Muya.use(PreviewToolBar)
 }
 
-/** 当前文档路径，供图片落盘时确�?assets 目录�?*/
-let currentDocPath: string | null = null
-export function setDocPathForImages(p: string | null): void {
-  currentDocPath = p
-}
-
-/** 由设置对象构�?muya 的选项，保证两边字段保持一致�?*/
+/** 由设置对象构造 muya 的选项，保证两边字段保持一致。 */
 export function buildMuyaOptions(extra: Partial<IMuyaOptions> = {}): Partial<IMuyaOptions> {
   return {
     fontSize: settings.fontSize,
@@ -114,7 +118,7 @@ export function buildMuyaOptions(extra: Partial<IMuyaOptions> = {}): Partial<IMu
     softNewlineAsSpace: settings.softNewlineAsSpace,
     autoMoveCheckedToEnd: settings.autoMoveCheckedToEnd,
     disableHtml: settings.disableHtml,
-    locale: zh,
+    locale: zhCN,
     clipboardText: () => window.typra.readClipboardText(),
     fetchLinkHtml: async (url: string) => {
       try {
@@ -130,5 +134,5 @@ export function buildMuyaOptions(extra: Partial<IMuyaOptions> = {}): Partial<IMu
   }
 }
 
-export { Muya, zh }
+export { Muya, zhCN }
 export type { ITocItem }

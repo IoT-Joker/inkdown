@@ -1,4 +1,7 @@
 # pnpm 11 从本文件读取设置（package.json 的 pnpm 字段已废弃）
+packages:
+  - 'packages/*'
+
 onlyBuiltDependencies:
   - electron
   - esbuild

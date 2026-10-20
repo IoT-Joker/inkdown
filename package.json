@@ -17,7 +17,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web"
   },
   "dependencies": {
-    "@muyajs/core": "0.2.0"
+    "@muyajs/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

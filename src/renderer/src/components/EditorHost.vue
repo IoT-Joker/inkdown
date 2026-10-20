@@ -16,7 +16,7 @@ let suppress = false
 /** 源码模式的等宽字体回退栈（通过 CSS 变量传给样式，避免 v-bind 依赖构建插件） */
 const CODE_FONT_FALLBACK = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 /** 各标签页的光标与滚动位置，切回时恢复。 */
-const viewState = new Map<string, { cursor: { anchor: number; focus: number } | null; scrollTop: number }>()
+const viewState = new Map<string, { cursor: Tab['cursor']; scrollTop: number }>()
 
 const activeTab = computed(() => getActiveTab())
 const isSource = computed(() => state.viewMode === 'source')
@@ -36,7 +36,7 @@ function stashViewState(): void {
     const cursor = muya.getCursorOffset()
     const scroller = containerRef.value?.closest('.editor-scroll') as HTMLElement | null
     viewState.set(tab.id, {
-      cursor: cursor ? { anchor: cursor.anchor, focus: cursor.focus } : null,
+      cursor: cursor ?? null,
       scrollTop: scroller?.scrollTop ?? 0
     })
   }
@@ -47,7 +47,7 @@ function applyViewState(tab: Tab): void {
   if (!saved || !muya) return
   if (saved.cursor) {
     try {
-      muya.setCursorByOffset(saved.cursor as never)
+      muya.setCursorByOffset(saved.cursor)
     } catch {
       /* 光标位置可能已失效，忽略 */
     }
@@ -107,7 +107,7 @@ function mountEditor(): void {
     const t = activeTab.value
     if (!t || !muya) return
     const cursor = muya.getCursorOffset()
-    if (cursor) t.cursor = { anchor: cursor.anchor, focus: cursor.focus }
+    if (cursor) t.cursor = cursor
     refreshOutline()
     if (state.typewriterMode) keepCursorCentered()
   })
@@ -195,7 +195,10 @@ function focus(): void {
   else muya?.focus()
 }
 
-/** 编辑类命令统一在这里实现，保证菜单与快捷键行为一致。 */
+/**
+ * 段落与格式命令的取值直接对齐 marktext desktop 的菜单词汇表
+ * （packages/desktop/src/main/menu/actions/*），确保内核能识别。
+ */
 function registerEditorCommands(): void {
   const paragraphMap: Record<string, string> = {
     'paragraph:h1': 'heading 1',
@@ -205,13 +208,14 @@ function registerEditorCommands(): void {
     'paragraph:h5': 'heading 5',
     'paragraph:h6': 'heading 6',
     'paragraph:p': 'paragraph',
-    'paragraph:ul': 'bullet-list',
-    'paragraph:ol': 'order-list',
-    'paragraph:task': 'task-list',
-    'paragraph:quote': 'block-quote',
-    'paragraph:code': 'fence',
-    'paragraph:math': 'math-block',
-    'paragraph:hr': 'thematic-break',
+    'paragraph:ul': 'ul-bullet',
+    'paragraph:ol': 'ol-order',
+    'paragraph:task': 'ul-task',
+    'paragraph:quote': 'blockquote',
+    'paragraph:code': 'pre',
+    'paragraph:math': 'mathblock',
+    'paragraph:table': 'table',
+    'paragraph:hr': 'hr',
     'paragraph:frontMatter': 'front-matter'
   }
   const formatMap: Record<string, string> = {
@@ -223,6 +227,7 @@ function registerEditorCommands(): void {
     'format:highlight': 'mark',
     'format:inlineMath': 'inline_math',
     'format:link': 'link',
+    'format:image': 'image',
     'format:clear': 'clear'
   }
 
@@ -232,8 +237,6 @@ function registerEditorCommands(): void {
     'edit:copyMarkdown': () => muya?.copyAsMarkdown(),
     'edit:copyHtml': () => muya?.copyAsHtml(),
     'edit:pastePlain': () => void muya?.pasteAsPlainText(),
-    'paragraph:table': () => muya?.createTable(3, 3),
-    'format:image': () => void insertImage(),
     'view:focusEditor': () => focus(),
     'file:exportHtml': () => void exportHtml(),
     'file:exportPdf': () => void exportPdf()
@@ -243,6 +246,11 @@ function registerEditorCommands(): void {
     commands[id] = () => muya?.updateParagraph(type)
   }
   for (const [id, type] of Object.entries(formatMap)) {
+    // image 走本地文件选择流程，其余交给内核
+    if (id === 'format:image') {
+      commands[id] = () => void insertImage()
+      continue
+    }
     commands[id] = () => muya?.format(type)
   }
   registerCommands(commands)

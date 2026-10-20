@@ -1,0 +1,266 @@
+import type Format from '../../block/base/format';
+import type { Muya } from '../../index';
+import type { ImageToken } from '../../inlineRenderer/types';
+import { autoUpdate } from '@floating-ui/dom';
+
+import { isHTMLElement, isMouseEvent } from '../../utils';
+import { findScrollContainer } from '../../utils/dom';
+import './index.css';
+
+const VERTICAL_BAR = ['left', 'right'];
+
+const CIRCLE_RADIO = 5;
+const BAR_HEIGHT = 50;
+
+export class ImageResizeBar {
+    static pluginName = 'transformer';
+    private _reference: HTMLElement | null = null;
+    private _block: Format | null = null;
+    private _imageInfo: {
+        token: ImageToken;
+        imageId: string;
+    } | null = null;
+
+    private _movingAnchor: string | null = null;
+    private _status: boolean = false;
+    private _width: number | null = null;
+    // Pointer position and image width as of mousedown. Writing a width moves
+    // the image's own edges, so live geometry is not a usable reference while
+    // dragging — only this snapshot is (#5392).
+    private _dragStart: { clientX: number; width: number } | null = null;
+    private _eventId: string[] = [];
+    private _lastScrollTop: number | null = null;
+    private _resizing: boolean = false;
+    // Stops the autoUpdate reposition loop set up in `_render`.
+    private _cleanup: (() => void) | null = null;
+    // A container for storing drag strips
+    private _container: HTMLDivElement;
+
+    constructor(public muya: Muya) {
+        const container = (this._container = document.createElement('div'));
+        container.classList.add('mu-transformer');
+        document.body.appendChild(container);
+
+        this._listen();
+    }
+
+    private _listen() {
+        const { eventCenter, domNode } = this.muya;
+
+        const scrollHandler = (event: Event) => {
+            if (!isHTMLElement(event.target))
+                return;
+            if (typeof this._lastScrollTop !== 'number') {
+                this._lastScrollTop = event.target.scrollTop;
+
+                return;
+            }
+
+            // only when scroll distance great than 50px, then hide the float box.
+            if (
+                !this._resizing
+                && this._status
+                && Math.abs(event.target.scrollTop - this._lastScrollTop) > 50
+            ) {
+                this.hide();
+            }
+        };
+
+        eventCenter.on('muya-transformer', ({ block, reference, imageInfo }) => {
+            this.hide();
+            this._reference = reference;
+            if (reference) {
+                this._block = block;
+                this._imageInfo = imageInfo;
+                setTimeout(() => {
+                    if (this._reference === reference)
+                        this._render();
+                });
+            }
+        });
+
+        eventCenter.attachDOMEvent(document, 'click', this.hide.bind(this));
+        eventCenter.attachDOMEvent(findScrollContainer(domNode), 'scroll', scrollHandler);
+        eventCenter.attachDOMEvent(this._container, 'dragstart', event =>
+            event.preventDefault());
+        eventCenter.attachDOMEvent(document.body, 'mousedown', this._mouseDown);
+    }
+
+    private _render() {
+        const { eventCenter } = this.muya;
+        if (!this._reference?.isConnected) {
+            this.hide();
+            return;
+        }
+        if (this._status)
+            return;
+
+        this._status = true;
+
+        this._createElements();
+        this._update();
+        // Reposition the handles whenever the image moves (window/ancestor
+        // resize, sidebar toggle, scroll), so they stay attached to it (#2939).
+        this._cleanup = autoUpdate(this._reference!, this._container, () => this._update());
+        eventCenter.emit('muya-float', this, true);
+    }
+
+    private _createElements() {
+        VERTICAL_BAR.forEach((c) => {
+            const bar = document.createElement('div');
+            bar.classList.add('bar');
+            bar.classList.add(c);
+            bar.setAttribute('data-position', c);
+            this._container.appendChild(bar);
+        });
+    }
+
+    private _update() {
+        if (!this._reference?.isConnected) {
+            this.hide();
+            return;
+        }
+        const rect = this._reference!.getBoundingClientRect();
+        VERTICAL_BAR.forEach((c) => {
+            const bar: HTMLDivElement = this._container.querySelector(`.${c}`)!;
+
+            switch (c) {
+                case 'left':
+                    bar.style.left = `${rect.left - CIRCLE_RADIO}px`;
+                    bar.style.top = `${rect.top + rect.height / 2 - BAR_HEIGHT / 2}px`;
+                    break;
+
+                case 'right':
+                    bar.style.left = `${rect.left + rect.width - CIRCLE_RADIO}px`;
+                    bar.style.top = `${rect.top + rect.height / 2 - BAR_HEIGHT / 2}px`;
+                    break;
+            }
+        });
+    }
+
+    private _mouseDown = (event: Event) => {
+        const { target } = event;
+        const handle = isHTMLElement(target) ? target.closest('.bar') : null;
+        // Document content can carry its own `.bar` elements (raw HTML, a
+        // mermaid `classDef bar`); only this bar's handles start a resize (#5116).
+        if (!handle || !this._container.contains(handle))
+            return;
+
+        const { eventCenter } = this.muya;
+        this._movingAnchor = handle.getAttribute('data-position');
+        const image = this._reference?.querySelector('img');
+        this._dragStart = isMouseEvent(event) && image
+            ? { clientX: event.clientX, width: image.getBoundingClientRect().width }
+            : null;
+        // A pointer dragged past the window's edge keeps driving the resize,
+        // but those out-of-viewport coordinates hit test to `<html>`, whose
+        // bubble path skips `<body>`. Listening on the document keeps the
+        // release outside the window a normal release instead of a silently
+        // dropped width (#5393).
+        const mouseMoveId = eventCenter.attachDOMEvent(
+            document,
+            'mousemove',
+            this._mouseMove,
+        );
+        const mouseUpId = eventCenter.attachDOMEvent(
+            document,
+            'mouseup',
+            this._mouseUp,
+        );
+        this._resizing = true;
+        // Hide image toolbar
+        eventCenter.emit('muya-image-toolbar', { reference: null });
+        this._eventId.push(mouseMoveId, mouseUpId);
+    };
+
+    private _mouseMove = (event: Event) => {
+        if (!isMouseEvent(event))
+            return;
+
+        if (!this._reference?.isConnected) {
+            this.hide();
+            return;
+        }
+
+        event.preventDefault();
+        const { clientX } = event;
+        const dragStart = this._dragStart;
+        let width: number;
+        const image = this._reference!.querySelector('img');
+        if (!image || !dragStart)
+            return;
+
+        // Each handle moves the edge it sits on, so the image grows by however
+        // far the pointer has travelled away from where it was grabbed.
+        switch (this._movingAnchor) {
+            case 'left':
+                width = Math.max(dragStart.width + dragStart.clientX - clientX, 50);
+                break;
+
+            case 'right':
+                width = Math.max(dragStart.width + clientX - dragStart.clientX, 50);
+                break;
+
+            default:
+                return;
+        }
+        // Image width/height attribute must be an integer.
+        width = Number.parseInt(String(width));
+        this._width = width;
+        image.setAttribute('width', String(width));
+        this._update();
+    };
+
+    private _mouseUp = (event: Event) => {
+        event.preventDefault();
+        if (!this._reference?.isConnected) {
+            this.hide();
+            return;
+        }
+        this._detachResizeListeners();
+
+        if (typeof this._width === 'number' && this._block && this._imageInfo) {
+            this._block.updateImage(this._imageInfo, 'width', String(this._width));
+            this.hide();
+        }
+
+        this._width = null;
+        this._dragStart = null;
+        this._resizing = false;
+        this._movingAnchor = null;
+    };
+
+    private _detachResizeListeners() {
+        const { eventCenter } = this.muya;
+        for (const id of this._eventId)
+            eventCenter.detachDOMEvent(id);
+
+        this._eventId = [];
+    }
+
+    hide() {
+        const { eventCenter } = this.muya;
+        this._cleanup?.();
+        this._cleanup = null;
+        this._detachResizeListeners();
+        this._width = null;
+        this._dragStart = null;
+        this._resizing = false;
+        this._movingAnchor = null;
+        this._reference = null;
+        this._block = null;
+        this._imageInfo = null;
+        const circles = this._container.querySelectorAll('.bar');
+        Array.from(circles).forEach(c => c.remove());
+        this._status = false;
+        eventCenter.emit('muya-float', this, false);
+    }
+
+    // Remove the `.mu-transformer` container appended to document.body in the
+    // constructor; invoked by `Muya.destroy()` so it is not leaked (#3315).
+    destroy() {
+        this._cleanup?.();
+        this._cleanup = null;
+        this._container.remove();
+    }
+}

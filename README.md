@@ -9,20 +9,32 @@
 ## 与 marktext 的关系
 
 marktext 已重构为 monorepo：`packages/muya`（纯 JS/DOM 的编辑器内核）与 `packages/desktop`（Electron 外壳）。
-其中内核已独立发布为 npm 包 `@muyajs/core`，因此 Typra2 直接复用它作为编辑器内核，
-自行实现 Typora 式的外壳与交互，避开 desktop 包中 `keytar` / `native-keymap` / `@vscode/ripgrep`
+
+Typra2 把 marktext 的 **muya 内核源码**（develop 分支）以 workspace 包的形式内联到 `packages/muya`，
+直接作为编辑器内核复用；外壳、交互与 Typora 式功能全部自行实现。这样做的原因：
+
+- npm 上发布的 `@muyajs/core@0.2.0` 是**精简快照**，只暴露 18 个方法，
+  缺少 `updateParagraph`、`format`、`createTable`、`insertImage`、`getCursorOffset`、
+  `setFocusMode`、`revealElement` 等 Typora 式交互必需的 API；
+- develop 分支的完整源码提供约 60 个公共方法，覆盖段落转换、行内格式、表格、
+  光标换算、专注模式、大纲跳转等全部能力；
+- 内联源码后由 Vite 直接编译 TypeScript，无需额外构建步骤。
+
+同时避开了 desktop 包中 `keytar` / `native-keymap` / `@vscode/ripgrep`
 等原生依赖带来的构建负担。
 
 ```
 src/
-  main/        Electron 主进程：窗口、IPC、菜单、端到端自检
+  main/        Electron 主进程：窗口、IPC、菜单、端到端自检、截图
   preload/     上下文隔离桥接（window.typra）
   renderer/    Vue 3 界面
     src/components/   编辑器宿主、标签栏、侧边栏、状态栏、查找栏、偏好设置
-    src/composables/  命令总线、文件操作
+    src/composables/  命令总线、文件操作、导出
     src/editor/       muya 内核封装与插件注册
     src/store/        全局响应式状态与设置持久化
     src/assets/styles 应用样式与主题变量
+packages/muya/       内联的 marktext 编辑器内核源码
+examples/demo.md     功能演示文档
 ```
 
 ## 功能

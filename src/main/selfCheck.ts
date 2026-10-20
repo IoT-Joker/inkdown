@@ -44,6 +44,39 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
 
+  // 2b. 导出运行时真实可用的 Muya 方法，用于核对内核 API 适配情况
+  const apiList = await win.webContents.executeJavaScript(`
+    (() => {
+      const muya = window.__typraMuya
+      if (!muya) return { error: 'no instance' }
+      const proto = Object.getPrototypeOf(muya)
+      return Object.getOwnPropertyNames(proto)
+        .filter((n) => n !== 'constructor' && typeof proto[n] === 'function' && !n.startsWith('_'))
+    })()
+  `)
+  console.log('[selfcheck] Muya public methods:', JSON.stringify(apiList))
+
+  // 2c. 校验命令中心依赖的关键 API 是否真的存在，缺失即为适配错误
+  const required = [
+    'updateParagraph',
+    'format',
+    'createTable',
+    'insertImage',
+    'getCursorOffset',
+    'setCursorByOffset',
+    'setFocusMode',
+    'copyAsMarkdown',
+    'copyAsHtml',
+    'pasteAsPlainText',
+    'revealElement',
+    'setOptions'
+  ]
+  const missingApi = required.filter((m) => !apiList.includes(m))
+  if (missingApi.length) {
+    console.error('[selfcheck] FAIL: 内核缺少命令中心所需的 API:', missingApi.join(', '))
+    return false
+  }
+
   // 3. 侧边栏 / 标签栏 / 状态栏等外壳组件存在
   const shell = await win.webContents.executeJavaScript(`
     ({
@@ -136,6 +169,116 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 进阶语法 OK: 表格/代码块/任务列表/公式')
 
+  // 4b-2. 验证段落/格式命令真的能改变内容（命令中心是否生效）
+  // 注意：setCursorByOffset 接收源码模式的 { line, ch } 坐标，不是扁平数字
+  const commandEffect = await win.webContents.executeJavaScript(`
+    (async () => {
+      const muya = window.__typraMuya
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const at = (line, ch) => ({ anchor: { line, ch }, focus: { line, ch } })
+      const results = {}
+
+      // 段落：把光标放到首段，执行「标题 1」
+      muya.setContent('普通段落文字\\n\\n第二段\\n', false)
+      await wait(400)
+      muya.setCursorByOffset(at(0, 2))
+      await wait(300)
+      muya.updateParagraph('heading 1')
+      await wait(400)
+      results.afterHeading = muya.getMarkdown()
+
+      // 无序列表
+      muya.setContent('列表项内容\\n', false)
+      await wait(400)
+      muya.setCursorByOffset(at(0, 2))
+      await wait(300)
+      muya.updateParagraph('ul-bullet')
+      await wait(400)
+      results.afterBullet = muya.getMarkdown()
+
+      // 任务列表
+      muya.setContent('待办事项\\n', false)
+      await wait(400)
+      muya.setCursorByOffset(at(0, 2))
+      await wait(300)
+      muya.updateParagraph('ul-task')
+      await wait(400)
+      results.afterTask = muya.getMarkdown()
+
+      // 行内格式：选中前两个字后加粗
+      muya.setContent('加粗这段\\n', false)
+      await wait(400)
+      muya.setCursorByOffset({ anchor: { line: 0, ch: 0 }, focus: { line: 0, ch: 2 } })
+      await wait(300)
+      muya.format('strong')
+      await wait(400)
+      results.afterStrong = muya.getMarkdown()
+
+      // 表格：插入 3x3
+      muya.setContent('表格段落\\n', false)
+      await wait(400)
+      muya.setCursorByOffset(at(0, 1))
+      await wait(300)
+      muya.createTable(3, 3)
+      await wait(500)
+      results.afterTable = muya.getMarkdown()
+
+      return results
+    })()
+  `)
+  const checks: Array<[string, RegExp, string]> = [
+    ['afterHeading', /^#\s/, '标题命令未生成 # 标题'],
+    ['afterBullet', /^[-*]\s/m, '无序列表命令未生成列表项'],
+    ['afterTask', /^[-*]\s\[[ x]\]/m, '任务列表命令未生成复选框'],
+    ['afterStrong', /\*\*加粗\*\*|\*\*这段\*\*/, '加粗命令未生成 ** 标记'],
+    ['afterTable', /\|/, '表格命令未生成表格']
+  ]
+  const failures: string[] = []
+  for (const [key, re, msg] of checks) {
+    if (!re.test(String(commandEffect[key] ?? ''))) {
+      failures.push(`${msg}（实际: ${JSON.stringify(String(commandEffect[key] ?? '').slice(0, 60))}）`)
+    }
+  }
+  if (failures.length) {
+    console.error('[selfcheck] FAIL: 命令中心未生效:')
+    failures.forEach((f) => console.error('   -', f))
+    return false
+  }
+  console.log('[selfcheck] 命令中心 OK: 标题/列表/任务/加粗/表格均生效')
+
+  // 4b-3. 验证查找替换与专注模式
+  const findResult = await win.webContents.executeJavaScript(`
+    (async () => {
+      const muya = window.__typraMuya
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      muya.setContent('苹果 香蕉 苹果 橙子\\n', false)
+      await wait(400)
+      muya.search('苹果', { isRegexp: false, isCaseSensitive: false, isWholeWord: false })
+      await wait(300)
+      const found = muya.find('next')
+      await wait(200)
+      muya.replace('梨', { isSingle: false, isRegexp: false })
+      await wait(400)
+      const afterReplace = muya.getMarkdown()
+
+      // 专注模式开关
+      muya.setFocusMode(true)
+      const focusOn = document.querySelector('.muya-container')?.className || ''
+      muya.setFocusMode(false)
+      const focusOff = document.querySelector('.muya-container')?.className || ''
+      return { afterReplace, focusOn, focusOff }
+    })()
+  `)
+  if (!/梨/.test(findResult.afterReplace) || /苹果/.test(findResult.afterReplace)) {
+    console.error('[selfcheck] FAIL: 全部替换未生效:', JSON.stringify(findResult.afterReplace))
+    return false
+  }
+  if (!/mu-focus-mode/.test(findResult.focusOn) || /mu-focus-mode/.test(findResult.focusOff)) {
+    console.error('[selfcheck] FAIL: 专注模式开关未生效:', JSON.stringify(findResult))
+    return false
+  }
+  console.log('[selfcheck] 查找替换与专注模式 OK')
+
   // 4c. 验证导出：静态 HTML 生成且包含标题与表格
   const exported = await win.webContents.executeJavaScript(`
     (async () => {
@@ -162,6 +305,11 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   )
   if (!/\d+\s*字/.test(statusText)) {
     console.error('[selfcheck] FAIL: 状态栏未显示字数统计:', statusText)
+    return false
+  }
+  // 状态栏行号必须是纯数字，不能出现 [object Object]（光标结构未正确展开）
+  if (/行\s*\[object/.test(statusText)) {
+    console.error('[selfcheck] FAIL: 状态栏行号格式错误:', statusText)
     return false
   }
 
