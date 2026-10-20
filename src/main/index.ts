@@ -5,6 +5,7 @@ import { createWindow } from './window'
 import { runSelfCheck } from './selfCheck'
 import { captureScreenshots } from './screenshot'
 import { runFileTest } from './fileTest'
+import { renderPdfToImages } from './renderPdf'
 
 /**
  * Typra2 主进程入口。
@@ -35,6 +36,15 @@ app.whenReady().then(async () => {
   const fileTestDir = process.env['TYPRA2_FILE_TEST']
   if (fileTestDir) {
     const ok = await runFileTest(win, fileTestDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // TYPRA2_RENDER_PDF=<pdf路径> 时把 PDF 渲染成图片，用于人工核对导出内容
+  const renderPdf = process.env['TYPRA2_RENDER_PDF']
+  if (renderPdf) {
+    const outDir = process.env['TYPRA2_RENDER_PDF_OUT'] ?? '.tmp-pdf-render'
+    const ok = await renderPdfToImages(renderPdf, outDir)
     app.exit(ok ? 0 : 1)
     return
   }

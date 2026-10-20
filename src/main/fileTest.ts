@@ -115,6 +115,30 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
     return false
   }
 
-  console.log('[filetest] PASS: 打开 → 编辑 → 保存 → 导出 全链路通过')
+  // 6. 导出 PDF：必须生成合法的 PDF 文件，且不包含应用外壳内容
+  const pdfPath = join(workDir, 'exported.pdf')
+  const pdfResult = await win.webContents.executeJavaScript(`
+    (async () => {
+      const html = await window.__typraExport.buildHtmlForCheck()
+      return window.typra.exportPdf(${JSON.stringify(pdfPath)}, html)
+    })()
+  `)
+  if (!pdfResult) {
+    console.error('[filetest] FAIL: PDF 导出返回失败')
+    return false
+  }
+  const pdfBytes = await fsp.readFile(pdfPath)
+  const header = pdfBytes.subarray(0, 5).toString('latin1')
+  if (header !== '%PDF-') {
+    console.error('[filetest] FAIL: 导出的不是合法 PDF，头部:', JSON.stringify(header))
+    return false
+  }
+  if (pdfBytes.length < 3000) {
+    console.error('[filetest] FAIL: PDF 体积过小，可能是空文档:', pdfBytes.length)
+    return false
+  }
+  console.log(`[filetest] 导出 PDF OK: ${pdfBytes.length} bytes, 头部 ${header}`)
+
+  console.log('[filetest] PASS: 打开 → 编辑 → 保存 → 导出 HTML/PDF 全链路通过')
   return true
 }

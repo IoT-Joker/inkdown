@@ -34,7 +34,7 @@ function stashViewState(): void {
   if (!tab) return
   if (muya) {
     const cursor = muya.getCursorOffset()
-    const scroller = containerRef.value?.closest('.editor-scroll') as HTMLElement | null
+    const scroller = getScroller()
     viewState.set(tab.id, {
       cursor: cursor ?? null,
       scrollTop: scroller?.scrollTop ?? 0
@@ -52,7 +52,7 @@ function applyViewState(tab: Tab): void {
       /* 光标位置可能已失效，忽略 */
     }
   }
-  const scroller = containerRef.value?.closest('.editor-scroll') as HTMLElement | null
+  const scroller = getScroller()
   if (scroller) scroller.scrollTop = saved.scrollTop
 }
 
@@ -69,18 +69,47 @@ function refreshOutline(): void {
   }))
 }
 
+/** 定位编辑器滚动容器。
+ *  注意：muya 在 init() 时会替换掉传入的容器元素，因此不能依赖 containerRef，
+ *  改为优先用 muya 自己的 domNode 向上查找，再退回文档查询。 */
+function getScroller(): HTMLElement | null {
+  const fromMuya = muya?.domNode?.closest?.('.editor-scroll') as HTMLElement | null
+  if (fromMuya) return fromMuya
+  const fromRef = containerRef.value?.closest('.editor-scroll') as HTMLElement | null
+  if (fromRef) return fromRef
+  return document.querySelector('.editor-scroll')
+}
+
 /** 打字机模式：让光标所在块保持在视口垂直中心附近。 */
 function keepCursorCentered(): void {
-  const scroller = containerRef.value?.closest('.editor-scroll') as HTMLElement | null
-  if (!scroller) return
+  const scroller = getScroller()
+  if (!scroller) {
+    typewriterDiag.reason = 'no scroller'
+    return
+  }
   const sel = document.getSelection()
-  if (!sel || !sel.rangeCount) return
+  if (!sel || !sel.rangeCount) {
+    typewriterDiag.reason = 'no selection range'
+    return
+  }
   const rect = sel.getRangeAt(0).getBoundingClientRect()
-  if (!rect.height && !rect.top) return
+  if (!rect.height && !rect.top) {
+    typewriterDiag.reason = 'empty rect'
+    return
+  }
   const scrollerRect = scroller.getBoundingClientRect()
   const target = scroller.scrollTop + (rect.top - scrollerRect.top) - scrollerRect.height / 2
-  scroller.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
+  typewriterDiag.reason = 'ok'
+  typewriterDiag.lastRectTop = rect.top
+  typewriterDiag.lastTarget = target
+  typewriterDiag.lastScrollHeight = scroller.scrollHeight
+  typewriterDiag.lastClientHeight = scroller.clientHeight
+  scroller.scrollTo({ top: Math.max(0, target), behavior: 'auto' })
 }
+
+/** 打字机模式的诊断信息（供端到端自检读取，定位为何未滚动）。 */
+const typewriterDiag: Record<string, unknown> = { reason: 'not-called' }
+;(window as unknown as Record<string, unknown>).__typraTypewriterDiag = typewriterDiag
 
 function mountEditor(): void {
   const el = containerRef.value

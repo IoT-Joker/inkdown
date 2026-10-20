@@ -11,4 +11,6 @@ Thumbs.db
 coverage/
 # 测试与截图产物
 .tmp-file-test/
+.tmp-selfcheck-tree/
+.tmp-pdf-render/
 screenshots/

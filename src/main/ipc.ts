@@ -233,17 +233,39 @@ export function registerIpc(): void {
     getMainWindow()?.webContents.toggleDevTools()
   })
 
-  ipcMain.handle('app:exportPdf', async (_e, filePath: string, options?: { landscape?: boolean }) => {
-    const win = getMainWindow()
-    if (!win) return false
-    const data = await win.webContents.printToPDF({
-      printBackground: true,
-      landscape: options?.landscape ?? false,
-      pageSize: 'A4'
-    })
-    await fsp.writeFile(filePath, data)
-    return true
-  })
+  /**
+   * 导出 PDF：把文档 HTML 放进一个隐藏窗口渲染，再 printToPDF。
+   * 必须用独立窗口，否则会把侧边栏、标签栏、状态栏一起打进 PDF。
+   */
+  ipcMain.handle(
+    'app:exportPdf',
+    async (_e, filePath: string, html: string, options?: { landscape?: boolean }) => {
+      const printer = new BrowserWindow({
+        show: false,
+        width: 900,
+        height: 1200,
+        webPreferences: { sandbox: true, contextIsolation: true, javascript: false }
+      })
+      try {
+        await printer.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+        // 等待字体与布局稳定
+        await new Promise((r) => setTimeout(r, 600))
+        const data = await printer.webContents.printToPDF({
+          printBackground: true,
+          landscape: options?.landscape ?? false,
+          pageSize: 'A4',
+          margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 }
+        })
+        await fsp.writeFile(filePath, data)
+        return true
+      } catch (err) {
+        console.error('[exportPdf] 失败:', err)
+        return false
+      } finally {
+        if (!printer.isDestroyed()) printer.destroy()
+      }
+    }
+  )
 
   ipcMain.handle('app:getPath', (_e, name: 'home' | 'documents' | 'pictures' | 'userData') =>
     app.getPath(name)

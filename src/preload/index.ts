@@ -43,8 +43,8 @@ const api = {
   setFullScreen: (flag: boolean) => ipcRenderer.invoke('window:setFullScreen', flag),
   toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools'),
 
-  exportPdf: (filePath: string, options?: { landscape?: boolean }) =>
-    ipcRenderer.invoke('app:exportPdf', filePath, options),
+  exportPdf: (filePath: string, html: string, options?: { landscape?: boolean }) =>
+    ipcRenderer.invoke('app:exportPdf', filePath, html, options),
   getPath: (name: 'home' | 'documents' | 'pictures' | 'userData') =>
     ipcRenderer.invoke('app:getPath', name),
   quit: () => ipcRenderer.invoke('app:quit'),

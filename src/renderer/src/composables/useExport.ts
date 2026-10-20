@@ -127,25 +127,17 @@ export async function exportHtml(): Promise<boolean> {
   return !!saved
 }
 
-/** 导出为 PDF：静态 HTML 渲染进隐藏 iframe，再由主进程 printToPDF。 */
-export async function exportPdf(): Promise<boolean> {  const tab = getActiveTab()
+/**
+ * 导出为 PDF。
+ * 文档 HTML 交给主进程在独立的隐藏窗口里渲染并打印，
+ * 避免把侧边栏/标签栏/状态栏一起打进 PDF。
+ */
+export async function exportPdf(): Promise<boolean> {
+  const tab = getActiveTab()
   if (!tab) return false
   const target = await window.typra.saveAsDialog(exportName('pdf'))
   if (!target) return false
 
   const html = await buildHtml()
-  // 用离屏 iframe 承载导出内容，避免污染当前编辑器 DOM
-  const iframe = document.createElement('iframe')
-  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:1200px;border:0;'
-  iframe.srcdoc = html
-  document.body.appendChild(iframe)
-  await new Promise((resolve) => {
-    iframe.onload = resolve
-    // srcdoc 已就绪时 onload 可能已错过，兜底超时
-    setTimeout(resolve, 2500)
-  })
-
-  const ok = await window.typra.exportPdf(target)
-  iframe.remove()
-  return ok
+  return window.typra.exportPdf(target, html)
 }

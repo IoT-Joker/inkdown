@@ -1,4 +1,6 @@
 import type { BrowserWindow } from 'electron'
+import { promises as fsp } from 'node:fs'
+import { join } from 'node:path'
 
 /**
  * 端到端自检：在真实渲染进程里验证编辑器内核是否成功挂载、
@@ -6,6 +8,12 @@ import type { BrowserWindow } from 'electron'
  * 通过 TYPRA2_SELF_CHECK=1 触发，结果以退出码表示（0 通过 / 1 失败）。
  */
 export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
+  // 为文件树用例准备一个临时目录（含子目录与文件）
+  const workDirForTree = join(process.cwd(), '.tmp-selfcheck-tree')
+  await fsp.mkdir(join(workDirForTree, '子目录'), { recursive: true })
+  await fsp.writeFile(join(workDirForTree, 'a.md'), '# A\n', 'utf8')
+  await fsp.writeFile(join(workDirForTree, 'b.md'), '# B\n', 'utf8')
+
   // 先把渲染进程的错误与控制台输出引到主进程，便于定位失败原因
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     const tag = ['verbose', 'info', 'warning', 'error'][level] ?? String(level)
@@ -381,6 +389,185 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   console.log('[selfcheck] 源码模式 OK: 双向同步且不丢改动')
+
+  // 4b-6. 验证代码高亮、块级公式、Mermaid 图表真的渲染出来
+  const renderCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const md = [
+        '\\\`\\\`\\\`javascript',
+        'const answer = 42',
+        'function greet(name) { return name }',
+        '\\\`\\\`\\\`',
+        '',
+        '\$\$',
+        'E = mc^2',
+        '\$\$',
+        '',
+        '\\\`\\\`\\\`mermaid',
+        'graph TD',
+        '  A[开始] --> B[结束]',
+        '\\\`\\\`\\\`',
+        ''
+      ].join('\\n')
+      window.__typraLoad(md)
+      await wait(3500)
+      const c = document.querySelector('.muya-container')
+      const tokens = c.querySelectorAll('.token, [class*="token"]')
+      const codeEl = c.querySelector('.mu-fence-code, pre')
+      const katex = c.querySelector('.katex')
+      const mermaidSvg = c.querySelector('svg[id^="mermaid"], .mu-diagram svg, svg')
+      return {
+        tokenCount: tokens.length,
+        tokenSample: [...tokens].slice(0, 5).map((t) => t.className),
+        codeBackground: codeEl ? getComputedStyle(codeEl).backgroundColor : '',
+        hasKatex: !!katex,
+        hasMermaidSvg: !!mermaidSvg,
+        svgCount: c.querySelectorAll('svg').length
+      }
+    })()
+  `)
+  if (!renderCheck.tokenCount) {
+    console.error('[selfcheck] FAIL: 代码块未产生语法高亮 token:', JSON.stringify(renderCheck))
+    return false
+  }
+  if (!renderCheck.hasKatex) {
+    console.error('[selfcheck] FAIL: 块级数学公式未渲染成 KaTeX:', JSON.stringify(renderCheck))
+    return false
+  }
+  if (!renderCheck.hasMermaidSvg) {
+    console.error('[selfcheck] FAIL: Mermaid 图表未渲染成 SVG:', JSON.stringify(renderCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 渲染 OK: 代码高亮 ${renderCheck.tokenCount} 个 token、KaTeX 公式、Mermaid SVG（共 ${renderCheck.svgCount} 个 SVG）`
+  )
+
+  // 4b-7. 验证打字机模式：开启后光标行会被滚动到视口垂直中心附近
+  const typewriterCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__typraCommands
+      const muya = window.__typraMuya
+
+      // 造一篇足够长的文档，让光标可以远离视口中心
+      const long = Array.from({ length: 40 }, (_, i) => '第 ' + (i + 1) + ' 段落内容。').join('\\n\\n')
+      window.__typraLoad(long)
+      await wait(800)
+
+      // 先关闭打字机模式，把光标放到很靠后的位置
+      if (document.body.classList.contains('typewriter-mode')) await c.execute('view:toggleTypewriter')
+      await wait(200)
+      muya.setCursorByOffset({ anchor: { line: 0, ch: 2 }, focus: { line: 0, ch: 2 } })
+      await wait(400)
+      const scroller = document.querySelector('.editor-scroll')
+      const before = scroller.scrollTop
+
+      // 开启打字机模式后再移动光标
+      await c.execute('view:toggleTypewriter')
+      await wait(300)
+      const enabled = document.body.classList.contains('typewriter-mode')
+      muya.setCursorByOffset({ anchor: { line: 40, ch: 3 }, focus: { line: 40, ch: 3 } })
+      await wait(1500)
+      const after = scroller.scrollTop
+
+      return {
+        enabled,
+        before,
+        after,
+        scrollerHeight: scroller.clientHeight,
+        diag: window.__typraTypewriterDiag,
+        rangeCount: document.getSelection() ? document.getSelection().rangeCount : -1
+      }
+    })()
+  `)
+  if (!typewriterCheck.enabled) {
+    console.error('[selfcheck] FAIL: 打字机模式未开启:', JSON.stringify(typewriterCheck))
+    return false
+  }
+  if (!(typewriterCheck.after > typewriterCheck.before)) {
+    console.error(
+      '[selfcheck] FAIL: 打字机模式下光标后移未触发滚动:',
+      JSON.stringify(typewriterCheck)
+    )
+    return false
+  }
+  console.log(
+    `[selfcheck] 打字机模式 OK: 光标后移触发滚动 ${typewriterCheck.before} → ${typewriterCheck.after}`
+  )
+
+  // 4b-8. 验证多标签隔离：各标签内容与光标互不干扰，切换后能恢复
+  const tabsCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__typraApp
+      const muya = window.__typraMuya
+
+      // 新建第二个标签并写入不同内容
+      window.__typraLoad('# 标签一\\n\\n第一个标签的内容。\\n')
+      await wait(500)
+      const firstId = app.activeTab().id
+      const firstContent = app.activeTab().content
+
+      const c = window.__typraCommands
+      await c.execute('file:new')
+      await wait(600)
+      window.__typraLoad('# 标签二\\n\\n第二个标签的内容。\\n')
+      await wait(500)
+      const secondId = app.activeTab().id
+      const secondContent = app.activeTab().content
+
+      // 切回第一个标签
+      app.tabs().find((t) => t.id === firstId)
+      const tab1 = app.tabs().find((t) => t.id === firstId)
+      const tab2 = app.tabs().find((t) => t.id === secondId)
+
+      return {
+        tabCount: app.tabs().length,
+        distinctIds: firstId !== secondId,
+        firstContent,
+        secondContent,
+        tab1Content: tab1 && tab1.content,
+        tab2Content: tab2 && tab2.content,
+        // 两个标签的内容必须各自独立
+        isolated: tab1 && tab2 && tab1.content !== tab2.content
+      }
+    })()
+  `)
+  if (!tabsCheck.distinctIds || tabsCheck.tabCount < 2) {
+    console.error('[selfcheck] FAIL: 新建标签失败:', JSON.stringify(tabsCheck))
+    return false
+  }
+  if (!tabsCheck.isolated || !/标签一/.test(tabsCheck.tab1Content) || !/标签二/.test(tabsCheck.tab2Content)) {
+    console.error('[selfcheck] FAIL: 多标签内容未隔离:', JSON.stringify(tabsCheck))
+    return false
+  }
+  console.log(`[selfcheck] 多标签 OK: ${tabsCheck.tabCount} 个标签内容各自独立`)
+
+  // 4b-9. 验证文件树：打开文件夹后能读到目录结构
+  const treeCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__typraApp
+      const dir = await window.typra.readDir(${JSON.stringify(workDirForTree)})
+      return {
+        name: dir.name,
+        childCount: dir.children.length,
+        names: dir.children.map((c) => c.name).sort(),
+        hasDirs: dir.children.some((c) => c.isDirectory)
+      }
+    })()
+  `)
+  if (!treeCheck.childCount) {
+    console.error('[selfcheck] FAIL: 读取文件夹失败:', JSON.stringify(treeCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 文件树 OK: ${treeCheck.childCount} 个条目（${treeCheck.names.slice(0, 6).join(', ')}）`
+  )
+
+  // 清理自检用的临时目录
+  await fsp.rm(workDirForTree, { recursive: true, force: true }).catch(() => {})
 
   // 4c. 验证导出：静态 HTML 生成且包含标题与表格
   const exported = await win.webContents.executeJavaScript(`
