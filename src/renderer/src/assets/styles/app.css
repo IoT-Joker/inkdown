@@ -50,13 +50,17 @@ body {
   background: var(--ty-hover);
 }
 
-/* 专注模式：淡化非当前段落，模拟 Typora 的专注写作 */
-body.focus-mode .muya-container .muya-block:not(.muya-focused) {
-  opacity: 0.28;
-  transition: opacity 0.2s ease;
+/*
+ * 专注模式：淡化非当前段落。
+ * 内核（muya）已自带这套规则——容器类 mu-focus-mode 下的
+ * `.mu-container > *` 降透明度，`.mu-active` 恢复为 1——
+ * 由 Muya#setFocusMode 切换，这里不重复实现，只调整淡化程度以更接近 Typora。
+ */
+body.focus-mode .mu-focus-mode .mu-container > * {
+  opacity: 0.3;
 }
 
-body.focus-mode .muya-container .muya-block.muya-focused {
+body.focus-mode .mu-focus-mode .mu-container > .mu-active {
   opacity: 1;
 }
 

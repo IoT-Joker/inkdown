@@ -285,6 +285,44 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 专注模式开关未生效:', JSON.stringify(findResult))
     return false
   }
+
+  // 专注模式还必须真的淡化非当前块（校验计算后的 opacity，而不只是类名）
+  const focusVisual = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const muya = window.__typraMuya
+      window.__typraLoad('# 标题\\n\\n第一段内容。\\n\\n第二段内容。\\n\\n第三段内容。\\n')
+      await wait(700)
+      muya.setCursorByOffset({ anchor: { line: 2, ch: 1 }, focus: { line: 2, ch: 1 } })
+      await wait(300)
+      muya.setFocusMode(true)
+      await wait(600)
+      const blocks = [...document.querySelectorAll('.mu-focus-mode .mu-container > *')]
+      const ops = blocks.map((b) => ({
+        active: b.classList.contains('mu-active'),
+        opacity: Number(getComputedStyle(b).opacity)
+      }))
+      muya.setFocusMode(false)
+      await wait(300)
+      const afterOff = blocks.length
+        ? Number(getComputedStyle(document.querySelector('.mu-container > *')).opacity)
+        : -1
+      return { count: ops.length, ops, afterOff }
+    })()
+  `)
+  const dimmed = focusVisual.ops.filter((o) => !o.active && o.opacity < 0.9)
+  const activeOnes = focusVisual.ops.filter((o) => o.active && o.opacity > 0.9)
+  if (!focusVisual.count || !dimmed.length || !activeOnes.length) {
+    console.error('[selfcheck] FAIL: 专注模式未淡化非当前块:', JSON.stringify(focusVisual))
+    return false
+  }
+  if (focusVisual.afterOff < 0.9) {
+    console.error('[selfcheck] FAIL: 关闭专注模式后未恢复:', JSON.stringify(focusVisual))
+    return false
+  }
+  console.log(
+    `[selfcheck] 专注模式 OK: ${dimmed.length} 块淡化（opacity ${dimmed[0].opacity}）、当前块保持 ${activeOnes[0].opacity}`
+  )
   console.log('[selfcheck] 查找替换与专注模式 OK')
 
   // 4b-4. 验证命令中心已注册全部菜单命令，且主题切换真的改变配色
