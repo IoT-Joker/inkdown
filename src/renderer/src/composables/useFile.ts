@@ -41,12 +41,15 @@ export function useFile() {
       if (!picked) return false
       target = picked
     }
-    const { mtimeMs } = await window.typra.writeFile(target, tab.content)
-    tab.filePath = target
-    tab.title = baseName(target)
+    // 显式判空，让类型收窄到 string
+    if (!target) return false
+    const finalPath: string = target
+    const { mtimeMs } = await window.typra.writeFile(finalPath, tab.content)
+    tab.filePath = finalPath
+    tab.title = baseName(finalPath)
     tab.savedContent = tab.content
     tab.mtimeMs = mtimeMs
-    window.typra.watch(target)
+    void window.typra.watch(finalPath)
     return true
   }
 

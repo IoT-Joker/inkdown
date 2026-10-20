@@ -25,9 +25,10 @@ const savedLabel = computed(() => {
 
 const cursorLabel = computed(() => {
   const t = tab.value
-  if (!t?.cursor) return '行 —'
+  const anchor = t?.cursor?.anchor
+  if (!anchor) return '行 —'
   // cursor 是源码模式的行列坐标，取行号展示（从 1 开始计数更符合直觉）
-  return `行 ${t.cursor.anchor.line + 1}`
+  return `行 ${anchor.line + 1}`
 })
 </script>
 

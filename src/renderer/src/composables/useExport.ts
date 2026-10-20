@@ -78,7 +78,6 @@ async function buildHtml(): Promise<string> {
   return wrapDocument(
     renderToStaticHTML(tab.content, {
       footnote: settings.footnote,
-      math: settings.texMathDollars || settings.texMathGfm,
       superSubScript: settings.superSubScript,
       frontMatter: settings.frontMatter
     }),

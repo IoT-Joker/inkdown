@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "composite": true,
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -16,12 +15,16 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"]
-    }
+      "@renderer/*": ["src/renderer/src/*"],
+      "@muyajs/core": ["packages/muya/src/index.ts"],
+      "@muyajs/core/*": ["packages/muya/src/*"]
+    },
+    "types": ["vite/client"]
   },
   "include": [
     "src/renderer/src/**/*",
     "src/renderer/src/**/*.vue",
-    "src/preload/index.d.ts"
+    "src/preload/index.d.ts",
+    "packages/muya/src/types/**/*.d.ts"
   ]
 }

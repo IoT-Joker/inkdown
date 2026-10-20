@@ -128,6 +128,10 @@ async function removeEntry(): Promise<void> {
     window.alert(`删除失败：${(err as Error).message}`)
   }
 }
+
+function revealInExplorer(): void {
+  void window.typra.showItemInFolder(props.entry.path)
+}
 </script>
 
 <template>
@@ -174,9 +178,7 @@ async function removeEntry(): Promise<void> {
       <div class="ctx-item" @click="createChild('folder')">新建文件夹</div>
       <div class="ctx-sep" />
       <div class="ctx-item" @click="startRename">重命名</div>
-      <div class="ctx-item" @click="window.typra.showItemInFolder(entry.path)">
-        在资源管理器中显示
-      </div>
+      <div class="ctx-item" @click="revealInExplorer">在资源管理器中显示</div>
       <div class="ctx-sep" />
       <div class="ctx-item danger" @click="removeEntry">删除</div>
     </div>

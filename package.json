@@ -16,13 +16,20 @@
     "verify": "electron-vite build && node scripts/smoke-test.js && node scripts/file-test.js",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web"
+    "typecheck:muya": "tsc --noEmit -p tsconfig.muya.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "check": "npm run typecheck && npm run verify"
   },
   "dependencies": {
     "@muyajs/core": "workspace:*"
   },
   "devDependencies": {
+    "@types/katex": "^0.16.8",
     "@types/node": "^22.10.2",
+    "@types/plantuml-encoder": "^1.4.2",
+    "@types/prismjs": "^1.26.6",
+    "@types/turndown": "^5.0.6",
+    "@types/underscore": "^1.13.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "electron": "33.4.11",
     "electron-vite": "^3.0.0",

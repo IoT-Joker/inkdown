@@ -8,6 +8,12 @@ export interface SourcePos {
   ch: number
 }
 
+/** 编辑器光标：两端都可能为空（例如无选区时）。 */
+export interface EditorCursor {
+  anchor: SourcePos | null
+  focus: SourcePos | null
+}
+
 export interface Tab {
   id: string
   filePath: string | null
@@ -16,7 +22,7 @@ export interface Tab {
   savedContent: string
   mtimeMs: number
   /** 光标位置（源码模式行列坐标），切标签时用于恢复 */
-  cursor: { anchor: SourcePos; focus: SourcePos } | null
+  cursor: EditorCursor | null
   scrollTop: number
 }
 
