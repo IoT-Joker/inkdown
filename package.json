@@ -11,7 +11,9 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "smoke": "node scripts/smoke-test.js",
-    "verify": "electron-vite build && node scripts/smoke-test.js",
+    "filetest": "node scripts/file-test.js",
+    "shots": "node scripts/capture-shots.js",
+    "verify": "electron-vite build && node scripts/smoke-test.js && node scripts/file-test.js",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web"

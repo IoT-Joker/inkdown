@@ -4,6 +4,7 @@ import { buildAppMenu } from './menu'
 import { createWindow } from './window'
 import { runSelfCheck } from './selfCheck'
 import { captureScreenshots } from './screenshot'
+import { runFileTest } from './fileTest'
 
 /**
  * Typra2 主进程入口。
@@ -26,6 +27,14 @@ app.whenReady().then(async () => {
   const shotDir = process.env['TYPRA2_SCREENSHOT']
   if (shotDir) {
     const ok = await captureScreenshots(win, shotDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // TYPRA2_FILE_TEST=<目录> 时验证打开/编辑/保存/导出全链路
+  const fileTestDir = process.env['TYPRA2_FILE_TEST']
+  if (fileTestDir) {
+    const ok = await runFileTest(win, fileTestDir)
     app.exit(ok ? 0 : 1)
     return
   }

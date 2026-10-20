@@ -10,7 +10,7 @@ import { executeCommand, registerGlobalCommands } from './composables/useCommand
 import { useFile } from './composables/useFile'
 import { loadSettings, loadRecent, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs } from './store'
 
-const { openPath, refreshWorkspace, saveTab, saveAll } = useFile()
+const { openPath, refreshWorkspace, saveTab, saveAll, openFolder } = useFile()
 const editorRef = ref<InstanceType<typeof EditorHost> | null>(null)
 
 /** 自动保存：仅对已有磁盘路径的标签生效，避免频繁弹保存对话框。 */
@@ -67,7 +67,16 @@ onMounted(async () => {
   registerGlobalCommands()
   loadSettings()
   loadRecent()
-  // 标题栏/状态栏的未保存改动检查在应用退出前触发
+  // 暴露应用级文件 API 与退出入口，供主进程端到端文件测试使用
+  ;(window as unknown as Record<string, unknown>).__typraApp = {
+    openPath,
+    saveTab,
+    saveAll,
+    openFolder,
+    refreshWorkspace,
+    activeTab: () => getActiveTab(),
+    tabs: () => state.tabs
+  }
   ;(window as unknown as Record<string, unknown>).__typraQuit = () => executeCommand('file:quit')
 
   const off = window.typra.onMenuCommand(onMenuCommand)

@@ -9,3 +9,6 @@ Thumbs.db
 .pnpm-store/
 .vite/
 coverage/
+# 测试与截图产物
+.tmp-file-test/
+screenshots/
