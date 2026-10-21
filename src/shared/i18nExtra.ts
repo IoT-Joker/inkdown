@@ -67,6 +67,35 @@ const splitView: Record<LocaleCode, Dict> = {
   }
 }
 
+/* ------------------------------ 正文右键菜单 ------------------------------ */
+
+const contextMenu: Record<LocaleCode, Dict> = {
+  'zh-CN': {
+    'ctx.copyMarkdown': '复制为 Markdown',
+    'ctx.copyHtml': '复制为 HTML',
+    'ctx.pastePlain': '粘贴为纯文本',
+    'ctx.insertImage': '插入图片…',
+    'ctx.insertTable': '插入表格',
+    'ctx.insertMath': '插入公式块',
+    'ctx.insertCode': '插入代码块',
+    'ctx.duplicate': '复制当前段落',
+    'ctx.deleteParagraph': '删除当前段落',
+    'ctx.find': '查找…'
+  },
+  en: {
+    'ctx.copyMarkdown': 'Copy as Markdown',
+    'ctx.copyHtml': 'Copy as HTML',
+    'ctx.pastePlain': 'Paste as Plain Text',
+    'ctx.insertImage': 'Insert Image…',
+    'ctx.insertTable': 'Insert Table',
+    'ctx.insertMath': 'Insert Math Block',
+    'ctx.insertCode': 'Insert Code Block',
+    'ctx.duplicate': 'Duplicate Paragraph',
+    'ctx.deleteParagraph': 'Delete Paragraph',
+    'ctx.find': 'Find…'
+  }
+}
+
 /* ------------------------------ 拖拽 ------------------------------ */
 
 const drag: Record<LocaleCode, Dict> = {
@@ -103,9 +132,61 @@ const palette: Record<LocaleCode, Dict> = {
 
 /* ------------------------------ 合并 ------------------------------ */
 
+/* ------------------------------ 悬浮球环形菜单 ------------------------------ */
+
+const orbDict: Record<LocaleCode, Dict> = {
+  'zh-CN': {
+    'orb.title': '快速插入',
+    'orb.heading': '标题',
+    'orb.h1': '一级标题',
+    'orb.h2': '二级标题',
+    'orb.h3': '三级标题',
+    'orb.list': '列表',
+    'orb.ul': '无序列表',
+    'orb.ol': '有序列表',
+    'orb.task': '任务列表',
+    'orb.code': '代码块',
+    'orb.math': '公式块',
+    'orb.table': '表格',
+    'orb.other': '其它',
+    'orb.quote': '引用',
+    'orb.hr': '分隔线',
+    'orb.image': '图片',
+    'orb.link': '链接',
+    'orb.back': '返回上一级'
+  },
+  en: {
+    'orb.title': 'Quick insert',
+    'orb.heading': 'Heading',
+    'orb.h1': 'Heading 1',
+    'orb.h2': 'Heading 2',
+    'orb.h3': 'Heading 3',
+    'orb.list': 'List',
+    'orb.ul': 'Bullet List',
+    'orb.ol': 'Numbered List',
+    'orb.task': 'Task List',
+    'orb.code': 'Code Block',
+    'orb.math': 'Math Block',
+    'orb.table': 'Table',
+    'orb.other': 'More',
+    'orb.quote': 'Quote',
+    'orb.hr': 'Divider',
+    'orb.image': 'Image',
+    'orb.link': 'Link',
+    'orb.back': 'Back'
+  }
+}
+
 const EXTRA: Record<LocaleCode, Dict[]> = {
-  'zh-CN': [folderSearch['zh-CN'], splitView['zh-CN'], drag['zh-CN'], palette['zh-CN']],
-  en: [folderSearch.en, splitView.en, drag.en, palette.en]
+  'zh-CN': [
+    folderSearch['zh-CN'],
+    splitView['zh-CN'],
+    drag['zh-CN'],
+    palette['zh-CN'],
+    contextMenu['zh-CN'],
+    orbDict['zh-CN']
+  ],
+  en: [folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en]
 }
 
 let merged = false

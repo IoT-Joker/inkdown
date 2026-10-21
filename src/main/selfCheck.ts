@@ -1668,6 +1668,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     `[selfcheck] 全库搜索 OK: ${folderSearchCheck.hits} 处命中，覆盖 ${folderSearchCheck.groups.length} 个文件（含子目录，已排除非 Markdown）`
   )
 
+
   // 关闭面板并清理
   await win.webContents.executeJavaScript(`
     (async () => {
@@ -1772,6 +1773,198 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
 
   console.log('[selfcheck] shell:', JSON.stringify(shell))
   console.log('[selfcheck] statusbar:', statusText.replace(/\s+/g, ' ').trim())
+  // 4b-11b. 正文右键菜单：能弹出、条目齐全、点「插入表格」真的生效
+  const ctxCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+
+      // 回到所见即所得（右键菜单只在该模式提供）
+      const c = window.__inkdownCommands
+      for (let i = 0; i < 4 && app.viewMode() !== 'wysiwyg'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(350)
+      }
+      // 造一个段落（光标放在第一段内，便于验证命令作用于它）
+      window.__inkdownLoad('右键测试段落\\n')
+      await wait(900)
+
+      const host = document.querySelector('.editor-host')
+      const paras = [...document.querySelectorAll('.muya-container .mu-paragraph')]
+      const target = paras[paras.length - 1]
+      if (!host || !target) return { error: '编辑器未就绪' }
+
+      // 先把光标放到段落里，并确认真的就位。
+      // 关键：setCursorByOffset 之后必须有真实焦点，否则内核不会把
+      // 该块标记为 activeContentBlock，命令就没有作用对象。
+      const muya2 = window.__inkdownMuya
+      let cursorBlock = null
+      try {
+        muya2.focus()
+        await wait(300)
+        muya2.setCursorByOffset({ anchor: { line: 0, ch: 3 }, focus: { line: 0, ch: 3 } })
+        // 轮询等选区与活动块就位
+        for (let k = 0; k < 40; k++) {
+          const cs = muya2.editor?.selection?.getSelection?.()
+          if (cs?.anchor?.block) {
+            cursorBlock = cs.anchor.block.blockName || null
+            break
+          }
+          if (k > 0 && k % 12 === 0) muya2.focus()
+          await wait(100)
+        }
+      } catch (e) {
+        /* 定位失败时继续，用 cursorBlock 判断 */
+      }
+
+      // 触发右键。
+      // 注意：setCursorByOffset 内部会重建文档，之前抓到的节点会脱离 DOM
+      // （实测 connected=false），必须重新查询当前节点。
+      const liveHost = document.querySelector('.editor-host')
+      const livePara = document.querySelector('.muya-container .mu-paragraph .mu-content')
+      if (!liveHost || !livePara) return { error: '段落节点已失效' }
+      const r = livePara.getBoundingClientRect()
+      const evt = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(r.left + 20),
+        clientY: Math.round(r.top + 10)
+      })
+      livePara.dispatchEvent(evt)
+      await wait(500)
+
+      // 诊断：事件是否被 preventDefault、菜单是否在 DOM 里
+      const menu = document.querySelector('.editor-ctx')
+      const items = menu ? [...menu.querySelectorAll('.ctx-item')].map((b) => b.textContent.trim()) : []
+      const seps = menu ? menu.querySelectorAll('.ctx-sep').length : 0
+
+      // 点「插入代码块」，验证命令真的执行。
+      // 不用「插入表格」：表格命令要求光标在空段落（内核把 table 视为整块类型），
+      // 在已有文字的段落上不生效 —— 那是命令自身的约束，与菜单无关。
+      let codeInserted = false
+      let docAfter = ''
+      if (menu) {
+        const btn = [...menu.querySelectorAll('.ctx-item')].find((b) => /代码块/.test(b.textContent))
+        if (btn) {
+          btn.click()
+          await wait(1000)
+          docAfter = window.__inkdownMuya?.getMarkdown() || ''
+          // 代码块以三个反引号开头。这里用字符码拼出反引号，
+          // 避免在模板字符串里直接写出反引号导致提前闭合。
+          const fence = String.fromCharCode(96, 96, 96)
+          codeInserted = docAfter.indexOf(fence) !== -1
+        }
+      }
+      const menuClosed = !document.querySelector('.editor-ctx')
+
+      return { items, seps, codeInserted, menuClosed, cursorBlock, docAfter: docAfter.slice(0, 80) }
+    })()
+  `)
+  if (ctxCheck.error) {
+    console.error('[selfcheck] FAIL: 正文右键菜单:', ctxCheck.error)
+    return false
+  }
+  if (!ctxCheck.items?.length) {
+    console.error('[selfcheck] FAIL: 正文右键菜单未弹出:', JSON.stringify(ctxCheck))
+    return false
+  }
+  if (ctxCheck.items.length < 8 || ctxCheck.seps < 2) {
+    console.error('[selfcheck] FAIL: 右键菜单条目不足:', JSON.stringify(ctxCheck))
+    return false
+  }
+  if (!ctxCheck.codeInserted) {
+    console.error('[selfcheck] FAIL: 右键菜单命令未生效（插入代码块）:', JSON.stringify(ctxCheck))
+    return false
+  }
+  if (!ctxCheck.menuClosed) {
+    console.error('[selfcheck] FAIL: 执行命令后菜单未关闭:', JSON.stringify(ctxCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 正文右键菜单 OK: ${ctxCheck.items.length} 项 ${ctxCheck.seps} 个分隔，插入代码块命令生效`
+  )
+
+  // 4b-11c. 悬浮球：三圈菜单（分类 → 具体项 → 表格规格）且插入真的生效
+  const orbCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+
+      // 悬浮球在分栏预览右上角，先切到分栏
+      for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(350)
+      }
+      await wait(600)
+
+      const orb = document.querySelector('.orb')
+      const wrap = document.querySelector('.orb-wrap')
+      if (!orb || !wrap) return { error: '悬浮球未渲染' }
+
+      // 悬停展开第一圈
+      wrap.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await wait(400)
+      const ring1 = [...document.querySelectorAll('.orb-item')].map((b) => b.textContent.trim())
+
+      // 点「表格」进入第二圈（规格）
+      const tableBtn = [...document.querySelectorAll('.orb-item')].find((b) => /表格/.test(b.textContent))
+      let ring2 = []
+      if (tableBtn) {
+        tableBtn.click()
+        await wait(350)
+        ring2 = [...document.querySelectorAll('.orb-item')].map((b) => b.textContent.trim())
+      }
+
+      // 点「2 × 2」插入表格，验证行列数真的对
+      let rows = 0
+      let cols = 0
+      let inserted = false
+      const spec = [...document.querySelectorAll('.orb-item')].find((b) => /2\\s*×\\s*2/.test(b.textContent))
+      if (spec) {
+        // 切回所见即所得（表格只能插在编辑器里）
+        await c.execute('view:toggleSplit')
+        await wait(500)
+        window.__inkdownLoad('\\n')
+        await wait(800)
+        window.__inkdownMuya.focus()
+        await wait(300)
+        window.__inkdownOrb.insert('table-2x2')
+        await wait(1200)
+        const t = document.querySelector('.muya-container table, .muya-container .mu-table')
+        if (t) {
+          rows = t.querySelectorAll('tr').length
+          cols = t.querySelector('tr')?.querySelectorAll('td, th').length || 0
+          inserted = true
+        }
+      }
+
+      return { ring1, ring2, inserted, rows, cols }
+    })()
+  `)
+  if (orbCheck.error) {
+    console.error('[selfcheck] FAIL: 悬浮球:', orbCheck.error)
+    return false
+  }
+  if (!orbCheck.ring1?.length) {
+    console.error('[selfcheck] FAIL: 悬浮球未展开第一圈:', JSON.stringify(orbCheck))
+    return false
+  }
+  if (!orbCheck.ring2?.some((s: string) => /2\s*×\s*2/.test(s))) {
+    console.error('[selfcheck] FAIL: 表格未展开规格圈:', JSON.stringify(orbCheck))
+    return false
+  }
+  if (!orbCheck.inserted || orbCheck.rows !== 2 || orbCheck.cols !== 2) {
+    console.error(
+      `[selfcheck] FAIL: 悬浮球插入表格规格不对（期望 2×2，实际 ${orbCheck.rows}×${orbCheck.cols}）:`,
+      JSON.stringify(orbCheck)
+    )
+    return false
+  }
+  console.log(
+    `[selfcheck] 悬浮球 OK: 第一圈 ${orbCheck.ring1.length} 项，表格规格圈可展开，插入 ${orbCheck.rows}×${orbCheck.cols} 表格生效`
+  )
+
   console.log('[selfcheck] PASS: 编辑器挂载、块渲染、Markdown 往返、大纲与字数统计均正常')
   return true
 }

@@ -21,6 +21,7 @@ import {
 } from './fileAssociation'
 import { getMainWindow } from './window'
 import { initUpdater, humanizeUpdateErrorForTest } from './updater'
+import { markdownToDocx } from './exportDocx'
 
 /**
  * Inkdown 主进程入口。
@@ -349,6 +350,341 @@ Headers: {
   return ok
 }
 
+/**
+ * 验证表格的行列操作 UI 与图片缩放条是否真的出现。
+ *
+ * 代码里 Muya.use(TableRowColumMenu) / ImageResizeBar 都注册了，
+ * 但注册不等于可用 —— 要确认 UI 元素在真实交互下真的出现。
+ */
+async function probeTableUi(win: BrowserWindow): Promise<boolean> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  for (let i = 0; i < 60; i++) {
+    const ok = await win.webContents
+      .executeJavaScript(`!!document.querySelector('.muya-container .mu-paragraph')`)
+      .catch(() => false)
+    if (ok) break
+    await wait(250)
+  }
+
+  const result = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const muya = window.__inkdownMuya
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+
+      // 表格 UI 只存在于所见即所得模式；若停在分栏/源码，先切回去
+      for (let i = 0; i < 4 && app.viewMode() !== 'wysiwyg'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(400)
+      }
+      await wait(400)
+
+      // 造一个表格
+      window.__inkdownLoad('| 甲 | 乙 |\\n| --- | --- |\\n| 1 | 2 |\\n')
+      await wait(1500)
+
+      const tableEl = document.querySelector('.muya-container table, .muya-container .mu-table')
+      if (!tableEl) return { error: '表格未渲染' }
+
+      // 点进单元格，看表格工具条 / 行列菜单是否出现
+      const cell = tableEl.querySelector('td, th')
+      if (cell) {
+        cell.click()
+        cell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        cell.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      }
+      await wait(900)
+
+      const hasDragBar = !!document.querySelector('.mu-table-drag-bar, .mu-table-bar')
+      const hasRowColMenu = !!document.querySelector('.mu-table-bar-tools')
+      const hasColumnToolbar = !!document.querySelector('.mu-table-column-toolbar')
+      const floats = [...document.querySelectorAll('[class*="mu-"]')]
+        .map((e) => String(e.className))
+        .filter((n) => /table/i.test(n))
+        .slice(0, 12)
+
+      // 表格行数，用于验证「插入行」是否真能改变结构
+      const rowsBefore = tableEl.querySelectorAll('tr').length
+
+      // 诊断 + 查找表格块。
+      // 注意：块的 children 是 LinkedList（有 .head / .tail / .offset），
+      // 不是数组，用 Array.isArray 判断会永远拿到 0 个子节点。
+      const diag = { tree: [], activeBlock: null }
+      const eachChild = (node) => {
+        const out = []
+        const list = node?.children
+        if (!list) return out
+        let cur = list.head
+        let guard = 0
+        while (cur && guard++ < 200) {
+          out.push(cur)
+          cur = cur.next
+        }
+        return out
+      }
+      const walk = (node, depth) => {
+        if (!node || depth > 3) return
+        diag.tree.push({
+          d: depth,
+          name: node.blockName || node.constructor?.name || '?',
+          hasInsertRow: typeof node.insertRow === 'function',
+          kids: eachChild(node).length
+        })
+        eachChild(node)
+          .slice(0, 5)
+          .forEach((c) => walk(c, depth + 1))
+      }
+      const findTable = (node) => {
+        if (!node) return null
+        if (typeof node.insertRow === 'function') return node
+        for (const ch of eachChild(node)) {
+          const r = findTable(ch)
+          if (r) return r
+        }
+        return null
+      }
+
+      const tableBlock = findTable(muya.editor?.scrollPage)
+      diag.foundTable = !!tableBlock
+      diag.activeBlock = muya.editor?.activeContentBlock?.blockName || null
+
+      let rowInserted = false
+      let how = 'none'
+      // 点菜单里的「插入行」
+      const menu = document.querySelector('.mu-table-bar-tools')
+      let menuItems = []
+      if (menu) {
+        menuItems = [...menu.querySelectorAll('li.item')].map((li) => ({
+          label: li.dataset.label || '',
+          text: (li.textContent || '').trim()
+        }))
+        const item = [...menu.querySelectorAll('li.item')].find((li) => {
+          const label = li.dataset.label || ''
+          const text = li.textContent || ''
+          return label === 'insert' && /行/.test(text)
+        })
+        if (item) {
+          item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+          await wait(800)
+          rowInserted = tableEl.querySelectorAll('tr').length > rowsBefore
+          how = 'menu-item'
+        }
+      }
+      // 菜单没点到就直接用内核能力验证
+      if (!rowInserted && tableBlock) {
+        try {
+          tableBlock.insertRow(1)
+          await wait(800)
+          rowInserted = tableEl.querySelectorAll('tr').length > rowsBefore
+          how = 'kernel-insertRow'
+        } catch (e) {
+          how = 'error:' + String(e).slice(0, 60)
+        }
+      }
+
+      return {
+        hasDragBar,
+        hasRowColMenu,
+        hasColumnToolbar,
+        floats,
+        menuItems,
+        menuHtml: menu ? menu.innerHTML.slice(0, 200) : null,
+        rowsBefore,
+        rowsAfter: tableEl.querySelectorAll('tr').length,
+        rowInserted,
+        how,
+        diag
+      }
+    })()
+  `)
+
+  if (result.error) {
+    console.error('[tableui] FAIL:', result.error)
+    return false
+  }
+
+  console.log('[tableui] 表格相关 UI 元素:', JSON.stringify(result.floats))
+  console.log(
+    `[tableui] 拖拽条=${result.hasDragBar} 行列菜单=${result.hasRowColMenu} 列工具条=${result.hasColumnToolbar}`
+  )
+  console.log('[tableui] 行列菜单项:', JSON.stringify(result.menuItems))
+  console.log('[tableui] 菜单 HTML:', result.menuHtml)
+  console.log('[tableui] 内部结构:', JSON.stringify(result.diag))
+  console.log('[tableui] 菜单项数:', result.menuItems.length)
+  console.log(
+    `[tableui] 行数 ${result.rowsBefore} → ${result.rowsAfter}，插入方式=${result.how}，生效=${result.rowInserted}`
+  )
+
+  // 行列菜单或拖拽条至少要有其一（内核靠它们提供行列操作入口）
+  const hasAnyUi = result.hasDragBar || result.hasRowColMenu || result.hasColumnToolbar
+  if (!hasAnyUi) {
+    console.error('[tableui] FAIL: 表格没有任何行列操作入口')
+    return false
+  }
+  if (!result.rowInserted) {
+    console.error('[tableui] FAIL: 内核 insertRow 未能改变表格结构')
+    return false
+  }
+  console.log('[tableui] PASS: 表格行列 UI 存在且插入行生效')
+  return true
+}
+
+/**
+ * 从 ZIP 中取出指定条目的文本内容。
+ *
+ * 走「中央目录」而不是「本地文件头」：本地头在流式写入时
+ * 压缩大小字段可能是 0（数据描述符模式），按它遍历会立刻中断。
+ * 中央目录一定带真实的 compSize 与 localHeaderOffset。
+ */
+function extractZipEntry(buf: Buffer, entryName: string): string | null {
+  const zlib = require('node:zlib') as typeof import('node:zlib')
+
+  // 从尾部往前找中央目录结束标记 0x06054b50
+  let eocd = -1
+  for (let i = buf.length - 22; i >= 0; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) return null
+
+  const count = buf.readUInt16LE(eocd + 10)
+  let off = buf.readUInt32LE(eocd + 16)
+
+  for (let n = 0; n < count; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) return null
+    const method = buf.readUInt16LE(off + 10)
+    const compSize = buf.readUInt32LE(off + 20)
+    const nameLen = buf.readUInt16LE(off + 28)
+    const extraLen = buf.readUInt16LE(off + 30)
+    const commentLen = buf.readUInt16LE(off + 32)
+    const localOff = buf.readUInt32LE(off + 42)
+    const name = buf.toString('latin1', off + 46, off + 46 + nameLen)
+
+    if (name === entryName) {
+      // 本地头：跳过文件名与扩展字段，取压缩数据
+      const lNameLen = buf.readUInt16LE(localOff + 26)
+      const lExtraLen = buf.readUInt16LE(localOff + 28)
+      const dataStart = localOff + 30 + lNameLen + lExtraLen
+      const data = buf.subarray(dataStart, dataStart + compSize)
+      if (method === 0) return data.toString('utf8')
+      if (method === 8) return zlib.inflateRawSync(data).toString('utf8')
+      return null
+    }
+    off += 46 + nameLen + extraLen + commentLen
+  }
+  return null
+}
+
+/**
+ * 验证 Markdown → .docx 导出。
+ *
+ * 不只看文件是否生成，还要解开 zip 检查内容真的写进去了：
+ * 标题样式、正文、表格、代码块、列表、内联加粗。
+ */
+async function probeDocx(): Promise<boolean> {
+  const { join } = await import('node:path')
+  const { promises: fsp } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+
+  const md = [
+    '# 导出测试标题',
+    '',
+    '这是一个**加粗**与*斜体*的段落，还有 `行内代码`。',
+    '',
+    '## 二级标题',
+    '',
+    '- 列表项甲',
+    '- 列表项乙',
+    '',
+    '1. 有序一',
+    '2. 有序二',
+    '',
+    '```typescript',
+    'const x: number = 1',
+    '```',
+    '',
+    '| 列一 | 列二 |',
+    '| --- | --- |',
+    '| 甲 | 乙 |',
+    ''
+  ].join('\n')
+
+  const outPath = join(tmpdir(), `inkdown-docx-test-${Date.now()}.docx`)
+  try {
+    const buffer = await markdownToDocx(md, '导出测试标题')
+    await fsp.writeFile(outPath, buffer)
+    console.log('[docx] 已生成文件，大小:', buffer.length, 'bytes')
+
+    // 必须是合法 zip。jszip 是 docx 的间接依赖，没有类型声明，
+    // 这里用 Node 内置能力判断 zip 结构，避免为一个测试引入额外依赖。
+    const isZip = buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4b
+    console.log('[docx] ZIP 魔数正确:', isZip, ' 大小:', buffer.length, 'bytes')
+    if (!isZip) {
+      console.error('[docx] FAIL: 输出不是合法的 ZIP/docx')
+      return false
+    }
+
+    // 从 zip 里直接找 word/document.xml 的原始字节：
+    // docx 的 XML 是明文存储的，用 latin1 解码后可直接做内容断言。
+    const raw = buffer.toString('latin1')
+    const hasDocXml = raw.includes('word/document.xml')
+    console.log('[docx] 内含 word/document.xml:', hasDocXml)
+    if (!hasDocXml) {
+      console.error('[docx] FAIL: 缺少 word/document.xml，不是有效的 docx')
+      return false
+    }
+
+    // 解压 document.xml 需要 inflate；用 Node 的 zlib 手动解析 zip 条目
+    const xml = extractZipEntry(buffer, 'word/document.xml') ?? ''
+    console.log('[docx] document.xml 长度:', xml.length)
+    if (!xml) {
+      console.error('[docx] FAIL: 无法解出 word/document.xml')
+      return false
+    }
+
+    const checks: Array<[string, RegExp]> = [
+      ['一级标题文本', /导出测试标题/],
+      ['二级标题文本', /二级标题/],
+      ['正文段落', /这是一个/],
+      ['加粗标记', /<w:b\/>|<w:b /],
+      ['斜体标记', /<w:i\/>|<w:i /],
+      ['行内代码字体', /Consolas/],
+      ['列表项甲', /列表项甲/],
+      ['列表项乙', /列表项乙/],
+      ['有序列表文本', /有序一/],
+      ['代码块内容', /const x: number = 1/],
+      ['表格文本', /列一/],
+      ['表格单元格', /<w:tbl>/],
+      // 标题必须用 Heading 样式，而不是普通段落
+      ['标题样式', /Heading1|Heading 1|w:val="Heading1"/]
+    ]
+
+    const failures = []
+    for (const [label, re] of checks) {
+      const hit = re.test(xml)
+      console.log(`[docx]   ${label}: ${hit ? 'OK' : '缺失'}`)
+      if (!hit) failures.push(label)
+    }
+
+    if (failures.length) {
+      console.error('[docx] FAIL: 文档缺少内容:', failures.join('、'))
+      return false
+    }
+
+    console.log('[docx] PASS: docx 结构合法，标题/正文/加粗/斜体/代码/列表/表格均写入')
+    return true
+  } catch (err) {
+    console.error('[docx] FAIL: 导出过程出错:', err instanceof Error ? err.message : String(err))
+    return false
+  } finally {
+    await fsp.rm(outPath, { force: true }).catch(() => {})
+  }
+}
+
 app.whenReady().then(async () => {
   // 语言偏好需在创建菜单之前载入（菜单文案依赖它）
   await loadLocale()
@@ -416,6 +752,20 @@ app.whenReady().then(async () => {
   if (renderPdf) {
     const outDir = process.env['INKDOWN_RENDER_PDF_OUT'] ?? '.tmp-pdf-render'
     const ok = await renderPdfToImages(renderPdf, outDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_DOCX_TEST=1 时验证 Markdown → .docx 导出，然后退出
+  if (process.env['INKDOWN_DOCX_TEST']) {
+    const ok = await probeDocx()
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_TABLE_UI_TEST=1 时验证表格行列菜单等 UI 是否真的可用，然后退出
+  if (process.env['INKDOWN_TABLE_UI_TEST']) {
+    const ok = await probeTableUi(win)
     app.exit(ok ? 0 : 1)
     return
   }

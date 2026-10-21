@@ -8,6 +8,7 @@ import { getLocale, setLocale } from './locale'
 import { translate, type LocaleCode } from '../shared/i18n'
 import { takePendingFile } from './fileAssociation'
 import { checkForUpdatesManually } from './updater'
+import { markdownToDocx } from './exportDocx'
 import { searchInFolder, type SearchOptions } from './folderSearch'
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
@@ -261,6 +262,30 @@ export function registerIpc(): void {
     await fsp.writeFile(result.filePath, content, 'utf8')
     return result.filePath
   })
+
+  /**
+   * 导出 Word (.docx)。
+   * markdown 为文档内容，defaultName 用于建议文件名，title 用作文档标题。
+   */
+  ipcMain.handle(
+    'app:exportDocx',
+    async (_e, markdown: string, defaultName: string, title: string) => {
+      const win = getMainWindow()
+      const result = await dialog.showSaveDialog(win!, {
+        defaultPath: defaultName,
+        filters: [{ name: 'Word 文档', extensions: ['docx'] }]
+      })
+      if (result.canceled || !result.filePath) return null
+      try {
+        const buffer = await markdownToDocx(markdown, title)
+        await fsp.writeFile(result.filePath, buffer)
+        return result.filePath
+      } catch (err) {
+        console.error('[exportDocx] 失败:', err)
+        return null
+      }
+    }
+  )
 
   ipcMain.handle('dialog:message', async (_e, message: string, detail: string, buttons: string[]) => {
     const win = getMainWindow()

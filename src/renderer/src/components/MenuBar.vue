@@ -48,6 +48,7 @@ const menus = computed<MenuGroup[]>(() => [
       { labelKey: '', separator: true },
       { labelKey: 'menu.file.exportHtml', command: 'file:exportHtml' },
       { labelKey: 'menu.file.exportPdf', command: 'file:exportPdf' },
+      { labelKey: 'menu.file.exportDocx', command: 'file:exportDocx' },
       { labelKey: '', separator: true },
       { labelKey: 'menu.file.preferences', command: 'app:preferences', accel: 'Ctrl+,' },
       { labelKey: 'menu.file.quit', command: 'file:quit' }

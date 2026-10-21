@@ -172,11 +172,25 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
           markedText = document.querySelector('.split-cursor-block')?.textContent?.trim().slice(0, 20) || ''
         }
       }
+      // 展开悬浮球的表格规格圈，便于截图核对环形菜单
+      let orbItems = []
+      const wrap = document.querySelector('.orb-wrap')
+      if (wrap) {
+        wrap.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+        await wait(400)
+        const tb = [...document.querySelectorAll('.orb-item')].find((b) => /表格/.test(b.textContent))
+        if (tb) {
+          tb.click()
+          await wait(400)
+        }
+        orbItems = [...document.querySelectorAll('.orb-item')].map((b) => b.textContent.trim())
+      }
       return {
         mode: app.viewMode(),
         hasPreview: !!document.querySelector('.split-preview-body'),
         markedText,
-        opts: document.querySelectorAll('.split-opt input').length
+        opts: document.querySelectorAll('.split-opt input').length,
+        orbItems
       }
     })()
   `)

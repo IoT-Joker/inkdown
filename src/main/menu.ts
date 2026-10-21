@@ -37,6 +37,7 @@ export function buildAppMenu(): void {
         { type: 'separator' },
         { label: t('menu.file.exportHtml'), click: cmd('file:exportHtml') },
         { label: t('menu.file.exportPdf'), click: cmd('file:exportPdf') },
+        { label: t('menu.file.exportDocx'), click: cmd('file:exportDocx') },
         { type: 'separator' },
         {
           label: t('menu.file.preferences'),

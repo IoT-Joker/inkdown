@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
 import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds } from '../composables/useCommands'
-import { exportHtml, exportPdf, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
+import { exportHtml, exportPdf, exportDocxFile, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
 import { useI18n } from '../composables/useI18n'
+import BlockOrb from './BlockOrb.vue'
 
 // 供主进程端到端自检调用
 ;(window as unknown as Record<string, unknown>).__inkdownExport = { buildHtmlForCheck }
@@ -11,6 +12,8 @@ import { getActiveTab, isDirty, state, settings, type Tab } from '../store'
 import { baseName } from '../composables/useFile'
 
 const containerRef = ref<HTMLElement | null>(null)
+/** 编辑器根节点，用于判断右键是否发生在编辑区内。 */
+const hostRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
 const { t } = useI18n()
 let muya: Muya | null = null
@@ -409,6 +412,120 @@ function focus(): void {
  * 段落与格式命令的取值直接对齐 marktext desktop 的菜单词汇表
  * （packages/desktop/src/main/menu/actions/*），确保内核能识别。
  */
+/** 正文右键菜单的状态与条目。 */
+const editorMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0
+})
+
+/**
+ * 正文右键菜单条目。
+ *
+ * 全部复用已有命令，不再单独实现逻辑 —— 菜单只是给这些命令
+ * 增加一个更顺手的入口（和 Typora 一致的操作习惯）。
+ */
+const editorMenuItems = computed<Array<{ label: string; command: string } | { separator: true }>>(
+  () => [
+    { label: t('ctx.copyMarkdown'), command: 'edit:copyMarkdown' },
+    { label: t('ctx.copyHtml'), command: 'edit:copyHtml' },
+    { label: t('ctx.pastePlain'), command: 'edit:pastePlain' },
+    { separator: true },
+    { label: t('ctx.insertImage'), command: 'format:image' },
+    { label: t('ctx.insertTable'), command: 'paragraph:table' },
+    { label: t('ctx.insertMath'), command: 'paragraph:math' },
+    { label: t('ctx.insertCode'), command: 'paragraph:code' },
+    { separator: true },
+    { label: t('ctx.duplicate'), command: 'edit:duplicate' },
+    { label: t('ctx.deleteParagraph'), command: 'edit:deleteParagraph' },
+    { separator: true },
+    { label: t('ctx.find'), command: 'edit:find' }
+  ]
+)
+
+/** 打开正文右键菜单。 */
+function onEditorContextMenu(e: MouseEvent): void {
+  // 源码/分栏模式用浏览器原生菜单即可（textarea 的复制粘贴足够）
+  if (isSource.value || isSplit.value) return
+  // 只处理编辑器区域内的右键
+  const host = hostRef.value
+  if (!host) return
+  const target = e.target
+  // e.target 在 window 级监听里可能是 window / document，不是 Node，
+  // 直接传给 contains 会抛 TypeError。这里先做类型判断。
+  if (!(target instanceof Node) || !host.contains(target)) return
+  // 表格拖拽条等浮层自己处理右键
+  if ((target as HTMLElement).closest?.('.mu-float-container')) return
+
+  e.preventDefault()
+  // 阻止冒泡：否则本次事件会继续传到 window，
+  // 立刻触发下面注册的 close，菜单刚显示就被关掉。
+  e.stopPropagation()
+  editorMenu.visible = true
+  editorMenu.x = e.clientX
+  editorMenu.y = e.clientY
+
+  const close = (): void => {
+    editorMenu.visible = false
+    window.removeEventListener('pointerdown', close, true)
+    window.removeEventListener('contextmenu', close, true)
+    window.removeEventListener('keydown', onEsc)
+  }
+  const onEsc = (ev: KeyboardEvent): void => {
+    if (ev.key === 'Escape') close()
+  }
+  // 用 setTimeout 而不是 nextTick：要等当前事件完全走完再挂监听，
+  // 否则仍可能被同一个事件立刻关掉。
+  setTimeout(() => {
+    window.addEventListener('pointerdown', close, true)
+    window.addEventListener('contextmenu', close, true)
+    window.addEventListener('keydown', onEsc)
+  }, 0)
+}
+
+/** 执行右键菜单里的命令。 */
+function runEditorMenuCommand(command: string): void {
+  editorMenu.visible = false
+  void executeCommand(command)
+}
+
+/**
+ * 悬浮球插入：在光标处插入对应块。
+ *
+ * 表格走内核的 createTable（能直接生成指定行列），
+ * 其余复用命令中心已有的段落/格式命令。
+ */
+function onOrbInsert(id: string): void {
+  if (!muya) return
+
+  // 表格：1×3 / 2×2 / 3×3 …
+  const tableMatch = id.match(/^table-(\d+)x(\d+)$/)
+  if (tableMatch) {
+    const rows = Number(tableMatch[1])
+    const columns = Number(tableMatch[2])
+    // 表格只能插在空段落上（内核把 table 视为整块类型）
+    muya.createTable({ rows, columns })
+    return
+  }
+
+  const map: Record<string, string> = {
+    h1: 'paragraph:h1',
+    h2: 'paragraph:h2',
+    h3: 'paragraph:h3',
+    ul: 'paragraph:ul',
+    ol: 'paragraph:ol',
+    task: 'paragraph:task',
+    code: 'paragraph:code',
+    math: 'paragraph:math',
+    quote: 'paragraph:quote',
+    hr: 'paragraph:hr',
+    image: 'format:image',
+    link: 'format:link'
+  }
+  const command = map[id]
+  if (command) void executeCommand(command)
+}
+
 function registerEditorCommands(): void {
   const paragraphMap: Record<string, string> = {
     'paragraph:h1': 'heading 1',
@@ -450,6 +567,7 @@ function registerEditorCommands(): void {
     'view:focusEditor': () => focus(),
     'file:exportHtml': () => void exportHtml(),
     'file:exportPdf': () => void exportPdf(),
+    'file:exportDocx': () => void exportDocxFile(),
     // 段落操作（对齐 marktext 的 Edit 菜单）
     'edit:duplicate': () => muya?.duplicate(),
     'edit:insertParagraph': () => muya?.insertParagraph('after'),
@@ -774,6 +892,11 @@ onMounted(() => {
   registerGlobalCommands()
   mountEditor()
   registerEditorCommands()
+  // 右键菜单用「捕获阶段」监听：
+  // 内核在内容节点上对 contextmenu 做了 stopPropagation，
+  // 冒泡阶段收不到（实测 calls 始终为 0）。
+  // 捕获阶段先于内核处理，因此一定能拿到事件。
+  window.addEventListener('contextmenu', onEditorContextMenu, true)
   // 若启动时就处于分栏模式，渲染一次预览
   nextTick(() => refreshPreview())
   // 暴露命令中心与已注册命令，供主进程自检核对
@@ -791,6 +914,10 @@ onMounted(() => {
   ;(window as unknown as Record<string, unknown>).__inkdownSplitSync = {
     sync: syncPreviewToCursor
   }
+  // 供端到端自检调用悬浮球插入逻辑
+  ;(window as unknown as Record<string, unknown>).__inkdownOrb = {
+    insert: onOrbInsert
+  }
   window.addEventListener('inkdown:find', onFind)
   window.addEventListener('inkdown:find-close', onFindClose)
   window.addEventListener('inkdown:settings-changed', onSettingsChanged)
@@ -799,6 +926,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('contextmenu', onEditorContextMenu, true)
   window.removeEventListener('inkdown:find', onFind)
   window.removeEventListener('inkdown:find-close', onFindClose)
   window.removeEventListener('inkdown:settings-changed', onSettingsChanged)
@@ -813,6 +941,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 
 <template>
   <div
+    ref="hostRef"
     class="editor-host"
     :class="{ 'is-split': isSplit }"
     :style="{
@@ -861,6 +990,8 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
           <input v-model="settings.splitSyncScroll" type="checkbox" />
           {{ t('view.splitSyncScroll') }}
         </label>
+        <!-- 悬浮球：环形菜单快速插入块 -->
+        <BlockOrb @insert="onOrbInsert" />
       </div>
       <div ref="previewRef" class="split-preview-body markdown-body" />
     </div>
@@ -871,6 +1002,19 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
     <!-- 拖入提示层 -->
     <div v-if="dragging" class="drop-overlay">
       <div class="drop-box">{{ t('editor.dropHint') }}</div>
+    </div>
+    <!-- 正文右键菜单 -->
+    <div
+      v-if="editorMenu.visible"
+      class="editor-ctx"
+      :style="{ left: `${editorMenu.x}px`, top: `${editorMenu.y}px` }"
+    >
+      <template v-for="(item, i) in editorMenuItems" :key="i">
+        <div v-if="'separator' in item" class="ctx-sep" />
+        <button v-else class="ctx-item" @click="runEditorMenuCommand(item.command)">
+          {{ item.label }}
+        </button>
+      </template>
     </div>
   </div>
 </template>
@@ -1067,6 +1211,38 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   justify-content: center;
   background: var(--ty-active);
   pointer-events: none;
+}
+/* 正文右键菜单 */
+.editor-ctx {
+  position: fixed;
+  z-index: 300;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--ty-border);
+  border-radius: 6px;
+  background: var(--ty-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+.ctx-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ty-text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.ctx-item:hover {
+  background: var(--ty-active);
+}
+.ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--ty-border);
 }
 .drop-box {
   padding: 18px 28px;

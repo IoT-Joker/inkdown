@@ -157,6 +157,21 @@ export async function exportHtml(): Promise<boolean> {
 }
 
 /**
+ * 导出为 Word (.docx)。
+ *
+ * 直接把 Markdown 源码交给主进程，由主进程解析成 Word 原生段落样式
+ * （标题层级、列表、表格、代码块），这样在 Word 里是可继续编辑的真样式，
+ * 而不是一张图片或一堆散落的 HTML。
+ */
+export async function exportDocxFile(): Promise<boolean> {
+  const tab = getActiveTab()
+  if (!tab) return false
+  const title = tab.filePath ? baseName(tab.filePath).replace(/\.[^.]+$/, '') : tab.title
+  const saved = await window.inkdown.exportDocx(tab.content, exportName('docx'), title || 'Inkdown')
+  return !!saved
+}
+
+/**
  * 导出为 PDF。
  * 文档 HTML 交给主进程在独立的隐藏窗口里渲染并打印，
  * 避免把侧边栏/标签栏/状态栏一起打进 PDF。
