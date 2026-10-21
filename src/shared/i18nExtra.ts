@@ -50,12 +50,20 @@ const splitView: Record<LocaleCode, Dict> = {
   'zh-CN': {
     'view.splitPreview': '分栏预览',
     'view.splitHint': '左侧编辑源码，右侧实时预览',
-    'view.splitPreviewHead': '预览'
+    'view.splitPreviewHead': '预览',
+    'view.splitSyncScroll': '跟随光标',
+    'view.splitSyncScrollHint': '左侧光标移动时，右侧滚动到对应位置并居中',
+    'view.splitHighlightBlock': '标出位置',
+    'view.splitHighlightBlockHint': '用虚线框标出光标所在的块'
   },
   en: {
     'view.splitPreview': 'Split Preview',
     'view.splitHint': 'Edit source on the left, preview on the right',
-    'view.splitPreviewHead': 'Preview'
+    'view.splitPreviewHead': 'Preview',
+    'view.splitSyncScroll': 'Follow cursor',
+    'view.splitSyncScrollHint': 'Scroll the preview to keep the cursor block centered',
+    'view.splitHighlightBlock': 'Mark block',
+    'view.splitHighlightBlockHint': 'Outline the block under the cursor with a dashed box'
   }
 }
 

@@ -159,9 +159,24 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
         await wait(400)
       }
       await wait(600)
+      // 把光标放到文档中段，触发虚线框与预览跟随，便于截图核对
+      const ta = document.querySelector('.source-editor')
+      let markedText = ''
+      if (ta) {
+        const idx = ta.value.indexOf('## 四、表格')
+        if (idx > 0) {
+          ta.focus()
+          ta.setSelectionRange(idx + 3, idx + 3)
+          window.__inkdownSplitSync?.sync()
+          await wait(700)
+          markedText = document.querySelector('.split-cursor-block')?.textContent?.trim().slice(0, 20) || ''
+        }
+      }
       return {
         mode: app.viewMode(),
-        hasPreview: !!document.querySelector('.split-preview-body')
+        hasPreview: !!document.querySelector('.split-preview-body'),
+        markedText,
+        opts: document.querySelectorAll('.split-opt input').length
       }
     })()
   `)

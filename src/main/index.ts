@@ -210,6 +210,103 @@ async function probeFindFocus(win: BrowserWindow): Promise<boolean> {
   return true
 }
 
+/**
+ * 验证「点下一处时正文滚动到匹配位置」。
+ *
+ * 用户报告：结果在下方时，二级高亮已经切过去了，但视口没跟着滚动。
+ */
+async function probeFindScroll(win: BrowserWindow): Promise<boolean> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  for (let i = 0; i < 60; i++) {
+    const ok = await win.webContents
+      .executeJavaScript(`!!document.querySelector('.muya-container .mu-paragraph')`)
+      .catch(() => false)
+    if (ok) break
+    await wait(250)
+  }
+
+  const result = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+
+      // 造一篇很长的文档，匹配点分布在首尾，确保后面的匹配在视口外
+      const blocks = []
+      blocks.push('目标词 第一处')
+      for (let i = 0; i < 40; i++) blocks.push('填充段落 ' + i)
+      blocks.push('目标词 第二处')
+      for (let i = 0; i < 40; i++) blocks.push('更多填充 ' + i)
+      blocks.push('目标词 第三处')
+      window.__inkdownLoad(blocks.join('\\n\\n'))
+      await wait(1200)
+
+      await c.execute('edit:find')
+      await wait(400)
+      const input = document.querySelector('.find-input')
+      if (!input) return { error: '查找框未出现' }
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, '目标词')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await wait(900)
+
+      const scroller = document.querySelector('.editor-scroll')
+      const before = scroller.scrollTop
+      const count = document.querySelector('.find-count')?.innerText || ''
+
+      // 点「下一处」几次，每次记录滚动位置是否变化
+      const steps = []
+      for (let i = 0; i < 3; i++) {
+        const nextBtn = [...document.querySelectorAll('.find-actions .ty-btn')].find(
+          (b) => b.textContent.trim() === '↓'
+        )
+        nextBtn && nextBtn.click()
+        await wait(700)
+        // 当前高亮是否在视口内
+        const hl = document.querySelector('.muya-container span.mu-highlight')
+        let visible = false
+        if (hl) {
+          const r = hl.getBoundingClientRect()
+          const sr = scroller.getBoundingClientRect()
+          visible = r.top >= sr.top - 2 && r.bottom <= sr.bottom + 2
+        }
+        steps.push({
+          scrollTop: scroller.scrollTop,
+          activeVisible: visible,
+          hasActive: !!hl,
+          count: document.querySelector('.find-count')?.innerText || ''
+        })
+      }
+
+      return { before, count, steps, scrollHeight: scroller.scrollHeight }
+    })()
+  `)
+
+  if (result.error) {
+    console.error('[findscroll] FAIL:', result.error)
+    return false
+  }
+
+  console.log('[findscroll] 搜索计数:', result.count, ' 文档高度:', result.scrollHeight)
+  console.log('[findscroll] 初始 scrollTop:', result.before)
+  for (const [i, s] of result.steps.entries()) {
+    console.log(
+      `[findscroll]   下一处${i + 1}: scrollTop=${s.scrollTop} 当前高亮可见=${s.activeVisible} 计数=${s.count}`
+    )
+  }
+
+  const notVisible = result.steps.filter((s: { activeVisible: boolean }) => !s.activeVisible)
+  if (notVisible.length) {
+    console.error(
+      `[findscroll] FAIL: ${notVisible.length}/${result.steps.length} 次跳转后当前高亮不在视口内`
+    )
+    return false
+  }
+
+  console.log('[findscroll] PASS: 每次跳转后当前高亮都在视口内')
+  return true
+}
+
 app.whenReady().then(async () => {
   // 语言偏好需在创建菜单之前载入（菜单文案依赖它）
   await loadLocale()
@@ -277,6 +374,13 @@ app.whenReady().then(async () => {
   if (renderPdf) {
     const outDir = process.env['INKDOWN_RENDER_PDF_OUT'] ?? '.tmp-pdf-render'
     const ok = await renderPdfToImages(renderPdf, outDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_FIND_SCROLL_TEST=1 时验证「点下一处会滚动到匹配位置」，然后退出
+  if (process.env['INKDOWN_FIND_SCROLL_TEST']) {
+    const ok = await probeFindScroll(win)
     app.exit(ok ? 0 : 1)
     return
   }

@@ -678,6 +678,119 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 分栏预览 OK: 左源码 + 右预览，标题/加粗/列表渲染正确且实时更新')
 
+  // 4b-5c. 分栏的光标联动：虚线框标出对应块 + 视角跟随
+  const splitSyncCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+
+      // 造一篇足够长的文档，让后面的块落在预览视口外
+      const parts = ['# 标题一', '第一段内容。']
+      for (let i = 0; i < 30; i++) parts.push('填充段落 ' + i + '。')
+      parts.push('## 后面的标题', '最后一段内容。')
+      window.__inkdownLoad(parts.join('\\n\\n'))
+      await wait(1200)
+
+      // 切到分栏
+      for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(400)
+      }
+      await wait(700)
+
+      const ta = document.querySelector('.source-editor')
+      const body = document.querySelector('.split-preview-body')
+      const head = document.querySelector('.split-preview-head')
+      if (!ta || !body) return { error: '分栏元素未就绪' }
+
+      // 两个勾选框应存在且默认勾选
+      const opts = [...head.querySelectorAll('.split-opt input')]
+      const optCount = opts.length
+      const defaultsOn = opts.every((o) => o.checked)
+
+      // 把光标放到最后一个块，预览应标出对应元素并滚动过去。
+      // 程序化 setSelectionRange 不会触发真实按键，所以直接调用联动函数。
+      const lastOffset = ta.value.lastIndexOf('最后一段内容')
+      ta.focus()
+      ta.setSelectionRange(lastOffset + 2, lastOffset + 2)
+      window.__inkdownSplitSync.sync()
+      await wait(900)
+
+      const marked = body.querySelector('.split-cursor-block')
+      const markedText = marked ? marked.textContent.trim().slice(0, 20) : ''
+      // 标出的元素应与光标所在块对应（含「最后一段」）
+      const markedCorrect = /最后一段内容/.test(markedText)
+      // 且该元素应被滚动到预览视口内
+      let markedVisible = false
+      if (marked) {
+        const r = marked.getBoundingClientRect()
+        const sr = body.getBoundingClientRect()
+        markedVisible = r.top >= sr.top - 4 && r.bottom <= sr.bottom + 4
+      }
+      // 诊断：滚动容器与位置
+      const diag = {
+        bodyScrollTop: body.scrollTop,
+        bodyScrollHeight: body.scrollHeight,
+        bodyClientHeight: body.clientHeight,
+        markedTop: marked ? Math.round(marked.getBoundingClientRect().top - body.getBoundingClientRect().top) : null,
+        syncScroll: app.settings().splitSyncScroll
+      }
+
+      // 取消「标出位置」后，虚线框应消失
+      const hlOpt = opts[0]
+      hlOpt.checked = false
+      hlOpt.dispatchEvent(new Event('change', { bubbles: true }))
+      await wait(400)
+      window.__inkdownSplitSync.sync()
+      await wait(400)
+      const markedAfterOff = !!body.querySelector('.split-cursor-block')
+
+      // 恢复设置，避免影响后续用例
+      hlOpt.checked = true
+      hlOpt.dispatchEvent(new Event('change', { bubbles: true }))
+      await wait(300)
+
+      // 切回所见即所得
+      await c.execute('view:toggleSplit')
+      await wait(400)
+
+      return {
+        optCount,
+        defaultsOn,
+        markedCorrect,
+        markedText,
+        markedVisible,
+        markedAfterOff,
+        diag,
+        modeBack: app.viewMode()
+      }
+    })()
+  `)
+  if (splitSyncCheck.error) {
+    console.error('[selfcheck] FAIL: 分栏联动:', splitSyncCheck.error)
+    return false
+  }
+  if (splitSyncCheck.optCount !== 2 || !splitSyncCheck.defaultsOn) {
+    console.error('[selfcheck] FAIL: 分栏缺少两个联动开关或默认未勾选:', JSON.stringify(splitSyncCheck))
+    return false
+  }
+  if (!splitSyncCheck.markedCorrect) {
+    console.error('[selfcheck] FAIL: 虚线框未标出光标所在块:', JSON.stringify(splitSyncCheck))
+    return false
+  }
+  if (!splitSyncCheck.markedVisible) {
+    console.error('[selfcheck] FAIL: 预览未跟随光标滚动到对应位置:', JSON.stringify(splitSyncCheck))
+    return false
+  }
+  if (splitSyncCheck.markedAfterOff) {
+    console.error('[selfcheck] FAIL: 取消「标出位置」后虚线框仍在:', JSON.stringify(splitSyncCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 分栏光标联动 OK: 虚线框标出「${splitSyncCheck.markedText}」，预览已跟随滚动；开关可关闭`
+  )
+
   // 4b-6. 验证代码高亮、块级公式、Mermaid 图表真的渲染出来
   const renderCheck = await win.webContents.executeJavaScript(`
     (async () => {

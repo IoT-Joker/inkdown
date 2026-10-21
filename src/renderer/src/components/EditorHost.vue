@@ -34,6 +34,127 @@ function refreshPreview(): void {
   if (!el) return
   const tab = activeTab.value
   el.innerHTML = tab ? renderPreviewHtml(tab.content) : ''
+  // 预览重建后高亮框会失效，重新定位一次
+  nextTick(() => syncPreviewToCursor())
+}
+
+/* ------------------------- 分栏：光标 ↔ 预览联动 ------------------------- */
+
+/**
+ * 把源码光标所在位置映射到预览里的对应元素。
+ *
+ * 做法：按「块」对齐。
+ *   源码侧：把 textarea 的内容按空行切成块，算出光标属于第几块；
+ *   预览侧：取预览容器的顶层子元素（h1/p/ul/pre/table…），
+ *           与源码块一一对应（两者都是同一份 Markdown 的块序列）。
+ * 这种按序对齐简单可靠，不需要在渲染器里埋标记。
+ */
+
+/** 把 Markdown 按「块」切分，返回每块在文本中的起始偏移。 */
+function markdownBlockStarts(md: string): number[] {
+  const starts: number[] = []
+  const lines = md.split('\n')
+  let offset = 0
+  let inFence = false
+  let prevBlank = true
+
+  for (const line of lines) {
+    const isFence = /^\s*(```|~~~)/.test(line)
+    if (isFence) {
+      if (!inFence && prevBlank) starts.push(offset)
+      inFence = !inFence
+      prevBlank = false
+    } else if (inFence) {
+      // 代码块内部不切分
+    } else if (line.trim() === '') {
+      prevBlank = true
+    } else {
+      if (prevBlank) starts.push(offset)
+      prevBlank = false
+    }
+    offset += line.length + 1
+  }
+  return starts
+}
+
+/** 根据光标偏移算出它属于第几个块。 */
+function blockIndexAtOffset(starts: number[], offset: number): number {
+  if (!starts.length) return -1
+  let idx = 0
+  for (let i = 0; i < starts.length; i++) {
+    if (starts[i] <= offset) idx = i
+    else break
+  }
+  return idx
+}
+
+/** 源码 textarea 中光标的绝对偏移。 */
+function sourceCursorOffset(): number {
+  const ta = sourceRef.value
+  if (!ta) return -1
+  return ta.selectionStart
+}
+
+/** 光标移动（点击 / 按键 / 输入）时同步预览。 */
+function onSourceCaretMove(): void {
+  if (!isSplit.value) return
+  syncPreviewToCursor()
+}
+
+/** 预览容器里与源码块对应的顶层元素（跳过脚注等非正文节点）。 */
+function previewBlocks(): HTMLElement[] {
+  const el = previewRef.value
+  if (!el) return []
+  return [...el.children].filter(
+    (c) => c instanceof HTMLElement && !c.classList.contains('footnotes')
+  ) as HTMLElement[]
+}
+
+/** 当前应被标出的预览元素。 */
+function activePreviewBlock(): HTMLElement | null {
+  const md = state.sourceContent
+  if (!md) return null
+  const starts = markdownBlockStarts(md)
+  const offset = sourceCursorOffset()
+  if (offset < 0) return null
+  const idx = blockIndexAtOffset(starts, offset)
+  const blocks = previewBlocks()
+  if (idx < 0 || idx >= blocks.length) return null
+  return blocks[idx] ?? null
+}
+
+/** 上一次标出的元素，便于清除样式。 */
+let markedPreviewEl: HTMLElement | null = null
+
+/** 标出光标所在块 + 按需滚动。两个行为分别受设置控制。 */
+function syncPreviewToCursor(): void {
+  if (!isSplit.value) return
+  const target = settings.splitHighlightBlock ? activePreviewBlock() : null
+
+  // 清除上一次的虚线框
+  if (markedPreviewEl && markedPreviewEl !== target) {
+    markedPreviewEl.classList.remove('split-cursor-block')
+    markedPreviewEl = null
+  }
+  if (target) {
+    target.classList.add('split-cursor-block')
+    markedPreviewEl = target
+  }
+
+  if (!settings.splitSyncScroll) return
+  const scrollTarget = target ?? activePreviewBlock()
+  if (!scrollTarget) return
+  // 真正滚动的是预览内容区本身（.split-preview-body 设了 overflow-y:auto），
+  // 不是它的父元素 —— 取父元素会滚到不动的外层容器，表现为「完全没跟随」。
+  const scroller = previewRef.value
+  if (!scroller) return
+  // 让对应块落在预览窗口垂直中心。
+  // 用 auto 而非 smooth：smooth 在长文档里可能滚很久，
+  // 而且程序化读取位置时还没到位，观感也不如立即跟随。
+  const r = scrollTarget.getBoundingClientRect()
+  const sr = scroller.getBoundingClientRect()
+  const top = scroller.scrollTop + (r.top - sr.top) - sr.height / 2 + r.height / 2
+  scroller.scrollTo({ top: Math.max(0, top), behavior: 'auto' })
 }
 
 // 分栏模式下内容或视图变化时更新预览
@@ -410,10 +531,13 @@ function onFind(e: Event): void {
       // 跳转需要把光标移到匹配处，这会让焦点离开查找框；
       // 跳完立即把焦点还回去，用户才能继续输入。
       searchResult = muya.find(d.action)
+      // 内核的 find() 只切换高亮、不滚动视口，需要应用层补上
+      scrollToActiveMatch()
       restoreFindFocus()
       break
     case 'replace':
       searchResult = muya.replace(d.replacement, { isSingle: true, isRegexp: d.isRegexp })
+      scrollToActiveMatch()
       restoreFindFocus()
       break
     case 'replaceAll':
@@ -422,6 +546,29 @@ function onFind(e: Event): void {
       break
   }
   reportMatches()
+}
+
+/**
+ * 把当前匹配（span.mu-highlight）滚动到视口内。
+ *
+ * 内核的 find() 只更新高亮样式，不会滚动 —— 表现为「计数跳到了 2/3，
+ * 但视口还停在第 1 处」。这里按需滚动，且只在目标不在可视区时才动，
+ * 避免每次跳转都抖动。
+ */
+function scrollToActiveMatch(): void {
+  requestAnimationFrame(() => {
+    const scroller = getScroller()
+    if (!scroller) return
+    const el = document.querySelector<HTMLElement>('.muya-container span.mu-highlight')
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const sr = scroller.getBoundingClientRect()
+    // 已在视口内（留一点边距）就不滚
+    if (r.top >= sr.top + 8 && r.bottom <= sr.bottom - 8) return
+    // 滚到视口垂直居中附近，便于看清上下文
+    const target = scroller.scrollTop + (r.top - sr.top) - sr.height / 2 + r.height / 2
+    scroller.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
+  })
 }
 
 /**
@@ -640,6 +787,10 @@ onMounted(() => {
     openFiles: openDroppedFiles,
     setPathHook: setPathForFileHook
   }
+  // 供端到端自检驱动分栏光标联动（程序化 setSelectionRange 不触发真实按键事件）
+  ;(window as unknown as Record<string, unknown>).__inkdownSplitSync = {
+    sync: syncPreviewToCursor
+  }
   window.addEventListener('inkdown:find', onFind)
   window.addEventListener('inkdown:find-close', onFindClose)
   window.addEventListener('inkdown:settings-changed', onSettingsChanged)
@@ -692,11 +843,25 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
         class="source-editor"
         spellcheck="false"
         @keydown="onSourceKeydown"
+        @click="onSourceCaretMove"
+        @keyup="onSourceCaretMove"
+        @input="onSourceCaretMove"
       />
     </div>
     <!-- 分栏预览：右侧渲染当前 Markdown 的静态 HTML -->
     <div v-if="isSplit" class="split-preview">
-      <div class="split-preview-head">{{ t('view.splitPreviewHead') }}</div>
+      <div class="split-preview-head">
+        <span class="split-preview-title">{{ t('view.splitPreviewHead') }}</span>
+        <!-- 两个独立开关：虚线框标位置、视角跟随光标 -->
+        <label class="split-opt" :title="t('view.splitHighlightBlockHint')">
+          <input v-model="settings.splitHighlightBlock" type="checkbox" />
+          {{ t('view.splitHighlightBlock') }}
+        </label>
+        <label class="split-opt" :title="t('view.splitSyncScrollHint')">
+          <input v-model="settings.splitSyncScroll" type="checkbox" />
+          {{ t('view.splitSyncScroll') }}
+        </label>
+      </div>
       <div ref="previewRef" class="split-preview-body markdown-body" />
     </div>
     <div v-if="!activeTab" class="empty-state">
@@ -746,6 +911,9 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   overflow: hidden;
 }
 .split-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex: none;
   padding: 4px 12px;
   border-bottom: 1px solid var(--ty-border);
@@ -753,6 +921,33 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   color: var(--ty-muted);
   font-size: 11px;
   letter-spacing: 0.4px;
+}
+.split-preview-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.split-opt {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  cursor: pointer;
+  user-select: none;
+  letter-spacing: 0;
+}
+.split-opt input {
+  margin: 0;
+  accent-color: var(--ty-accent);
+}
+/* 光标所在块：虚线框标出 */
+:deep(.split-cursor-block) {
+  outline: 1.5px dashed var(--ty-accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+  background: var(--ty-active);
+  transition: background 0.15s ease;
 }
 .split-preview-body {
   flex: 1;

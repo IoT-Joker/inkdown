@@ -55,8 +55,14 @@ function api(method, apiPath, body, extraHeaders = {}) {
   })
 }
 
-/** 上传单个资产（二进制流）。 */
-function uploadAsset(uploadUrl, filePath, name) {
+/**
+ * 上传单个资产（二进制流），带重试。
+ *
+ * 124 MB 的安装包在跨境链路上容易 ECONNRESET，
+ * 单次失败就放弃会留下「latest.yml 有、安装包没有」的半成品 Release，
+ * 用户点更新会 404。因此这里失败后重试几次。
+ */
+function uploadAssetOnce(uploadUrl, filePath, name) {
   return new Promise((resolve) => {
     const stat = fs.statSync(filePath)
     const url = new URL(uploadUrl.replace('{?name,label}', `?name=${encodeURIComponent(name)}`))
@@ -80,8 +86,24 @@ function uploadAsset(uploadUrl, filePath, name) {
       }
     )
     req.on('error', (e) => resolve({ status: 0, body: e.message }))
+    // 大文件上传给足超时，避免慢速链路被提前掐断
+    req.setTimeout(10 * 60 * 1000, () => {
+      req.destroy(new Error('上传超时'))
+    })
     fs.createReadStream(filePath).pipe(req)
   })
+}
+
+/** 带重试的上传：最多 3 次，间隔逐次加长。 */
+async function uploadAsset(uploadUrl, filePath, name) {
+  let last = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    last = await uploadAssetOnce(uploadUrl, filePath, name)
+    if (last.status === 201 || last.status === 422) return last
+    console.warn(`  第 ${attempt} 次上传失败（${last.status} ${last.body}），准备重试…`)
+    await new Promise((r) => setTimeout(r, 2000 * attempt))
+  }
+  return last
 }
 
 ;(async () => {

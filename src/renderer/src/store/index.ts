@@ -166,6 +166,10 @@ export const settings = reactive({
   autoSaveDelay: 1500,
   /** 存盘时使用的行尾符 */
   lineEnding: 'lf' as 'lf' | 'crlf',
+  /** 分栏：右侧预览跟随左侧光标滚动，把对应位置移到预览窗口中心 */
+  splitSyncScroll: true,
+  /** 分栏：在右侧预览中用虚线框标出光标所在的块 */
+  splitHighlightBlock: true,
   autoPairBracket: true,
   autoPairMarkdownSyntax: true,
   autoPairQuote: true,
