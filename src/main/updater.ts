@@ -22,6 +22,36 @@ function t(key: string, params?: Record<string, string | number>): string {
   return translate(getLocale() as LocaleCode, key, params)
 }
 
+/**
+ * 把更新器抛出的原始错误转成用户看得懂的一句话。
+ *
+ * electron-updater 的报错里会带上完整 HTTP 响应（含响应头与 cookie），
+ * 直接展示既难读又有信息泄露风险，这里按状态码归成几类。
+ */
+function humanizeUpdateError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (/\b404\b/.test(raw)) {
+    return t('update.err404')
+  }
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|timeout/i.test(raw)) {
+    return t('update.errNetwork')
+  }
+  if (/\b401\b|\b403\b/.test(raw)) {
+    return t('update.errAuth')
+  }
+  // 兜底：只保留第一行，避免把整段响应头糊到用户脸上
+  const firstLine = raw.split('\n')[0].trim()
+  return firstLine.length > 200 ? firstLine.slice(0, 200) + '…' : firstLine
+}
+
+/**
+ * 供端到端测试调用：把一段原始错误转成人话，便于验证分类逻辑。
+ * 只在测试模式下暴露。
+ */
+export function humanizeUpdateErrorForTest(raw: string): string {
+  return humanizeUpdateError(new Error(raw))
+}
+
 /** 更新源：默认 GitHub Releases，可用环境变量覆盖。 */
 function configureFeed(): void {
   const custom = process.env['INKDOWN_UPDATE_URL']
@@ -149,11 +179,12 @@ export async function checkForUpdatesManually(): Promise<void> {
     }
     // 有新版本时会触发 update-available 事件，由上面的处理器继续
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[updater] 检查更新失败:', err)
     await dialog.showMessageBox(win, {
       type: 'warning',
       message: t('update.checkFailed'),
-      detail: msg,
+      // 不要把原始 HTTP 响应（含响应头与 cookie）直接展示给用户
+      detail: humanizeUpdateError(err),
       buttons: [t('update.ok')]
     })
   } finally {

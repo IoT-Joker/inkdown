@@ -20,7 +20,7 @@ import {
   takePendingFile
 } from './fileAssociation'
 import { getMainWindow } from './window'
-import { initUpdater } from './updater'
+import { initUpdater, humanizeUpdateErrorForTest } from './updater'
 
 /**
  * Inkdown 主进程入口。
@@ -307,6 +307,48 @@ async function probeFindScroll(win: BrowserWindow): Promise<boolean> {
   return true
 }
 
+/**
+ * 验证「更新检查失败」的提示已被转成人话。
+ *
+ * 用户截图显示弹窗里是完整 HTTP 响应（含响应头与 cookie），
+ * 这里确认各类原始错误都被归类成简短说明。
+ */
+function probeUpdateError(): boolean {
+  // 模拟用户截图里那种带完整响应头的 404
+  const raw404 = `404 "method: GET url: https://github.com/IoT-Joker/inkdown/releases.atom\\n\\nPlease double check that your authentication token is correct. Due to security reasons, actual status may not be reported, but 404,\\n"
+Headers: {
+  "cache-control": "no-cache",
+  "content-encoding": "gzip",
+  "set-cookie": [
+    "_gh_sess=a5Za4hFhocn%2F6JEBch4eOwKM7Gc5qWNRwjuwZi7RU1pzUE3iLG...",
+    "octo=GH1.1.1595340383.1792558847; expires=Thu, 21 Oct 2027 05:00:47 GMT"
+  ]
+}`
+
+  const cases: Array<[string, string, RegExp]> = [
+    ['404（私有仓库）', raw404, /404/],
+    ['网络错误', 'ECONNRESET: socket hang up', /网络|network/i],
+    ['认证失败', '401 Unauthorized', /认证|authentication/i]
+  ]
+
+  let ok = true
+  for (const [label, raw, expect] of cases) {
+    const humanized = humanizeUpdateErrorForTest(raw)
+    const short = humanized.length <= 200
+    const matched = expect.test(humanized)
+    const leaked = /set-cookie|_gh_sess|octo=/.test(humanized)
+    console.log(
+      `[upderr] ${label}: 长度=${humanized.length} 简短=${short} 匹配=${matched} 泄露cookie=${leaked}`
+    )
+    console.log(`[upderr]    → ${humanized}`)
+    if (!short || !matched || leaked) ok = false
+  }
+
+  if (ok) console.log('[upderr] PASS: 更新失败信息已归类，未泄露响应头与 cookie')
+  else console.error('[upderr] FAIL: 仍有原始响应或信息泄露')
+  return ok
+}
+
 app.whenReady().then(async () => {
   // 语言偏好需在创建菜单之前载入（菜单文案依赖它）
   await loadLocale()
@@ -374,6 +416,13 @@ app.whenReady().then(async () => {
   if (renderPdf) {
     const outDir = process.env['INKDOWN_RENDER_PDF_OUT'] ?? '.tmp-pdf-render'
     const ok = await renderPdfToImages(renderPdf, outDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_UPDATE_ERROR_TEST=1 时验证「更新失败信息被转成人话」，然后退出
+  if (process.env['INKDOWN_UPDATE_ERROR_TEST']) {
+    const ok = probeUpdateError()
     app.exit(ok ? 0 : 1)
     return
   }

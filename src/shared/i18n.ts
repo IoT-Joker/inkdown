@@ -120,6 +120,9 @@ const zhCN: Dict = {
   'update.restart': '立即重启',
   'update.checkFailed': '检查更新失败',
   'update.checkFailedDetail': '无法连接到更新服务器。可能是网络不通，或该仓库尚未发布任何版本。',
+  'update.err404': '更新源返回 404。若仓库是私有的，自动更新无法匿名读取发布信息，请改为公开仓库或改用自建更新源。',
+  'update.errNetwork': '网络连接失败，请检查网络后重试。',
+  'update.errAuth': '更新源拒绝访问（认证失败）。私有仓库需要额外配置访问凭据。',
   'update.devMode': '开发模式',
   'update.devModeDetail': '开发模式下不检查更新，请安装打包后的版本再试。',
   'update.busy': '正在处理中',
@@ -381,6 +384,11 @@ const en: Dict = {
   'update.checkFailed': 'Update check failed',
   'update.checkFailedDetail':
     'Cannot reach the update server. The network may be blocked, or no release has been published yet.',
+  'update.err404':
+    'The update feed returned 404. If the repository is private, auto-update cannot read releases anonymously — make it public or use a custom update feed.',
+  'update.errNetwork': 'Network connection failed. Check your connection and retry.',
+  'update.errAuth':
+    'The update feed rejected access (authentication failed). Private repositories need extra credentials.',
   'update.devMode': 'Development mode',
   'update.devModeDetail': 'Updates are not checked in development. Install a packaged build.',
   'update.busy': 'In progress',
