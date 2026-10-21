@@ -187,11 +187,14 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const at = (line, ch) => ({ anchor: { line, ch }, focus: { line, ch } })
       const results = {}
 
-      // 等待编辑器渲染稳定：轮询直到段落块数量符合预期，避免固定延时不足
+      // 等待编辑器渲染稳定：轮询直到段落块数量符合预期，避免固定延时不足。
+      // 同时要求文档里不再残留表格 —— 上一个用例可能留下 table，
+      // 而 table 属于内核的「整块」类型，会把后续段落命令吞掉。
       const settle = async (expectParagraphs) => {
-        for (let i = 0; i < 60; i++) {
+        for (let i = 0; i < 80; i++) {
           const n = document.querySelectorAll('.muya-container .mu-paragraph').length
-          if (n >= expectParagraphs) return true
+          const tables = document.querySelectorAll('.muya-container .mu-table, .muya-container table').length
+          if (n >= expectParagraphs && tables === 0) return true
           await wait(100)
         }
         return false
@@ -218,14 +221,29 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         return null
       }
 
-      // 载入内容 → 等渲染稳定 → 聚焦 → 设光标 → 等选区就位
+      // 载入内容 → 等渲染稳定 → 聚焦 → 设光标 → 等选区就位。
+      //
+      // 打包版启动与渲染都比开发版慢，固定等待会不足（表现为只有第一条命令生效）。
+      // 这里全部改成条件轮询：等块数达标、等选区真的落在「段落」上。
       const load = async (md, line, ch, expectParagraphs = 1) => {
         muya.setContent(md, false)
         await settle(expectParagraphs)
         muya.focus()
-        await wait(200)
+        // 等编辑器确实拿到焦点
+        for (let i = 0; i < 40; i++) {
+          if (muya.hasFocus()) break
+          await wait(100)
+        }
         muya.setCursorByOffset(at(line, ch))
-        return waitCursor()
+        const sel = await waitCursor()
+        // 再确认一次：光标必须落在段落内容块上。
+        // 若上一次用例留下了表格/代码块，setContent 后仍可能短暂停在旧块上。
+        for (let i = 0; i < 40; i++) {
+          const s = readSel()
+          if (s && /paragraph/.test(s.block)) return s
+          await wait(100)
+        }
+        return sel
       }
 
       // 段落：把光标放到首段，执行「标题 1」
@@ -1163,8 +1181,17 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         }
       }
       // 段落复制：一段变两段。
-      // duplicate 依赖「当前活动块」，而活动块需要光标真正落在块内且编辑器有焦点；
-      // 无头环境下这一步偶发未就位，因此校验后重试。
+      //
+      // duplicate 依赖「当前活动块」（muya.editor.activeContentBlock），
+      // 而活动块不是设了光标就有 —— 内核要收到真正的 focus 事件才标记。
+      // 因此这里轮询 activeContentBlock 而不是只等选区存在。
+      const hasActiveBlock = () => {
+        try {
+          return !!muya.editor?.activeContentBlock
+        } catch {
+          return false
+        }
+      }
       const loadAt = async (md, ch) => {
         window.__inkdownLoad(md)
         for (let i = 0; i < 40; i++) {
@@ -1172,27 +1199,22 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
           await wait(100)
         }
         muya.focus()
-        await wait(250)
         muya.setCursorByOffset({ anchor: { line: 0, ch }, focus: { line: 0, ch } })
-        // 等选区就位
-        for (let i = 0; i < 40; i++) {
-          const cs = (() => {
-            try {
-              return muya.editor?.selection?.getSelection?.()
-            } catch {
-              return null
-            }
-          })()
-          if (cs && cs.anchor && cs.anchor.block) break
+        // 等选区就位且活动块已建立
+        for (let i = 0; i < 60; i++) {
+          if (hasActiveBlock()) break
+          // 活动块迟迟不建立时补一次 focus
+          if (i > 0 && i % 15 === 0) muya.focus()
           await wait(100)
         }
-        await wait(200)
+        return hasActiveBlock()
       }
 
       // 段落复制：一段变两段（失败则重试，最多 4 次）
       let afterDuplicate = ''
+      let dupReady = false
       for (let attempt = 0; attempt < 4; attempt++) {
-        await loadAt('第一段内容\\n', 2)
+        dupReady = await loadAt('第一段内容\\n', 2)
         await c.execute('edit:duplicate')
         await wait(500)
         afterDuplicate = muya.getMarkdown()
@@ -1220,14 +1242,19 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         lineEndingError = String(err)
       }
 
-      return { afterDuplicate, afterInsert, crlfSetting, lfSetting, lineEndingError }
+      return { afterDuplicate, afterInsert, crlfSetting, lfSetting, lineEndingError, dupReady }
     })()
   `)
   // 复制后段落数应增加
   const dupCount = (paraCheck.afterDuplicate.match(/第一段内容/g) || []).length
   if (dupCount < 2) {
     console.error('[selfcheck] FAIL: 复制段落未生效:', JSON.stringify(paraCheck.afterDuplicate))
-    console.error('[selfcheck] 复制段落诊断:', JSON.stringify(paraCheck.dupDiag))
+    console.error(
+      '[selfcheck] 复制段落诊断: 活动块是否建立 =',
+      paraCheck.dupReady,
+      ' 换行符错误 =',
+      paraCheck.lineEndingError
+    )
     return false
   }
   if (paraCheck.crlfSetting !== 'crlf' || paraCheck.lfSetting !== 'lf') {

@@ -130,6 +130,86 @@ async function probeOpenFile(win: BrowserWindow, expected: string): Promise<bool
   return true
 }
 
+/**
+ * 验证「在查找框输入时，焦点不会被抢到正文」。
+ *
+ * 用户报告：打字打到一半，光标跳到正文上。
+ * 预期原因：搜索时 selectHighlight 会把光标移进正文（内核 setCursor 行为）。
+ */
+async function probeFindFocus(win: BrowserWindow): Promise<boolean> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  // 等编辑器就绪
+  for (let i = 0; i < 60; i++) {
+    const ok = await win.webContents
+      .executeJavaScript(`!!document.querySelector('.muya-container .mu-paragraph')`)
+      .catch(() => false)
+    if (ok) break
+    await wait(250)
+  }
+
+  const result = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const app = window.__inkdownApp
+
+      // 造一篇含多处「苹果」的文档
+      window.__inkdownLoad('苹果一 香蕉\\n\\n苹果二 橙子\\n\\n苹果三 葡萄\\n')
+      await wait(900)
+
+      await c.execute('edit:find')
+      await wait(400)
+      const input = document.querySelector('.find-input')
+      if (!input) return { error: '查找框未出现' }
+      input.focus()
+
+      const samples = []
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+
+      // 逐字符输入「苹果」，每次输入后记录焦点在哪
+      for (const text of ['苹', '苹果', '苹果x']) {
+        setter.call(input, text)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        await wait(500)
+        const active = document.activeElement
+        samples.push({
+          typed: text,
+          activeTag: active ? active.tagName : null,
+          activeClass: active ? String(active.className).slice(0, 60) : null,
+          isFindInput: active === input,
+          count: document.querySelector('.find-count')?.innerText || ''
+        })
+      }
+
+      return { samples, stillFindInput: document.activeElement === input }
+    })()
+  `)
+
+  if (result.error) {
+    console.error('[findfocus] FAIL:', result.error)
+    return false
+  }
+
+  console.log('[findfocus] 逐字符输入时的焦点变化:')
+  for (const s of result.samples) {
+    console.log(
+      `[findfocus]   输入「${s.typed}」 → 焦点=${s.activeTag}.${s.activeClass} 仍在查找框=${s.isFindInput} 计数=${s.count}`
+    )
+  }
+
+  const lost = result.samples.filter((s: { isFindInput: boolean }) => !s.isFindInput)
+  if (lost.length) {
+    console.error(
+      `[findfocus] FAIL: 输入过程中焦点被抢走 ${lost.length} 次（首次在「${lost[0].typed}」）`
+    )
+    return false
+  }
+
+  console.log('[findfocus] PASS: 逐字符输入全程焦点保持在查找框')
+  return true
+}
+
 app.whenReady().then(async () => {
   // 语言偏好需在创建菜单之前载入（菜单文案依赖它）
   await loadLocale()
@@ -197,6 +277,13 @@ app.whenReady().then(async () => {
   if (renderPdf) {
     const outDir = process.env['INKDOWN_RENDER_PDF_OUT'] ?? '.tmp-pdf-render'
     const ok = await renderPdfToImages(renderPdf, outDir)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_FIND_FOCUS_TEST=1 时验证「查找框输入不被抢焦点」，然后退出
+  if (process.env['INKDOWN_FIND_FOCUS_TEST']) {
+    const ok = await probeFindFocus(win)
     app.exit(ok ? 0 : 1)
     return
   }

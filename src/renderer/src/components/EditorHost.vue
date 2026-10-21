@@ -388,7 +388,11 @@ function onFind(e: Event): void {
     isRegexp: d.isRegexp,
     isCaseSensitive: d.isCaseSensitive,
     isWholeWord: d.isWholeWord,
-    selectHighlight: true
+    // 关键：搜索时不要 selectHighlight。
+    // 内核的 selectHighlight 会调用 block.setCursor() 把光标移进正文，
+    // 焦点随之离开查找输入框 —— 表现为「打字打到一半光标跳到正文」。
+    // 只有用户主动跳转（next / previous）时才移动光标。
+    selectHighlight: false
   }
   // 记住关键词与选项：切标签后要按它重搜（内核会清掉搜索状态）
   state.findKeyword = d.keyword
@@ -400,50 +404,45 @@ function onFind(e: Event): void {
   switch (d.action) {
     case 'search':
       searchResult = muya.search(d.keyword, opts)
-      // 内核 search() 设完选区会重渲染当前块，抹掉该块的高亮；
-      // 补一次重放（只刷高亮、不动选区），避免「搜索后少一个高亮」。
-      replayHighlights(d.keyword, opts, searchResult?.index ?? 0)
       break
     case 'next':
-      searchResult = muya.find('next')
-      break
     case 'previous':
-      searchResult = muya.find('previous')
+      // 跳转需要把光标移到匹配处，这会让焦点离开查找框；
+      // 跳完立即把焦点还回去，用户才能继续输入。
+      searchResult = muya.find(d.action)
+      restoreFindFocus()
       break
     case 'replace':
       searchResult = muya.replace(d.replacement, { isSingle: true, isRegexp: d.isRegexp })
+      restoreFindFocus()
       break
     case 'replaceAll':
       searchResult = muya.replace(d.replacement, { isSingle: false, isRegexp: d.isRegexp })
+      restoreFindFocus()
       break
   }
   reportMatches()
 }
 
 /**
- * 重新应用当前搜索的高亮。
+ * 把焦点还给查找框。
  *
- * 内核的 search() 结尾会 setCursor 选中当前匹配，随之触发该块重渲染；
- * 重渲染默认不带 highlights，于是当前匹配的一级高亮被抹掉
- * （表现为「搜索后少一个高亮、点一下下一处才恢复」）。
- *
- * 修法：用同一关键词、同一 highlightIndex 再搜一次，但 selectHighlight=false，
- * 这样只重新渲染高亮、不再动选区，也不会移动当前项。
+ * 内核跳转匹配时会 setCursor，焦点随之进入正文。
+ * 查找框仍开着时，用户的本意是继续在框里输入/按键，因此要还回去。
  */
-function replayHighlights(keyword: string, opts: Record<string, unknown>, index: number): void {
-  if (!muya || !keyword) return
+function restoreFindFocus(): void {
+  if (!state.findVisible) return
   requestAnimationFrame(() => {
-    const m = muya
-    if (!m) return
-    try {
-      searchResult = m.search(keyword, {
-        ...opts,
-        highlightIndex: index,
-        selectHighlight: false
-      })
-      reportMatches()
-    } catch {
-      /* 忽略：重放失败不影响搜索本身 */
+    const input = document.querySelector<HTMLInputElement>('.find-input')
+    if (input && document.activeElement !== input) {
+      input.focus()
+      // 光标放到末尾，便于继续输入
+      const len = input.value.length
+      try {
+        input.setSelectionRange(len, len)
+      } catch {
+        /* 忽略 */
+      }
     }
   })
 }
