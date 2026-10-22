@@ -6,7 +6,9 @@ import { useI18n } from '../composables/useI18n'
  * Markdown 调色盘。
  *
  * 悬停中心球展开分类环；悬停有子项的分类，外侧继续展开动作环。
- * 点击动作即插入对应结构。中心球可拖动，位置会记住。
+ * 三级环展开后会锁定当前分类，鼠标可以直线穿过去选择，不必沿圆环绕行；
+ * 要换分类时在新分类上静止停留或点击。点击动作即插入对应结构。
+ * 中心球可拖动，位置会记住；拖动期间不会展开菜单。
  */
 
 const { t } = useI18n()
@@ -30,6 +32,8 @@ const emit = defineEmits<{ insert: [id: string] }>()
 const open = ref(false)
 const activeRoot = ref<OrbItem | null>(null)
 const dragging = ref(false)
+/** 拖动结束后的短冷却，防止松开鼠标时残留的 hover 立刻把菜单弹开。 */
+const dragCooldown = ref(false)
 const wrapRef = ref<HTMLElement | null>(null)
 
 const RING1_INNER = 42
@@ -39,6 +43,12 @@ const RING2_OUTER = 142
 /** 环菜单整体宽高：外圈 142 + 少量阴影余量。 */
 const PALETTE_EXTENT = 154
 const CLOSE_RADIUS = 176
+/** 环菜单展开时略收一点，静止球保持轻巧，展开信息密度也更舒服。 */
+const OPEN_SCALE = 0.92
+/** 二级分类需要静止停留这么久才切换，避免穿过圆环时误切。 */
+const ROOT_SWITCH_DELAY = 260
+/** 在候选二级分类上移动超过这个距离，就重新计时。 */
+const ROOT_MOVE_RESET_DISTANCE = 4
 const POSITION_KEY = 'inkdown-orb-position'
 
 const rootItems = computed<OrbItem[]>(() => [
@@ -66,6 +76,10 @@ const rootItems = computed<OrbItem[]>(() => [
       { id: 'inlineCode', label: t('orb.inlineCode') },
       { id: 'highlight', label: t('orb.highlight') },
       { id: 'inlineMath', label: t('orb.inlineMath') },
+      { id: 'superscript', label: t('orb.superscript') },
+      { id: 'subscript', label: t('orb.subscript') },
+      { id: 'underline', label: t('orb.underline') },
+      { id: 'kbd', label: t('orb.kbd') },
       { id: 'link', label: t('orb.link') }
     ]
   },
@@ -77,7 +91,8 @@ const rootItems = computed<OrbItem[]>(() => [
       { id: 'ul', label: t('orb.ul') },
       { id: 'ol', label: t('orb.ol') },
       { id: 'task', label: t('orb.task') },
-      { id: 'quote', label: t('orb.quote') }
+      { id: 'quote', label: t('orb.quote') },
+      { id: 'nestedList', label: t('orb.nestedList') }
     ]
   },
   {
@@ -89,7 +104,9 @@ const rootItems = computed<OrbItem[]>(() => [
       { id: 'codePy', label: t('orb.codePy') },
       { id: 'mermaid', label: t('orb.mermaid') },
       { id: 'plantuml', label: t('orb.plantuml') },
-      { id: 'math', label: t('orb.math') }
+      { id: 'math', label: t('orb.math') },
+      { id: 'inlineDiffAdd', label: t('orb.inlineDiffAdd') },
+      { id: 'inlineDiffDel', label: t('orb.inlineDiffDel') }
     ]
   },
   {
@@ -113,6 +130,8 @@ const rootItems = computed<OrbItem[]>(() => [
       { id: 'callout', label: t('orb.callout') },
       { id: 'details', label: t('orb.details') },
       { id: 'footnote', label: t('orb.footnote') },
+      { id: 'toc', label: t('orb.toc') },
+      { id: 'refLink', label: t('orb.refLink') },
       { id: 'hr', label: t('orb.hr') }
     ]
   },
@@ -123,10 +142,21 @@ const rootItems = computed<OrbItem[]>(() => [
     children: [
       { id: 'image', label: t('orb.image') },
       { id: 'link', label: t('orb.link') },
+      { id: 'video', label: t('orb.video') },
+      { id: 'audio', label: t('orb.audio') },
       { id: 'htmlBlock', label: t('orb.htmlBlock') }
     ]
   },
-  { id: 'datetime', label: t('orb.time'), icon: '◷' }
+  {
+    id: 'time',
+    label: t('orb.timeGroup'),
+    icon: '◷',
+    children: [
+      { id: 'datetime', label: t('orb.time') },
+      { id: 'date', label: t('orb.date') },
+      { id: 'weekday', label: t('orb.weekday') }
+    ]
+  }
 ])
 
 const actionItems = computed<OrbItem[]>(() => activeRoot.value?.children ?? [])
@@ -203,10 +233,11 @@ function savePosition(): void {
 }
 
 const wrapStyle = computed(() => {
-  const scale = Math.min(
+  const fitScale = Math.min(
     1,
     Math.max(0.62, (window.innerWidth - 24) / (PALETTE_EXTENT * 2))
   )
+  const scale = fitScale * OPEN_SCALE
   return {
     left: `${pos.value.x}px`,
     top: `${pos.value.y}px`,
@@ -215,7 +246,15 @@ const wrapStyle = computed(() => {
 })
 
 let closeTimer: number | null = null
+let rootSwitchTimer: number | null = null
+/** 等待静止确认的二级分类，以及最后一次有效移动的位置。 */
+const pendingRootId = ref<string | null>(null)
+let pendingRoot: OrbItem | null = null
+let rootPointer = { x: 0, y: 0 }
+let dragCooldownTimer: number | null = null
 let suppressClick = false
+/** 按下时菜单已展开：先收起，避免拖动期间闪出菜单；单击时再重新展开。 */
+let closedOnPointerDown = false
 
 function cancelClose(): void {
   if (closeTimer != null) {
@@ -229,13 +268,51 @@ function scheduleClose(delay = 260): void {
   closeTimer = window.setTimeout(() => close(), delay)
 }
 
+function cancelRootSwitch(): void {
+  if (rootSwitchTimer != null) {
+    window.clearTimeout(rootSwitchTimer)
+    rootSwitchTimer = null
+  }
+  pendingRoot = null
+  pendingRootId.value = null
+}
+
+function scheduleRootSwitch(item: OrbItem): void {
+  cancelRootSwitch()
+  pendingRoot = item
+  pendingRootId.value = item.id
+  rootSwitchTimer = window.setTimeout(() => {
+    rootSwitchTimer = null
+    if (pendingRoot?.id !== item.id) return
+    activeRoot.value = item
+    pendingRoot = null
+    pendingRootId.value = null
+  }, ROOT_SWITCH_DELAY)
+}
+
+function setActiveRoot(item: OrbItem | null): void {
+  cancelRootSwitch()
+  activeRoot.value = item
+}
+
+function startDragCooldown(): void {
+  if (dragCooldownTimer != null) window.clearTimeout(dragCooldownTimer)
+  dragCooldown.value = true
+  dragCooldownTimer = window.setTimeout(() => {
+    dragCooldown.value = false
+    dragCooldownTimer = null
+  }, 180)
+}
+
 function openRing(): void {
+  if (dragging.value || dragCooldown.value) return
   cancelClose()
   open.value = true
 }
 
 function close(): void {
   cancelClose()
+  cancelRootSwitch()
   open.value = false
   activeRoot.value = null
 }
@@ -246,6 +323,7 @@ function toggleRing(): void {
 }
 
 function onWrapEnter(): void {
+  if (dragging.value || dragCooldown.value) return
   openRing()
 }
 
@@ -253,14 +331,48 @@ function onWrapLeave(): void {
   scheduleClose(320)
 }
 
-function onRootEnter(item: OrbItem): void {
-  if (!open.value) return
-  activeRoot.value = item.children?.length ? item : null
+function onRootEnter(item: OrbItem, e?: PointerEvent): void {
+  if (!open.value || dragging.value || dragCooldown.value) return
+  const next = item.children?.length ? item : null
+  if (activeRoot.value?.id === next?.id) {
+    cancelRootSwitch()
+    return
+  }
+
+  // 第一次进入分类立即展开；三级环已经展开时，穿过的分类只作为候选，
+  // 指针停稳 260ms 才切换。这样可以从中心直线穿过去选对面，不必绕圆环。
+  // 键盘 focus 没有指针事件，直接切换；鼠标进入已有外圈时先作为候选。
+  if (!activeRoot.value || !e) {
+    cancelRootSwitch()
+    activeRoot.value = next
+    return
+  }
+  if (!next) {
+    cancelRootSwitch()
+    return
+  }
+  rootPointer = { x: e.clientX, y: e.clientY }
+  scheduleRootSwitch(next)
+}
+
+function onRootMove(item: OrbItem, e: PointerEvent): void {
+  if (pendingRoot?.id !== item.id) return
+  const step = Math.hypot(e.clientX - rootPointer.x, e.clientY - rootPointer.y)
+  if (step < ROOT_MOVE_RESET_DISTANCE) {
+    return
+  }
+  // 持续移动时不断推迟切换，避免横穿圆环途中被路过的分类截走。
+  rootPointer = { x: e.clientX, y: e.clientY }
+  scheduleRootSwitch(item)
+}
+
+function onRootLeave(item: OrbItem): void {
+  if (pendingRoot?.id === item.id) cancelRootSwitch()
 }
 
 function onRootClick(item: OrbItem): void {
   if (item.children?.length) {
-    activeRoot.value = item
+    setActiveRoot(item)
     openRing()
     return
   }
@@ -273,7 +385,13 @@ function onActionClick(item: OrbItem): void {
   close()
 }
 
+function onActionEnter(): void {
+  // 进入三级环表示已经完成穿越，取消二级分类的待切换。
+  cancelRootSwitch()
+}
+
 interface DragState {
+  pointerId: number
   startX: number
   startY: number
   originX: number
@@ -285,9 +403,11 @@ let dragState: DragState | null = null
 
 function onDragMove(e: PointerEvent): void {
   if (!dragState) return
+  // 只处理发起拖动的那个指针，避免多指/触控板指针把拖动带偏。
+  if (dragState.pointerId !== e.pointerId) return
   const dx = e.clientX - dragState.startX
   const dy = e.clientY - dragState.startY
-  if (!dragState.moved && Math.hypot(dx, dy) > 4) {
+  if (!dragState.moved && Math.hypot(dx, dy) > 5) {
     dragState.moved = true
     dragging.value = true
     close()
@@ -307,6 +427,7 @@ function stopDrag(): void {
   window.removeEventListener('pointercancel', stopDrag)
   if (moved) {
     savePosition()
+    startDragCooldown()
     suppressClick = true
     window.setTimeout(() => {
       suppressClick = false
@@ -318,7 +439,12 @@ function onOrbPointerDown(e: PointerEvent): void {
   if (e.button !== 0) return
   e.preventDefault()
   e.stopPropagation()
+  // 球本身也属于展开区域。按下先收起，拖动全程不会闪出菜单；
+  // 没有拖动时 click 会重新展开，保持原有的单击切换行为。
+  closedOnPointerDown = open.value
+  if (open.value) close()
   dragState = {
+    pointerId: e.pointerId,
     startX: e.clientX,
     startY: e.clientY,
     originX: pos.value.x,
@@ -333,13 +459,18 @@ function onOrbPointerDown(e: PointerEvent): void {
 function onOrbClick(): void {
   if (suppressClick) {
     suppressClick = false
+    closedOnPointerDown = false
+    return
+  }
+  if (closedOnPointerDown) {
+    closedOnPointerDown = false
     return
   }
   toggleRing()
 }
 
 function onWindowPointerMove(e: PointerEvent): void {
-  if (!open.value || dragState) return
+  if (!open.value || dragState || dragging.value) return
   const target = e.target
   if (target instanceof Node && wrapRef.value?.contains(target)) {
     cancelClose()
@@ -382,6 +513,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cancelClose()
+  cancelRootSwitch()
+  if (dragCooldownTimer != null) window.clearTimeout(dragCooldownTimer)
   window.removeEventListener('pointermove', onDragMove)
   window.removeEventListener('pointerup', stopDrag)
   window.removeEventListener('pointercancel', stopDrag)
@@ -397,10 +530,17 @@ onBeforeUnmount(() => {
     ref="wrapRef"
     class="orb-wrap"
     :style="wrapStyle"
+    :data-dragging="dragging"
     @mouseenter="onWrapEnter"
     @mouseleave="onWrapLeave"
   >
-    <div class="orb-palette" :class="{ open }" :aria-hidden="!open">
+    <div
+      class="orb-palette"
+      :class="{ open, locked: !!activeRoot }"
+      :data-active-root="activeRoot?.id ?? ''"
+      :data-pending-root="pendingRootId ?? ''"
+      :aria-hidden="!open"
+    >
       <div class="orb-aura" :class="{ lit: open }" />
       <svg class="orb-svg" viewBox="-156 -156 312 312">
         <circle class="ring-guide" :r="RING1_INNER" />
@@ -413,12 +553,17 @@ onBeforeUnmount(() => {
             v-for="(entry, index) in rootRing"
             :key="entry.item.id"
             class="ring-sector-group"
-            :class="{ active: activeRoot?.id === entry.item.id }"
+            :class="{
+              active: activeRoot?.id === entry.item.id,
+              pending: pendingRootId === entry.item.id
+            }"
             :style="{ animationDelay: `${index * 18}ms` }"
             role="button"
             :tabindex="open ? 0 : -1"
             :aria-label="entry.item.label"
-            @pointerenter="onRootEnter(entry.item)"
+            @pointerenter="onRootEnter(entry.item, $event as PointerEvent)"
+            @pointermove="onRootMove(entry.item, $event as PointerEvent)"
+            @pointerleave="onRootLeave(entry.item)"
             @focus="onRootEnter(entry.item)"
             @click.stop="onRootClick(entry.item)"
             @keydown.enter.prevent="onRootClick(entry.item)"
@@ -444,6 +589,7 @@ onBeforeUnmount(() => {
             role="button"
             :tabindex="open ? 0 : -1"
             :aria-label="entry.item.label"
+            @pointerenter="onActionEnter"
             @click.stop="onActionClick(entry.item)"
             @keydown.enter.prevent="onActionClick(entry.item)"
             @keydown.space.prevent="onActionClick(entry.item)"
@@ -461,7 +607,7 @@ onBeforeUnmount(() => {
     <button
       class="orb"
       :class="{ active: open, dragging }"
-      :title="`${t('orb.title')} · ${t('orb.hint')}`"
+      :title="dragging ? t('orb.dragging') : `${t('orb.title')} · ${t('orb.hint')}`"
       :aria-expanded="open"
       :aria-label="t('orb.title')"
       aria-haspopup="menu"
@@ -514,7 +660,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: transparent;
   cursor: grab;
-  opacity: 0.72;
+  opacity: 0.5;
   outline: none;
   transition:
     opacity 0.22s ease,
@@ -523,13 +669,13 @@ onBeforeUnmount(() => {
 
 .orb:hover,
 .orb.active {
-  opacity: 1;
+  opacity: 0.92;
   transform: scale(1.06);
 }
 
 .orb.dragging {
   cursor: grabbing;
-  opacity: 1;
+  opacity: 0.96;
   transform: scale(1.1);
 }
 
@@ -539,14 +685,14 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background:
     radial-gradient(circle, color-mix(in srgb, var(--ty-accent) 10%, transparent), transparent 62%);
-  opacity: 0.12;
+  opacity: 0.05;
   filter: blur(7px);
   animation: halo-breathe 2.8s ease-in-out infinite;
   transition: opacity 0.25s ease;
 }
 
 .orb.active .orb-halo {
-  opacity: 0.26;
+  opacity: 0.16;
   animation-duration: 1.4s;
 }
 
@@ -600,7 +746,7 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   margin-top: -1px;
-  color: color-mix(in srgb, var(--ty-accent) 50%, var(--ty-muted));
+  color: color-mix(in srgb, var(--ty-accent) 34%, var(--ty-muted));
   font-family: 'Segoe UI Symbol', 'Segoe UI', sans-serif;
   font-size: 24px;
   font-weight: 300;
@@ -661,7 +807,7 @@ onBeforeUnmount(() => {
 }
 
 .orb-aura.lit {
-  opacity: 0.26;
+  opacity: 0.16;
 }
 
 .orb-svg {
@@ -705,8 +851,8 @@ onBeforeUnmount(() => {
 .ring-sector {
   fill: color-mix(in srgb, var(--ty-bg) 96%, var(--ty-accent));
   stroke: color-mix(in srgb, var(--ty-border) 84%, var(--ty-accent));
-  fill-opacity: 0.82;
-  stroke-opacity: 0.58;
+  fill-opacity: 0.6;
+  stroke-opacity: 0.4;
   stroke-width: 0.65;
   pointer-events: all;
   transition:
@@ -727,11 +873,28 @@ onBeforeUnmount(() => {
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--ty-accent) 26%, transparent));
 }
 
+/* 锁定态给出明确但克制的视觉锚点，避免用户不知道当前外圈属于哪一类。 */
+.ring-root .ring-sector-group.active .ring-sector {
+  stroke-width: 1.35;
+  filter:
+    drop-shadow(0 0 5px color-mix(in srgb, var(--ty-accent) 22%, transparent));
+}
+
+.ring-root .ring-sector-group.active .ring-label {
+  fill: color-mix(in srgb, var(--ty-accent) 74%, var(--ty-text));
+  font-weight: 700;
+}
+
+.ring-root .ring-sector-group.pending .ring-sector {
+  fill: color-mix(in srgb, var(--ty-accent) 5%, var(--ty-bg));
+  stroke-dasharray: 3 2;
+}
+
 .action-sector {
   fill: color-mix(in srgb, var(--ty-bg) 97%, var(--ty-accent));
   stroke: color-mix(in srgb, var(--ty-border) 76%, var(--ty-accent));
-  fill-opacity: 0.72;
-  stroke-opacity: 0.46;
+  fill-opacity: 0.52;
+  stroke-opacity: 0.34;
 }
 
 .ring-icon,
@@ -743,7 +906,7 @@ onBeforeUnmount(() => {
 }
 
 .ring-icon {
-  fill: color-mix(in srgb, var(--ty-accent) 68%, var(--ty-muted));
+  fill: color-mix(in srgb, var(--ty-accent) 52%, var(--ty-muted));
   font-family: 'Segoe UI Symbol', 'Segoe UI', sans-serif;
   font-size: 9px;
   font-weight: 700;

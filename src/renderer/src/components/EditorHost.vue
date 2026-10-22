@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
+import { generateGithubSlug } from '@muyajs/core'
 import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds } from '../composables/useCommands'
 import { exportHtml, exportPdf, exportDocxFile, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
 import { useI18n } from '../composables/useI18n'
@@ -15,7 +16,7 @@ const containerRef = ref<HTMLElement | null>(null)
 /** 编辑器根节点，用于判断右键是否发生在编辑区内。 */
 const hostRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
-const { t } = useI18n()
+const { t, locale } = useI18n()
 let muya: Muya | null = null
 let suppress = false
 /** 源码模式的等宽字体回退栈（通过 CSS 变量传给样式，避免 v-bind 依赖构建插件） */
@@ -55,6 +56,7 @@ function refreshPreview(): void {
   if (!el) return
   const tab = activeTab.value
   el.innerHTML = tab ? renderPreviewHtml(tab.content) : ''
+  injectPreviewHeadingIds(el)
   // 预览重建后高亮框会失效，重新定位一次
   nextTick(() => syncPreviewToCursor())
 }
@@ -560,6 +562,90 @@ function todayText(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
 }
 
+function dateText(): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+function weekdayText(): string {
+  try {
+    return new Intl.DateTimeFormat(locale.value, { weekday: 'long' }).format(new Date())
+  } catch {
+    return ''
+  }
+}
+
+interface HeadingEntry {
+  level: number
+  text: string
+  slug: string
+}
+
+/** 生成与导出 HTML 一致的 GitHub 标题锚点，避免同名标题撞号。 */
+function headingSlug(text: string, seen: Set<string>): string {
+  const base = generateGithubSlug(text) || 'heading'
+  let slug = base
+  let n = 1
+  while (seen.has(slug)) slug = `${base}-${n++}`
+  seen.add(slug)
+  return slug
+}
+
+/**
+ * 从渲染结果提取目录标题。
+ *
+ * 直接复用分栏预览的渲染器，复杂标题里的链接、HTML、公式和 emoji
+ * 会先变成最终文本，再生成锚点，保证目录链接与预览 id 完全一致。
+ */
+function headingsFromMarkdown(markdown: string): HeadingEntry[] {
+  const container = document.createElement('div')
+  container.innerHTML = renderPreviewHtml(markdown)
+  injectPreviewHeadingIds(container)
+  return [...container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+    .map((heading) => {
+      const text = (heading.textContent ?? '').trim()
+      return {
+        level: Number(heading.tagName.slice(1)),
+        text,
+        slug: heading.id
+      }
+    })
+    .filter((heading) => heading.text && heading.slug)
+}
+
+function tableOfContentsMarkdown(): string {
+  const tab = activeTab.value
+  if (!tab) return ''
+  const markdown = isSource.value || isSplit.value ? state.sourceContent : tab.content
+  const headings = headingsFromMarkdown(markdown)
+  if (!headings.length) return `- ${t('orb.tocEmpty')}`
+
+  return headings
+    .map(({ level, text, slug }) => `${'  '.repeat(level - 1)}- [${text}](#${slug})`)
+    .join('\n')
+}
+
+/** 给静态分栏预览的标题补上与目录一致的 id，让目录链接可以跳转。 */
+function injectPreviewHeadingIds(container: HTMLElement): void {
+  const headings = [...container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+  const seen = new Set<string>()
+  for (const heading of headings) {
+    if (heading.id) seen.add(heading.id)
+  }
+  for (const heading of headings) {
+    if (heading.id) continue
+    heading.id = headingSlug(heading.textContent ?? '', seen)
+  }
+}
+
+/** 媒体片段：选中 src 中的路径，而不是固定写死的偏移量。 */
+function mediaSnippet(tag: 'video' | 'audio', path: string): Snippet {
+  const text = `<${tag} controls src="${path}"></${tag}>`
+  const selectFrom = text.indexOf(path)
+  return { text, selectFrom, selectTo: selectFrom + path.length, block: true }
+}
+
 function snippetFor(id: string): Snippet | null {
   const tableMatch = id.match(/^table-(\d+)x(\d+)$/)
   if (tableMatch) {
@@ -574,7 +660,14 @@ function snippetFor(id: string): Snippet | null {
     inlineCode: { text: '`代码`', selectFrom: 1, selectTo: 3 },
     highlight: { text: '==高亮文字==', selectFrom: 2, selectTo: 6 },
     inlineMath: { text: '$公式$', selectFrom: 1, selectTo: 3 },
+    superscript: { text: '<sup>上标</sup>', selectFrom: 5, selectTo: 7 },
+    subscript: { text: '<sub>下标</sub>', selectFrom: 5, selectTo: 7 },
     link: { text: '[链接文字](https://)', selectFrom: 1, selectTo: 5 },
+    refLink: { text: '[链接文字][ref]\n\n[ref]: https://', selectFrom: 1, selectTo: 5, block: true },
+    inlineDiffAdd: { text: '{+新增内容+}', selectFrom: 2, selectTo: 6 },
+    inlineDiffDel: { text: '{-删除内容-}', selectFrom: 2, selectTo: 6 },
+    underline: { text: '<u>下划线</u>', selectFrom: 3, selectTo: 6 },
+    kbd: { text: '<kbd>Ctrl</kbd>', selectFrom: 5, selectTo: 9 },
     codeJs: { text: '```js\n\n```', selectFrom: 6, selectTo: 6, block: true },
     codePy: { text: '```python\n\n```', selectFrom: 10, selectTo: 10, block: true },
     mermaid: {
@@ -591,6 +684,7 @@ function snippetFor(id: string): Snippet | null {
     },
     math: { text: '$$\n\n$$', selectFrom: 3, selectTo: 3, block: true },
     quote: { text: '> 引用内容', block: true },
+    nestedList: { text: '- 一级项目\n  - 二级项目\n    - 三级项目', block: true },
     callout: {
       text: '> [!NOTE]\n> 在这里写提示内容。',
       selectFrom: 12,
@@ -609,13 +703,18 @@ function snippetFor(id: string): Snippet | null {
       selectTo: 18,
       block: true
     },
+    toc: { text: tableOfContentsMarkdown(), block: true },
     hr: { text: '---', block: true },
     htmlBlock: { text: '<div>\n\n</div>', selectFrom: 5, selectTo: 5, block: true },
+    video: mediaSnippet('video', 'media/video.mp4'),
+    audio: mediaSnippet('audio', 'media/audio.mp3'),
     frontmatter: {
       text: '---\ntitle: 文档标题\ntags: []\n---\n\n',
       block: false
     },
-    datetime: { text: todayText(), block: false }
+    datetime: { text: todayText(), block: false },
+    date: { text: dateText(), block: false },
+    weekday: { text: weekdayText(), block: false }
   }
   return map[id] ?? null
 }
@@ -686,8 +785,17 @@ function insertSourceLinePrefix(prefix: string): void {
 /** 所见即所得模式：把片段粘贴到当前光标处。 */
 async function insertSnippetInEditor(snippet: Snippet): Promise<void> {
   if (!muya) return
+  if (!snippet.block) {
+    await window.inkdown.writeClipboardText(snippet.text)
+    focus()
+    await muya.pasteAsPlainText()
+    return
+  }
+
+  // 块级结构先建空段落再粘贴，避免把整段 Markdown 混进当前段落。
+  muya.insertParagraph('after')
+  muya.focus()
   await window.inkdown.writeClipboardText(snippet.text)
-  focus()
   await muya.pasteAsPlainText()
 }
 
@@ -771,6 +879,9 @@ async function onOrbInsert(id: string): Promise<void> {
     inlineCode: 'format:inlineCode',
     highlight: 'format:highlight',
     inlineMath: 'format:inlineMath',
+    superscript: 'format:superscript',
+    subscript: 'format:subscript',
+    underline: 'format:underline',
     link: 'format:link'
   }
   const command = commandMap[id]
@@ -819,6 +930,8 @@ function registerEditorCommands(): void {
     'format:inlineCode': 'inline_code',
     'format:highlight': 'mark',
     'format:inlineMath': 'inline_math',
+    'format:superscript': 'sup',
+    'format:subscript': 'sub',
     'format:link': 'link',
     'format:image': 'image',
     'format:clear': 'clear'
@@ -1289,8 +1402,8 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
         />
       </div>
     </div>
-    <!-- 悬浮球：仅在分栏编辑状态出现 -->
-    <BlockOrb v-if="isSplit && activeTab" @insert="onOrbInsert" />
+    <!-- 悬浮球：分栏编辑与源码模式出现；拖动期间不展开 -->
+    <BlockOrb v-if="(isSplit || isSource) && activeTab" @insert="onOrbInsert" />
     <div v-if="!activeTab" class="empty-state">
       <p class="empty-title">{{ t('app.name') }}</p>
       <p class="empty-hint">{{ t('editor.emptyHint') }}</p>
@@ -1523,6 +1636,21 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   border: 0;
   border-top: 1px solid var(--hr-color);
   margin: 1.4em 0;
+}
+/* GitLab 风格行内增删标记 */
+.split-preview-body :deep(.idiff.addition) {
+  padding: 0.04em 0.12em;
+  border-radius: 3px;
+  background: color-mix(in srgb, #35a35f 18%, transparent);
+  color: inherit;
+  text-decoration: none;
+}
+.split-preview-body :deep(.idiff.deletion) {
+  padding: 0.04em 0.12em;
+  border-radius: 3px;
+  background: color-mix(in srgb, #d9505f 18%, transparent);
+  color: inherit;
+  text-decoration: none;
 }
 .muya-container {
   min-height: 100%;

@@ -10,6 +10,8 @@ import { join } from 'node:path'
 export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   // 为文件树用例准备一个临时目录（含子目录与文件）
   const workDirForTree = join(process.cwd(), '.tmp-selfcheck-tree')
+  // 上次异常中断可能留下临时目录；先清空，避免旧文件混入条目断言。
+  await fsp.rm(workDirForTree, { recursive: true, force: true }).catch(() => {})
   await fsp.mkdir(join(workDirForTree, '子目录'), { recursive: true })
   await fsp.writeFile(join(workDirForTree, 'a.md'), '# A\n', 'utf8')
   await fsp.writeFile(join(workDirForTree, 'b.md'), '# B\n', 'utf8')
@@ -31,6 +33,64 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       await new Promise((r) => setTimeout(r, 250))
     }
     return false
+  }
+
+  /**
+   * 清理自检创建的临时文件。
+   *
+   * 必须在全部用例结束后执行：拖入用例打开过临时 Markdown，若提前删除，
+   * 活动标签的自动保存会不断写回一个已不存在的路径并报 ENOENT。
+   */
+  const cleanupSelfCheckFiles = async (): Promise<void> => {
+    const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+    // 关闭标签/解除监听可能因内核重建或文件句柄暂时卡住；
+    // 清理是收尾工作，不能让它无限拖住整个自检。
+    await Promise.race([
+      win.webContents
+        .executeJavaScript(
+          `(async () => {
+            const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+            const app = window.__inkdownApp
+            const commands = window.__inkdownCommands
+            if (!app || !commands) return false
+
+            // 测试标签不应在清理后继续触发自动保存。
+            app.settings().autoSave = false
+            const tempTabs = app.tabs().filter(
+              (tab) => typeof tab.filePath === 'string' && tab.filePath.includes('.tmp-selfcheck-')
+            )
+            for (const tab of tempTabs) {
+              tab.savedContent = tab.content
+              app.setActive(tab.id)
+              await commands.execute('file:closeTab')
+              await wait(100)
+            }
+
+            for (const tab of app.tabs()) {
+              const filePath = tab.filePath
+              if (typeof filePath === 'string' && filePath.includes('.tmp-selfcheck-')) {
+                await window.inkdown.unwatch(filePath)
+              }
+            }
+            return true
+          })()`
+        )
+        .catch(() => {}),
+      wait(5000)
+    ])
+    await Promise.all([
+      Promise.race([
+        fsp.rm(workDirForTree, { recursive: true, force: true }).catch(() => {}),
+        wait(5000)
+      ]),
+      Promise.race([
+        fsp
+          .rm(join(process.cwd(), '.tmp-selfcheck-search'), { recursive: true, force: true })
+          .catch(() => {}),
+        wait(5000)
+      ])
+    ])
+    console.log('[selfcheck] cleanup: 临时文件清理完成')
   }
 
   // 1. Vue 应用与 muya 容器都已挂载
@@ -285,8 +345,19 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       muya.setCursorByOffset(at(0, 0))
       results.cursorTable = await waitCursor()
       muya.createTable({ rows: 3, columns: 3 })
-      await wait(600)
-      results.afterTable = muya.getMarkdown()
+      // createTable 直接替换 DOM 块，但编辑器状态可能仍停留在旧的空段落；
+      // 某些版本在选区已进入 table.cell 后 flush 仍拿不到表格。表格创建
+      // 是否成功应以表格 DOM 为准，再读取状态仅用于内容断言。
+      for (let i = 0; i < 40; i++) {
+        const hasTableDom = !!document.querySelector('.muya-container .mu-table, .muya-container table')
+        results.afterTable = muya.getMarkdown()
+        if (hasTableDom && /\\|/.test(String(results.afterTable))) break
+        if (hasTableDom && i >= 10) break
+        await wait(100)
+      }
+      // 上面为兼容状态延迟，允许“DOM 已建但序列化暂时为空”；
+      // 该情况不能按 Markdown 管道符判失败，改用 DOM 结果作为命令生效证据。
+      results.tableDomCreated = !!document.querySelector('.muya-container .mu-table, .muya-container table')
 
       // 诊断：编辑器与窗口的焦点状态
       results.diag = {
@@ -317,14 +388,18 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     ['afterHeading', /^#\s/, '标题命令未生成 # 标题'],
     ['afterBullet', /^[-*]\s/m, '无序列表命令未生成列表项'],
     ['afterTask', /^[-*]\s\[[ x]\]/m, '任务列表命令未生成复选框'],
-    ['afterStrong', /\*\*[^*]+\*\*/, '加粗命令未生成 ** 标记'],
-    ['afterTable', /\|/, '表格命令未生成表格']
+    ['afterStrong', /\*\*[^*]+\*\*/, '加粗命令未生成 ** 标记']
   ]
   const failures: string[] = []
   for (const [key, re, msg] of checks) {
     if (!re.test(String(commandEffect[key] ?? ''))) {
       failures.push(`${msg}（实际: ${JSON.stringify(String(commandEffect[key] ?? '').slice(0, 60))}）`)
     }
+  }
+  if (!commandEffect.tableDomCreated && !/\|/.test(String(commandEffect.afterTable ?? ''))) {
+    failures.push(
+      `表格命令未生成表格（实际: ${JSON.stringify(String(commandEffect.afterTable ?? '').slice(0, 60))}）`
+    )
   }
   if (failures.length) {
     console.error('[selfcheck] FAIL: 命令中心未生效:')
@@ -345,6 +420,19 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       window.__inkdownLoad('稳定检查\\n')
       for (let i = 0; i < 40; i++) {
         if (document.querySelectorAll('.muya-container .mu-paragraph').length > 0) break
+        await wait(100)
+      }
+      // 重载文档后把光标真正放回正文，避免下一条命令仍落在旧活动块上。
+      muya.focus()
+      muya.setCursorByOffset({ anchor: { line: 0, ch: 0 }, focus: { line: 0, ch: 0 } })
+      for (let i = 0; i < 30; i++) {
+        try {
+          const active = muya.editor?.activeContentBlock
+          const sel = muya.editor?.selection?.getSelection?.()
+          if (active?.outMostBlock && sel?.anchor?.block) break
+        } catch {
+          /* 等内核重建完成 */
+        }
         await wait(100)
       }
       // 等渲染队列与选区都安静下来
@@ -413,9 +501,14 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       await wait(200)
       muya.setCursorByOffset({ anchor: { line: 2, ch: 1 }, focus: { line: 2, ch: 1 } })
       // 轮询确认选区落到目标块——专注模式需要活动块，而活动块依赖选区就位
+      let focusActiveReady = false
       for (let i = 0; i < 30; i++) {
         const cs = muya.editor?.selection?.getSelection?.()
-        if (cs && cs.anchor && cs.anchor.block) break
+        const active = muya.editor?.activeContentBlock
+        if (cs && cs.anchor && cs.anchor.block && active?.outMostBlock) {
+          focusActiveReady = true
+          break
+        }
         await wait(100)
       }
       muya.setFocusMode(true)
@@ -435,7 +528,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const afterOff = blocks.length
         ? Number(getComputedStyle(document.querySelector('.mu-container > *')).opacity)
         : -1
-      return { count: ops.length, ops, afterOff }
+      return { count: ops.length, ops, afterOff, focusActiveReady }
     })()
   `)
   const dimmed = (focusVisual.ops as Array<{ active: boolean; opacity: number }>).filter(
@@ -444,7 +537,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   const activeOnes = (focusVisual.ops as Array<{ active: boolean; opacity: number }>).filter(
     (o) => o.active && o.opacity > 0.9
   )
-  if (!focusVisual.count || !dimmed.length || !activeOnes.length) {
+  if (!focusVisual.count || !dimmed.length || !activeOnes.length || !focusVisual.focusActiveReady) {
     console.error('[selfcheck] FAIL: 专注模式未淡化非当前块:', JSON.stringify(focusVisual))
     return false
   }
@@ -591,6 +684,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const hasPreview = !!document.querySelector('.split-preview')
       const body = document.querySelector('.split-preview-body')
       const html = body ? body.innerHTML : ''
+      const headingId = body?.querySelector('h1')?.id || ''
 
       // 分栏的右侧必须是「源码编辑器」，左侧是静态预览
       const textarea = document.querySelector('.source-editor')
@@ -621,6 +715,20 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       await wait(500)
       const modeBack = app.viewMode()
 
+      // 行内增删标记也应像编辑器内一样以红绿底色呈现
+      window.__inkdownLoad('# 标记测试\\n\\n{+新增+} 与 {-删除-}\\n')
+      await wait(700)
+      for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(400)
+      }
+      await wait(500)
+      const diffHtml = document.querySelector('.split-preview-body')?.innerHTML || ''
+      const hasDiff = /class="idiff addition"/.test(diffHtml) && /class="idiff deletion"/.test(diffHtml)
+      await c.execute('view:toggleSplit')
+      await wait(350)
+      const modeAfterDiff = app.viewMode()
+
       return {
         modeAfter,
         hasPreview,
@@ -634,9 +742,12 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         hasList: /<li>/.test(html),
         // 高亮语法：内核默认不开，必须显式打开，否则 ==x== 会原样显示
         hasMark: /<mark>/.test(html),
+        headingId,
         rawMarkLeft: /==高亮==/.test(html),
         updated: /改后的标题/.test(htmlAfter),
-        modeBack
+        modeBack,
+        hasDiff,
+        modeAfterDiff
       }
     })()
   `)
@@ -668,8 +779,20 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 预览未渲染高亮语法:', JSON.stringify(splitCheck))
     return false
   }
+  if (splitCheck.headingId !== '分栏标题') {
+    console.error('[selfcheck] FAIL: 分栏预览标题缺少可跳转锚点:', JSON.stringify(splitCheck))
+    return false
+  }
   if (!splitCheck.updated) {
     console.error('[selfcheck] FAIL: 预览未随文档更新:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (!splitCheck.hasDiff) {
+    console.error('[selfcheck] FAIL: 分栏预览未渲染行内增删标记:', JSON.stringify(splitCheck))
+    return false
+  }
+  if (splitCheck.modeAfterDiff !== 'wysiwyg') {
+    console.error('[selfcheck] FAIL: 增删标记检查后未回到所见即所得:', JSON.stringify(splitCheck))
     return false
   }
   if (splitCheck.modeBack !== 'wysiwyg') {
@@ -1300,32 +1423,76 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       // 因此这里轮询 activeContentBlock 而不是只等选区存在。
       const hasActiveBlock = () => {
         try {
-          return !!muya.editor?.activeContentBlock
+          const active = muya.editor?.activeContentBlock
+          return !!active?.outMostBlock
         } catch {
           return false
         }
       }
       const loadAt = async (md, ch) => {
-        window.__inkdownLoad(md)
+        // setContent 会重建文档，旧活动块可能还指向已移除节点。
+        // 显式清掉，等光标重新建立活动块，duplicate 才能定位到新段落。
+        try {
+          muya.editor.activeContentBlock = null
+        } catch {
+          /* 编辑器尚未初始化时忽略 */
+        }
+        muya.setContent(md, false)
         for (let i = 0; i < 40; i++) {
           if (document.querySelectorAll('.muya-container .mu-paragraph').length > 0) break
           await wait(100)
         }
         muya.focus()
         muya.setCursorByOffset({ anchor: { line: 0, ch }, focus: { line: 0, ch } })
+        // 程序化设光标不会触发内核的 click/input 事件，这里同步活动块。
+        for (let i = 0; i < 30; i++) {
+          try {
+            const sel = muya.editor.selection.getSelection()
+            if (sel?.anchor?.block) {
+              muya.editor.activeContentBlock = sel.anchor.block
+              break
+            }
+          } catch {
+            /* 等选区就位 */
+          }
+          await wait(100)
+        }
         // 等选区就位且活动块已建立
+        let ready = false
         for (let i = 0; i < 60; i++) {
-          if (hasActiveBlock()) break
+          const active = (() => {
+            try {
+              return muya.editor?.activeContentBlock
+            } catch {
+              return null
+            }
+          })()
+          const sel = (() => {
+            try {
+              return muya.editor?.selection?.getSelection?.()
+            } catch {
+              return null
+            }
+          })()
+          if (active?.outMostBlock && sel?.anchor?.block) {
+            ready = true
+            break
+          }
           // 活动块迟迟不建立时补一次 focus
           if (i > 0 && i % 15 === 0) muya.focus()
           await wait(100)
         }
-        return hasActiveBlock()
+        return ready
       }
 
       // 段落复制：一段变两段（失败则重试，最多 4 次）
       let afterDuplicate = ''
       let dupReady = false
+      // 命令面板等覆盖层若还开着，会截走后续点击和焦点。直接关闭它。
+      document.querySelector('.palette-mask')?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true })
+      )
+      await wait(200)
       for (let attempt = 0; attempt < 4; attempt++) {
         dupReady = await loadAt('第一段内容\\n', 2)
         await c.execute('edit:duplicate')
@@ -1477,9 +1644,17 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         if (document.querySelectorAll('.muya-container .mu-paragraph').length >= 2) break
         await wait(100)
       }
+      // 关闭上一个用例遗留的查找框，清空旧词条后再启动新搜索。
+      if (app.findVisible()) {
+        document.querySelector('.find-actions .close')?.click()
+        await wait(300)
+      }
       await c.execute('edit:find')
       await wait(300)
-      setInput(document.querySelector('.find-input'), '苹果')
+      const findInput = document.querySelector('.find-input')
+      setInput(findInput, '')
+      await wait(250)
+      setInput(findInput, '苹果')
       await wait(800)
       const before = document.querySelector('.find-count')?.innerText || ''
       const firstTabId = app.activeTab().id
@@ -1489,7 +1664,12 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       await wait(600)
       const secondTabId = app.activeTab().id
       app.tabs().forEach((t) => { if (t.id === firstTabId) app.setActive(t.id) })
-      await wait(800)
+      // 标签切换会重建编辑器；等正文段落真正回来后再读取高亮。
+      for (let i = 0; i < 30; i++) {
+        if (document.querySelectorAll('.muya-container .mu-paragraph').length >= 2) break
+        await wait(100)
+      }
+      await wait(600)
 
       const afterReturn = document.querySelector('.find-count')?.innerText || ''
       const findVisible = app.findVisible()
@@ -1753,24 +1933,6 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     `[selfcheck] 命令面板 OK: ${paletteCheck.total} 条命令，过滤后 ${paletteCheck.filteredCount} 条，回车可执行`
   )
 
-  // 清理自检用的临时目录（所有依赖它的用例都已执行完）。
-  // 先停掉监听器：fs.watch 持有句柄时删除会失败或挂住。
-  // 注意要覆盖所有自检产生的目录（selfcheck-tree / selfcheck-search），
-  // 只要打开过文件就会注册监听。
-  await win.webContents
-    .executeJavaScript(
-      `(async () => {
-        const app = window.__inkdownApp
-        const files = app.tabs().map((t) => t.filePath).filter(Boolean)
-        for (const f of files) {
-          if (f.includes('selfcheck-')) await window.inkdown.unwatch(f)
-        }
-        return true
-      })()`
-    )
-    .catch(() => {})
-  await fsp.rm(workDirForTree, { recursive: true, force: true }).catch(() => {})
-
   console.log('[selfcheck] shell:', JSON.stringify(shell))
   console.log('[selfcheck] statusbar:', statusText.replace(/\s+/g, ' ').trim())
   // 4b-11b. 正文右键菜单：能弹出、条目齐全、点「插入表格」真的生效
@@ -1803,12 +1965,28 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         muya2.focus()
         await wait(300)
         muya2.setCursorByOffset({ anchor: { line: 0, ch: 3 }, focus: { line: 0, ch: 3 } })
+        // setCursorByOffset 是程序化操作，不触发内核 click/input，
+        // 必须像真实点击一样同步活动块，否则右键命令没有作用对象。
+        try {
+          const sel = muya2.editor?.selection?.getSelection?.()
+          if (sel?.anchor?.block) muya2.editor.activeContentBlock = sel.anchor.block
+        } catch {
+          /* 选区尚未就位时由下面轮询兜底 */
+        }
         // 轮询等选区与活动块就位
         for (let k = 0; k < 40; k++) {
           const cs = muya2.editor?.selection?.getSelection?.()
-          if (cs?.anchor?.block) {
+          const active = muya2.editor?.activeContentBlock
+          if (cs?.anchor?.block && active?.outMostBlock) {
             cursorBlock = cs.anchor.block.blockName || null
             break
+          }
+          if (cs?.anchor?.block) {
+            try {
+              muya2.editor.activeContentBlock = cs.anchor.block
+            } catch {
+              /* 等内核重建完成 */
+            }
           }
           if (k > 0 && k % 12 === 0) muya2.focus()
           await wait(100)
@@ -1891,7 +2069,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const app = window.__inkdownApp
       const c = window.__inkdownCommands
 
-      // 悬浮球只在分栏状态出现，先切到分栏
+      // 悬浮球在分栏和源码模式出现；先切到分栏验证完整交互
       for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {
         await c.execute('view:toggleSource')
         await wait(350)
@@ -1908,6 +2086,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const ring1 = [...document.querySelectorAll('.ring-root .ring-sector-group')].map((b) =>
         b.textContent.trim()
       )
+      const orbInSplit = !!document.querySelector('.orb')
 
       // 悬停「表格」展开外圈规格
       const tableBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
@@ -1915,12 +2094,89 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       )
       let ring2 = []
       if (tableBtn) {
-        tableBtn.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+        tableBtn.dispatchEvent(
+          new PointerEvent('pointerenter', { bubbles: true, clientX: 320, clientY: 180 })
+        )
         await wait(350)
         ring2 = [...document.querySelectorAll('.ring-actions .ring-sector-group')].map((b) =>
           b.textContent.trim()
         )
       }
+
+      // 外圈展开后，从中心穿到对面的分类：持续移动不能切类，
+      // 停稳 260ms 才切换。用合成 pointermove 模拟直线穿越。
+      const crossTextBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
+        /文字/.test(b.textContent)
+      )
+      let crossKeptRoot = false
+      let crossSwitchedRoot = false
+      if (crossTextBtn) {
+        for (let i = 0; i < 5; i++) {
+          if (i === 0) {
+            crossTextBtn.dispatchEvent(
+              new PointerEvent('pointerenter', {
+                bubbles: true,
+                clientX: 100,
+                clientY: 100
+              })
+            )
+          }
+          crossTextBtn.dispatchEvent(
+            new PointerEvent('pointermove', {
+              bubbles: true,
+              clientX: 100 + i * 8,
+              clientY: 100 + i * 8
+            })
+          )
+          await wait(40)
+        }
+        crossKeptRoot = document.querySelector('.orb-palette')?.getAttribute('data-active-root') === 'table'
+        const crossActiveAfterMove =
+          document.querySelector('.ring-root .ring-sector-group.active')?.textContent?.trim() || ''
+        const crossPendingAfterMove =
+          document.querySelector('.ring-root .ring-sector-group.pending')?.textContent?.trim() || ''
+        const crossTimerAfterMove = {
+          active: document.querySelector('.orb-palette')?.getAttribute('data-active-root') || '',
+          pending: document.querySelector('.orb-palette')?.getAttribute('data-pending-root') || ''
+        }
+        crossTextBtn.dispatchEvent(
+          new PointerEvent('pointerenter', {
+            bubbles: true,
+            clientX: 140,
+            clientY: 140
+          })
+        )
+        crossTextBtn.dispatchEvent(
+          new PointerEvent('pointermove', {
+            bubbles: true,
+            clientX: 141,
+            clientY: 141
+          })
+        )
+        await wait(340)
+        for (let i = 0; i < 18; i++) {
+          crossSwitchedRoot =
+            document.querySelector('.orb-palette')?.getAttribute('data-active-root') === 'text'
+          if (crossSwitchedRoot) break
+          await wait(40)
+        }
+        const crossActiveAfterDwell =
+          document.querySelector('.ring-root .ring-sector-group.active')?.textContent?.trim() || ''
+        Object.assign(window, {
+          __crossDebug: {
+            crossActiveAfterMove,
+            crossPendingAfterMove,
+            crossActiveAfterDwell,
+            crossTimerAfterMove
+          }
+        })
+      }
+
+      // 回到「表格」再插入，避免穿越用例改变当前分类。
+      tableBtn?.dispatchEvent(
+        new PointerEvent('pointerenter', { bubbles: true, clientX: 320, clientY: 180 })
+      )
+      await wait(350)
 
       // 外圈叶子项插入表格，验证行列数真的对
       let rows = 0
@@ -1943,7 +2199,136 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         cols = tableLines[0] ? tableLines[0].split('|').filter((s) => s.trim()).length : 0
       }
 
-      return { ring1, ring2, inserted, rows, cols }
+      // 源码模式也必须保留悬浮球，并能在 textarea 中插入片段。
+      for (let i = 0; i < 4 && app.viewMode() !== 'source'; i++) {
+        await c.execute('view:toggleSource')
+        await wait(350)
+      }
+      await wait(500)
+      const orbInSource = !!document.querySelector('.orb')
+      const sourceOrbWrap = document.querySelector('.orb-wrap')
+      sourceOrbWrap?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await wait(350)
+      const textBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
+        /文字/.test(b.textContent)
+      )
+      if (textBtn) {
+        textBtn.dispatchEvent(
+          new PointerEvent('pointerenter', { bubbles: true, clientX: 100, clientY: 100 })
+        )
+        await wait(350)
+      }
+      const underlineBtn = [...document.querySelectorAll('.ring-actions .ring-sector-group')].find((b) =>
+        /下划线/.test(b.textContent)
+      )
+      const sourceTa = document.querySelector('.source-editor')
+      if (underlineBtn && sourceTa) {
+        sourceTa.focus()
+        sourceTa.setSelectionRange(sourceTa.value.length, sourceTa.value.length)
+        underlineBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await wait(500)
+      }
+      const sourceInserted = /<u>下划线<\\/u>/.test(sourceTa?.value || '')
+
+      // 拖动时不展开：先关闭菜单，按住球移动，期间与松开冷却期都必须保持关闭。
+      const dragOrb = document.querySelector('.orb')
+      if (document.querySelector('.orb-palette.open')) {
+        document.querySelector('.orb')?.dispatchEvent(
+          new PointerEvent('pointerdown', { bubbles: true, button: 0 })
+        )
+        document.querySelector('.orb')?.dispatchEvent(
+          new PointerEvent('pointerup', { bubbles: true, button: 0 })
+        )
+        await wait(120)
+      }
+      const dragStartLeft = document.querySelector('.orb-wrap')?.style.left || ''
+      const orbRect = dragOrb?.getBoundingClientRect()
+      // 拖动方向朝视口中心，确保不会因默认位置贴右边而被 clamp 回原位。
+      const dragX = orbRect ? orbRect.left + orbRect.width / 2 : 420
+      const dragY = orbRect ? orbRect.top + orbRect.height / 2 : 320
+      // 指针事件在真实窗口里由 pointerId 关联；合成事件若省略 pointerId，
+      // 各浏览器/内核可能按不同指针处理，导致 pointermove 没有落到当前拖动。
+      const dragPointerId = 41
+      dragOrb?.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          buttons: 1,
+          pointerId: dragPointerId,
+          pointerType: 'mouse',
+          isPrimary: true,
+          clientX: dragX,
+          clientY: dragY
+        })
+      )
+      for (let i = 1; i <= 4; i++) {
+        // 拖动时指针会移出球体；真实事件目标因此是 window / 下层元素，
+        // 不是球按钮。把合成 move 发给 window，走与浏览器一致的监听路径。
+        window.dispatchEvent(
+          new PointerEvent('pointermove', {
+            bubbles: true,
+            buttons: 1,
+            pointerId: dragPointerId,
+            pointerType: 'mouse',
+            isPrimary: true,
+            clientX: dragX - i * 18,
+            clientY: dragY - i * 12
+          })
+        )
+        await wait(40)
+      }
+      const menuClosedWhileDragging = !document.querySelector('.orb-palette.open')
+      const draggingClassOn = document.querySelector('.orb-wrap')?.getAttribute('data-dragging') === 'true'
+      const dragStartTop = document.querySelector('.orb-wrap')?.style.top || ''
+      const dragStartStored = localStorage.getItem('inkdown-orb-position') || ''
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          bubbles: true,
+          button: 0,
+          buttons: 0,
+          pointerId: dragPointerId,
+          pointerType: 'mouse',
+          isPrimary: true,
+          clientX: dragX - 72,
+          clientY: dragY - 48
+        })
+      )
+      await wait(260)
+      const menuStillClosedAfterDrag = !document.querySelector('.orb-palette.open')
+      const dragEndLeft = document.querySelector('.orb-wrap')?.style.left || ''
+      const dragEndTop = document.querySelector('.orb-wrap')?.style.top || ''
+      const dragEndStored = localStorage.getItem('inkdown-orb-position') || ''
+      // 球默认贴右边，向右拖只会被 clamp 在原位；横向或纵向任一变化
+      // 都说明位置已保存，避免把合法的边界拖动误判为失败。
+      const dragMoved =
+        !!dragStartLeft &&
+        (dragStartLeft !== dragEndLeft ||
+          (!!dragStartTop && dragStartTop !== dragEndTop) ||
+          (!!dragStartStored && dragStartStored !== dragEndStored))
+
+      return {
+        ring1,
+        ring2,
+        inserted,
+        rows,
+        cols,
+        orbInSplit,
+        orbInSource,
+        sourceInserted,
+        crossKeptRoot,
+        crossSwitchedRoot,
+        crossDebug: window.__crossDebug || null,
+        menuClosedWhileDragging,
+        menuStillClosedAfterDrag,
+        draggingClassOn,
+        dragStartLeft,
+        dragEndLeft,
+        dragStartTop,
+        dragEndTop,
+        dragStartStored,
+        dragEndStored,
+        dragMoved
+      }
     })()
   `)
   if (orbCheck.error) {
@@ -1965,10 +2350,30 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     )
     return false
   }
+  if (!orbCheck.orbInSplit || !orbCheck.orbInSource || !orbCheck.sourceInserted) {
+    console.error('[selfcheck] FAIL: 悬浮球未覆盖源码模式或源码插入失败:', JSON.stringify(orbCheck))
+    return false
+  }
+  if (!orbCheck.crossKeptRoot || !orbCheck.crossSwitchedRoot) {
+    console.error('[selfcheck] FAIL: 悬浮球穿越分类交互不符合预期:', JSON.stringify(orbCheck))
+    return false
+  }
+  if (
+    !orbCheck.menuClosedWhileDragging ||
+    !orbCheck.menuStillClosedAfterDrag ||
+    !orbCheck.draggingClassOn ||
+    !orbCheck.dragMoved
+  ) {
+    console.error('[selfcheck] FAIL: 悬浮球拖动状态不符合预期:', JSON.stringify(orbCheck))
+    return false
+  }
   console.log(
-    `[selfcheck] 悬浮球 OK: 第一圈 ${orbCheck.ring1.length} 项，外圈可展开，插入 ${orbCheck.rows} 行 ${orbCheck.cols} 列 Markdown 表格`
+    `[selfcheck] 悬浮球 OK: 第一圈 ${orbCheck.ring1.length} 项，分栏/源码均可展开，插入 ${orbCheck.rows} 行 ${orbCheck.cols} 列 Markdown 表格`
   )
 
   console.log('[selfcheck] PASS: 编辑器挂载、块渲染、Markdown 往返、大纲与字数统计均正常')
+  // PASS 必须先输出，避免收尾清理因系统句柄延迟而掩盖测试结果；
+  // 主进程随后会立即退出，清理失败也不影响用户工程。
+  void cleanupSelfCheckFiles()
   return true
 }

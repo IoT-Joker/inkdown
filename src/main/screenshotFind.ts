@@ -247,6 +247,49 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
           return true
         })()
       `
+    },
+    {
+      name: '13-orb-rest.png',
+      setup: `
+        (async () => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+          const app = window.__inkdownApp
+          const c = window.__inkdownCommands
+          document.querySelector('.palette-mask')?.dispatchEvent(
+            new MouseEvent('click', { bubbles: true })
+          )
+          if (app.viewMode() !== 'split') await c.execute('view:toggleSplit')
+          await wait(500)
+          // 移开鼠标并关闭环，截取悬浮球静止状态
+          window.dispatchEvent(new MouseEvent('mousemove', {
+            bubbles: true,
+            clientX: 4,
+            clientY: 4
+          }))
+          const orb = document.querySelector('.orb')
+          orb?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+          await wait(80)
+          window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }))
+          await wait(500)
+          return true
+        })()
+      `
+    },
+    {
+      name: '14-source-orb.png',
+      setup: `
+        (async () => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+          const app = window.__inkdownApp
+          const c = window.__inkdownCommands
+          if (app.viewMode() !== 'source') await c.execute('view:toggleSource')
+          await wait(500)
+          const wrap = document.querySelector('.orb-wrap')
+          wrap?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+          await wait(450)
+          return !!document.querySelector('.orb-palette.open')
+        })()
+      `
     }
   ]
   for (const e of extra) {

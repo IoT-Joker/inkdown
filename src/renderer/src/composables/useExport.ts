@@ -29,6 +29,8 @@ img { max-width: 100%; }
 hr { border: 0; border-top: 1px solid #d0d7de; margin: 1.6em 0; }
 ul, ol { padding-left: 1.6em; }
 li { margin: .3em 0; }
+.idiff.addition { background: #c7f0d2; color: #1f1f1f; border-radius: 2px; }
+.idiff.deletion { background: #fac5cd; color: #1f1f1f; border-radius: 2px; }
 .katex-display { overflow-x: auto; }
 @media print { body { padding: 0; } .markdown-body { max-width: none; } }
 @media (prefers-color-scheme: dark) {
@@ -38,6 +40,8 @@ li { margin: .3em 0; }
   blockquote { border-left-color: #444; color: #9a9a9a; }
   th, td { border-color: #333; }
   a { color: #569cd6; }
+  .idiff.addition { background: #234f35; color: #d7f5e1; }
+  .idiff.deletion { background: #5a2b35; color: #f7d9de; }
 }
 `
 
@@ -79,7 +83,11 @@ async function buildHtml(): Promise<string> {
     renderToStaticHTML(tab.content, {
       footnote: settings.footnote,
       superSubScript: settings.superSubScript,
-      frontMatter: settings.frontMatter
+      frontMatter: settings.frontMatter,
+      highlightSyntax: settings.highlightSyntax,
+      inlineDiff: true,
+      multilineBlockquote: settings.multilineBlockquote,
+      githubAlerts: settings.githubAlerts
     }),
     tab.title
   )
@@ -136,7 +144,8 @@ export function renderPreviewHtml(markdown: string): string {
       texMathSingleBackslash: settings.texMathSingleBackslash,
       texMathDoubleBackslash: settings.texMathDoubleBackslash,
       multilineBlockquote: settings.multilineBlockquote,
-      githubAlerts: settings.githubAlerts
+      githubAlerts: settings.githubAlerts,
+      inlineDiff: true
     })
   } catch (err) {
     console.warn('[preview] 渲染失败:', err)
