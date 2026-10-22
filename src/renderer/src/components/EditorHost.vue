@@ -19,16 +19,34 @@ const { t } = useI18n()
 let muya: Muya | null = null
 let suppress = false
 /** 源码模式的等宽字体回退栈（通过 CSS 变量传给样式，避免 v-bind 依赖构建插件） */
-const CODE_FONT_FALLBACK = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+const CODE_FONT_FALLBACK =
+  "'Cascadia Code', 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 /** 各标签页的光标与滚动位置，切回时恢复。 */
 const viewState = new Map<string, { cursor: Tab['cursor']; scrollTop: number }>()
 
 const activeTab = computed(() => getActiveTab())
 const isSource = computed(() => state.viewMode === 'source')
-/** 分栏预览：左侧所见即所得，右侧静态预览。 */
+/** 分栏预览：左侧静态预览，右侧源码编辑。 */
 const isSplit = computed(() => state.viewMode === 'split')
-/** 右侧预览容器。 */
+/** 左侧预览容器。 */
 const previewRef = ref<HTMLElement | null>(null)
+/** 分栏右侧源码的当前行号，用于页头信息。 */
+const sourceLine = ref(1)
+const sourceLines = computed(() => state.sourceContent.split('\n').length)
+let sourceResizeObserver: ResizeObserver | null = null
+
+/**
+ * 让 textarea 随内容长高，由外层 .source-scroll 统一滚动。
+ *
+ * textarea 自己出现滚动条时，源码和预览会各自维护一套滚动状态；
+ * 这里把高度撑开，由外层容器统一滚动，光标定位也更稳定。
+ */
+function resizeSourceEditor(): void {
+  const ta = sourceRef.value
+  if (!ta) return
+  ta.style.height = 'auto'
+  ta.style.height = `${Math.max(ta.scrollHeight, 0)}px`
+}
 
 /** 刷新分栏预览区的内容。 */
 function refreshPreview(): void {
@@ -101,7 +119,26 @@ function sourceCursorOffset(): number {
 /** 光标移动（点击 / 按键 / 输入）时同步预览。 */
 function onSourceCaretMove(): void {
   if (!isSplit.value) return
+  updateSourceLine()
   syncPreviewToCursor()
+}
+
+/** 由 textarea 的光标偏移计算当前行号。 */
+function updateSourceLine(): void {
+  const ta = sourceRef.value
+  if (!ta) return
+  const before = ta.value.slice(0, ta.selectionStart)
+  const beforeFocus = ta.value.slice(0, ta.selectionEnd)
+  sourceLine.value = before.split('\n').length
+
+  // 状态栏也读取 tab.cursor；源码/分栏模式下同步它，避免行号停留在旧位置。
+  const tab = activeTab.value
+  if (!tab) return
+  const toPos = (text: string): { line: number; ch: number } => {
+    const lastBreak = text.lastIndexOf('\n')
+    return { line: text.split('\n').length - 1, ch: text.length - lastBreak - 1 }
+  }
+  tab.cursor = { anchor: toPos(before), focus: toPos(beforeFocus) }
 }
 
 /** 预览容器里与源码块对应的顶层元素（跳过脚注等非正文节点）。 */
@@ -366,8 +403,12 @@ watch(
     if (mode === 'source' || mode === 'split') {
       state.sourceContent = tab.content
       nextTick(() => {
-        if (mode === 'split') refreshPreview()
+        if (mode === 'split') {
+          refreshPreview()
+          updateSourceLine()
+        }
         sourceRef.value?.focus()
+        resizeSourceEditor()
       })
       return
     }
@@ -389,6 +430,8 @@ watch(
     if (!tab) return
     tab.content = val
     updateCounts(val)
+    updateSourceLine()
+    nextTick(resizeSourceEditor)
     if (isSplit.value) refreshPreview()
   }
 )
@@ -489,41 +532,264 @@ function runEditorMenuCommand(command: string): void {
   void executeCommand(command)
 }
 
-/**
- * 悬浮球插入：在光标处插入对应块。
- *
- * 表格走内核的 createTable（能直接生成指定行列），
- * 其余复用命令中心已有的段落/格式命令。
- */
-function onOrbInsert(id: string): void {
-  if (!muya) return
+/* ------------------------------ 悬浮球：Markdown 片段 ------------------------------ */
 
-  // 表格：1×3 / 2×2 / 3×3 …
+interface Snippet {
+  text: string
+  /** 插入后要选中的相对区间，便于直接替换占位文字。 */
+  selectFrom?: number
+  selectTo?: number
+  /** 块级片段自动补空行，行内片段不补。 */
+  block?: boolean
+}
+
+function tableMarkdown(rows: number, columns: number): string {
+  const cols = Math.max(1, columns)
+  const head = `| ${Array.from({ length: cols }, (_, i) => `列 ${i + 1}`).join(' | ')} |`
+  const sep = `| ${Array.from({ length: cols }, () => '---').join(' | ')} |`
+  const body = Array.from(
+    { length: Math.max(1, rows - 2) },
+    () => `| ${Array.from({ length: cols }, () => '').join(' | ')} |`
+  )
+  return [head, sep, ...body].join('\n')
+}
+
+function todayText(): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+}
+
+function snippetFor(id: string): Snippet | null {
   const tableMatch = id.match(/^table-(\d+)x(\d+)$/)
   if (tableMatch) {
-    const rows = Number(tableMatch[1])
-    const columns = Number(tableMatch[2])
-    // 表格只能插在空段落上（内核把 table 视为整块类型）
-    muya.createTable({ rows, columns })
+    return { text: tableMarkdown(Number(tableMatch[1]), Number(tableMatch[2])), block: true }
+  }
+
+  // 行内标记按 UTF-16 下标选中占位文字；块片段把光标放到内容行。
+  const map: Record<string, Snippet> = {
+    strong: { text: '**加粗文字**', selectFrom: 2, selectTo: 6 },
+    emphasis: { text: '*斜体文字*', selectFrom: 1, selectTo: 5 },
+    strike: { text: '~~删除文字~~', selectFrom: 2, selectTo: 6 },
+    inlineCode: { text: '`代码`', selectFrom: 1, selectTo: 3 },
+    highlight: { text: '==高亮文字==', selectFrom: 2, selectTo: 6 },
+    inlineMath: { text: '$公式$', selectFrom: 1, selectTo: 3 },
+    link: { text: '[链接文字](https://)', selectFrom: 1, selectTo: 5 },
+    codeJs: { text: '```js\n\n```', selectFrom: 6, selectTo: 6, block: true },
+    codePy: { text: '```python\n\n```', selectFrom: 10, selectTo: 10, block: true },
+    mermaid: {
+      text: '```mermaid\ngraph LR\n  A[开始] --> B[结束]\n```',
+      selectFrom: 22,
+      selectTo: 22,
+      block: true
+    },
+    plantuml: {
+      text: '```plantuml\n@startuml\nAlice -> Bob: Hello\n@enduml\n```',
+      selectFrom: 22,
+      selectTo: 22,
+      block: true
+    },
+    math: { text: '$$\n\n$$', selectFrom: 3, selectTo: 3, block: true },
+    quote: { text: '> 引用内容', block: true },
+    callout: {
+      text: '> [!NOTE]\n> 在这里写提示内容。',
+      selectFrom: 12,
+      selectTo: 21,
+      block: true
+    },
+    details: {
+      text: '<details>\n<summary>点击展开</summary>\n\n折叠内容\n\n</details>',
+      selectFrom: 35,
+      selectTo: 39,
+      block: true
+    },
+    footnote: {
+      text: '正文[^1]\n\n[^1]: 脚注内容',
+      selectFrom: 14,
+      selectTo: 18,
+      block: true
+    },
+    hr: { text: '---', block: true },
+    htmlBlock: { text: '<div>\n\n</div>', selectFrom: 5, selectTo: 5, block: true },
+    frontmatter: {
+      text: '---\ntitle: 文档标题\ntags: []\n---\n\n',
+      block: false
+    },
+    datetime: { text: todayText(), block: false }
+  }
+  return map[id] ?? null
+}
+
+/** 在源码 textarea 的光标处插入片段，并选中占位文字。 */
+function insertSourceSnippet(snippet: Snippet): void {
+  const ta = sourceRef.value
+  if (!ta) return
+
+  const start = ta.selectionStart
+  const end = ta.selectionEnd
+  const before = ta.value.slice(0, start)
+  const after = ta.value.slice(end)
+  const prefix = snippet.block
+    ? before === '' || before.endsWith('\n\n')
+      ? ''
+      : before.endsWith('\n')
+        ? '\n'
+        : '\n\n'
+    : ''
+  const suffix = snippet.block
+    ? after === '' || after.startsWith('\n\n')
+      ? ''
+      : after.startsWith('\n')
+        ? '\n'
+        : '\n\n'
+    : ''
+  const text = `${prefix}${snippet.text}${suffix}`
+  ta.value = before + text + after
+  state.sourceContent = ta.value
+
+  // 插入点若在文档末尾，主动滚到选区，避免新增内容在视口下方。
+  if (start === before.length && after === '') {
+    nextTick(() => {
+      const scroller = ta.closest('.source-scroll') as HTMLElement | null
+      scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
+    })
+  }
+
+  const selectionBase = start + prefix.length
+  const from = selectionBase + (snippet.selectFrom ?? snippet.text.length)
+  const to = selectionBase + (snippet.selectTo ?? snippet.text.length)
+  nextTick(() => {
+    ta.focus()
+    ta.setSelectionRange(from, to)
+    updateSourceLine()
+    resizeSourceEditor()
+  })
+}
+
+/** 在当前行首插入标记（标题、列表）。 */
+function insertSourceLinePrefix(prefix: string): void {
+  const ta = sourceRef.value
+  if (!ta) return
+  const start = ta.selectionStart
+  const lineStart = ta.value.lastIndexOf('\n', Math.max(0, start - 1)) + 1
+  ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart)
+  state.sourceContent = ta.value
+  const cursor = start + prefix.length
+  nextTick(() => {
+    ta.focus()
+    ta.setSelectionRange(cursor, cursor)
+    updateSourceLine()
+    resizeSourceEditor()
+  })
+}
+
+/** 所见即所得模式：把片段粘贴到当前光标处。 */
+async function insertSnippetInEditor(snippet: Snippet): Promise<void> {
+  if (!muya) return
+  await window.inkdown.writeClipboardText(snippet.text)
+  focus()
+  await muya.pasteAsPlainText()
+}
+
+/** 选择图片后复制到文档 assets 并插入相对路径。 */
+async function insertImageSnippet(): Promise<void> {
+  const src = await window.inkdown.openImageDialog()
+  if (!src) return
+  const docPath = activeTab.value?.filePath ?? null
+  const finalSrc = await window.inkdown.copyImage(docPath, src)
+
+  if (isSource.value || isSplit.value) {
+    const alt = baseName(src).replace(/\.[^.]+$/, '')
+    insertSourceSnippet({ text: `![${alt}](${finalSrc})`, selectFrom: 2, selectTo: 2 + alt.length })
+    return
+  }
+  muya?.insertImage({ src: finalSrc, alt: baseName(src) })
+}
+
+/**
+ * 悬浮球插入：源码/分栏直接写 Markdown，所见即所得继续走内核命令。
+ * 这样分栏里插入的表格、代码块和提示块会出现在右侧源码，而不是隐藏的编辑器。
+ */
+async function onOrbInsert(id: string): Promise<void> {
+  if (id === 'image') {
+    await insertImageSnippet()
     return
   }
 
-  const map: Record<string, string> = {
+  if (isSource.value || isSplit.value) {
+    if (id === 'frontmatter') {
+      const ta = sourceRef.value
+      if (!ta) return
+      if (/^---\n/.test(ta.value)) {
+        state.notice = { text: t('orb.frontmatterExists') }
+        return
+      }
+      ta.value = `---\ntitle: 文档标题\ntags: []\n---\n\n${ta.value}`
+      state.sourceContent = ta.value
+      nextTick(() => {
+        ta.focus()
+        const titleStart = ta.value.indexOf('文档标题')
+        const start = titleStart >= 0 ? titleStart : 0
+        ta.setSelectionRange(start, start + (titleStart >= 0 ? 4 : 0))
+        updateSourceLine()
+        resizeSourceEditor()
+      })
+      return
+    }
+
+    const heading = id.match(/^h([1-6])$/)
+    if (heading) {
+      insertSourceLinePrefix(`${'#'.repeat(Number(heading[1]))} `)
+      return
+    }
+    if (id === 'ul') return insertSourceLinePrefix('- ')
+    if (id === 'ol') return insertSourceLinePrefix('1. ')
+    if (id === 'task') return insertSourceLinePrefix('- [ ] ')
+
+    const snippet = snippetFor(id)
+    if (snippet) insertSourceSnippet(snippet)
+    return
+  }
+
+  // 所见即所得：段落/格式命令优先，内核能正确处理块类型与撤销栈。
+  const commandMap: Record<string, string> = {
     h1: 'paragraph:h1',
     h2: 'paragraph:h2',
     h3: 'paragraph:h3',
+    h4: 'paragraph:h4',
+    h5: 'paragraph:h5',
+    h6: 'paragraph:h6',
     ul: 'paragraph:ul',
     ol: 'paragraph:ol',
     task: 'paragraph:task',
-    code: 'paragraph:code',
-    math: 'paragraph:math',
     quote: 'paragraph:quote',
+    math: 'paragraph:math',
     hr: 'paragraph:hr',
-    image: 'format:image',
+    strong: 'format:strong',
+    emphasis: 'format:emphasis',
+    strike: 'format:strike',
+    inlineCode: 'format:inlineCode',
+    highlight: 'format:highlight',
+    inlineMath: 'format:inlineMath',
     link: 'format:link'
   }
-  const command = map[id]
-  if (command) void executeCommand(command)
+  const command = commandMap[id]
+  if (command) {
+    // 点击悬浮球会把焦点移到按钮上，执行段落命令前要把内核焦点还回去。
+    muya?.focus()
+    await executeCommand(command)
+    return
+  }
+
+  const tableMatch = id.match(/^table-(\d+)x(\d+)$/)
+  if (tableMatch) {
+    muya?.focus()
+    muya?.createTable({ rows: Number(tableMatch[1]), columns: Number(tableMatch[2]) })
+    return
+  }
+
+  const snippet = snippetFor(id)
+  if (snippet) await insertSnippetInEditor(snippet)
 }
 
 function registerEditorCommands(): void {
@@ -923,6 +1189,13 @@ onMounted(() => {
   window.addEventListener('inkdown:settings-changed', onSettingsChanged)
   window.addEventListener('inkdown:insert-text', onInsertText as EventListener)
   window.addEventListener('inkdown:goto-line', onGotoLine as EventListener)
+
+  const sourceScroller = sourceRef.value?.closest('.source-scroll') as HTMLElement | null
+  if (sourceScroller && typeof ResizeObserver !== 'undefined') {
+    sourceResizeObserver = new ResizeObserver(() => resizeSourceEditor())
+    sourceResizeObserver.observe(sourceScroller)
+  }
+  nextTick(resizeSourceEditor)
 })
 
 onBeforeUnmount(() => {
@@ -932,6 +1205,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('inkdown:settings-changed', onSettingsChanged)
   window.removeEventListener('inkdown:insert-text', onInsertText as EventListener)
   window.removeEventListener('inkdown:goto-line', onGotoLine as EventListener)
+  sourceResizeObserver?.disconnect()
+  sourceResizeObserver = null
   muya?.destroy()
   muya = null
 })
@@ -958,29 +1233,21 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
     <!--
       三种视图：
         所见即所得 —— 只显示 muya 编辑器
-        分栏预览   —— 左侧源码、右侧渲染效果（经典 Markdown 编辑器布局）
+        分栏预览   —— 左侧渲染效果、右侧源码
         源码       —— 只显示源码编辑器
       分栏与源码共用同一个 textarea，避免两份内容源不同步。
     -->
     <div v-show="!isSource && !isSplit" class="editor-scroll">
       <div ref="containerRef" class="muya-container" />
     </div>
-    <div v-show="isSource || isSplit" class="source-scroll" :class="{ 'split-left': isSplit }">
-      <textarea
-        ref="sourceRef"
-        v-model="state.sourceContent"
-        class="source-editor"
-        spellcheck="false"
-        @keydown="onSourceKeydown"
-        @click="onSourceCaretMove"
-        @keyup="onSourceCaretMove"
-        @input="onSourceCaretMove"
-      />
-    </div>
-    <!-- 分栏预览：右侧渲染当前 Markdown 的静态 HTML -->
+    <!-- 分栏预览：左侧渲染当前 Markdown，右侧编辑源码 -->
     <div v-if="isSplit" class="split-preview">
       <div class="split-preview-head">
-        <span class="split-preview-title">{{ t('view.splitPreviewHead') }}</span>
+        <div class="split-head-label">
+          <span class="split-eyebrow">{{ t('view.splitPreviewHead') }}</span>
+          <span class="split-live"><span class="split-live-dot" />LIVE</span>
+        </div>
+        <span class="split-preview-title">{{ activeTab?.title ?? '' }}</span>
         <!-- 两个独立开关：虚线框标位置、视角跟随光标 -->
         <label class="split-opt" :title="t('view.splitHighlightBlockHint')">
           <input v-model="settings.splitHighlightBlock" type="checkbox" />
@@ -990,11 +1257,40 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
           <input v-model="settings.splitSyncScroll" type="checkbox" />
           {{ t('view.splitSyncScroll') }}
         </label>
-        <!-- 悬浮球：环形菜单快速插入块 -->
-        <BlockOrb @insert="onOrbInsert" />
       </div>
       <div ref="previewRef" class="split-preview-body markdown-body" />
     </div>
+    <div
+      v-show="isSource || isSplit"
+      class="source-scroll"
+      :class="{ 'split-right': isSplit }"
+    >
+      <div v-if="isSplit" class="source-head">
+        <div class="split-head-label">
+          <span class="split-eyebrow">{{ t('view.splitSourceHead') }}</span>
+          <span class="source-meta">
+            {{ t('view.splitSourceMeta', { eol: settings.lineEnding.toUpperCase() }) }}
+          </span>
+        </div>
+        <span class="source-position">
+          {{ t('view.splitSourcePosition', { line: sourceLine, lines: sourceLines, chars: state.charCount }) }}
+        </span>
+      </div>
+      <div class="source-editor-wrap">
+        <textarea
+          ref="sourceRef"
+          v-model="state.sourceContent"
+          class="source-editor"
+          spellcheck="false"
+          @keydown="onSourceKeydown"
+          @click="onSourceCaretMove"
+          @keyup="onSourceCaretMove"
+          @input="onSourceCaretMove"
+        />
+      </div>
+    </div>
+    <!-- 悬浮球：仅在分栏编辑状态出现 -->
+    <BlockOrb v-if="isSplit && activeTab" @insert="onOrbInsert" />
     <div v-if="!activeTab" class="empty-state">
       <p class="empty-title">{{ t('app.name') }}</p>
       <p class="empty-hint">{{ t('editor.emptyHint') }}</p>
@@ -1038,11 +1334,15 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* 分栏模式：左侧源码与右侧预览各占一半 */
-.source-scroll.split-left {
+/* 分栏模式：左侧预览、右侧源码，各占一半 */
+.source-scroll.split-right {
   flex: 1 1 50%;
   min-width: 0;
-  border-right: 1px solid var(--ty-border);
+  border-left: 1px solid var(--ty-border);
+}
+.source-scroll.split-right,
+.split-preview {
+  min-height: 0;
 }
 .split-preview {
   display: flex;
@@ -1050,25 +1350,76 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   flex: 1 1 50%;
   min-width: 0;
   height: 100%;
-  border-left: 1px solid var(--ty-border);
-  background: var(--ty-bg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ty-tabbar-bg) 38%, transparent), transparent 120px),
+    var(--ty-bg);
   overflow: hidden;
 }
 .split-preview-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex: none;
-  padding: 4px 12px;
+  min-height: 42px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--ty-border);
-  background: var(--ty-tabbar-bg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ty-tabbar-bg) 88%, #ffffff), var(--ty-tabbar-bg));
   color: var(--ty-muted);
   font-size: 11px;
-  letter-spacing: 0.4px;
+}
+.split-head-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-width: 0;
+}
+.split-eyebrow {
+  color: var(--ty-text);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+.split-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--ty-accent) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ty-accent) 8%, transparent);
+  color: var(--ty-accent);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+}
+.split-live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ty-accent);
+  box-shadow: 0 0 6px var(--ty-accent);
+  animation: live-pulse 2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 0.62;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
 }
 .split-preview-title {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
+  color: var(--ty-muted);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1080,6 +1431,16 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   cursor: pointer;
   user-select: none;
   letter-spacing: 0;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.split-opt:hover {
+  border-color: color-mix(in srgb, var(--ty-border) 80%, transparent);
+  background: var(--ty-hover);
 }
 .split-opt input {
   margin: 0;
@@ -1097,11 +1458,12 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 24px 28px 80px;
+  padding: 34px clamp(28px, 5vw, 64px) 96px;
   color: var(--editor-color);
   font-size: calc(var(--editor-font-size) * var(--editor-zoom));
   line-height: 1.7;
   word-wrap: break-word;
+  scrollbar-gutter: stable;
 }
 /* 预览区的排版细节（与导出的样式保持接近） */
 .split-preview-body :deep(h1),
@@ -1166,20 +1528,74 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   min-height: 100%;
   font-size: calc(var(--editor-font-size) * var(--editor-zoom));
 }
+.source-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 42px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--ty-border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ty-tabbar-bg) 88%, #ffffff), var(--ty-tabbar-bg));
+  color: var(--ty-muted);
+  font-size: 11px;
+}
+.source-meta {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--ty-border) 76%, transparent);
+  border-radius: 999px;
+  color: var(--ty-muted);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.source-position {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ty-muted);
+  font-family: var(--editor-code-font);
+  font-size: 10px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.source-editor-wrap {
+  min-height: calc(100% - 42px);
+}
 .source-editor {
+  display: block;
   width: 100%;
+  height: auto;
   min-height: 100%;
   box-sizing: border-box;
-  padding: 40px 48px 120px;
+  padding: 34px clamp(22px, 4vw, 42px) 120px;
   border: 0;
   outline: none;
   resize: none;
+  overflow: hidden;
   font-family: var(--editor-code-font);
   font-size: calc(var(--editor-code-size) * var(--editor-zoom));
   line-height: 1.6;
+  letter-spacing: 0.02em;
   color: var(--ty-text);
   background: transparent;
   tab-size: var(--editor-tab-size);
+  scrollbar-width: thin;
+}
+.source-scroll.split-right {
+  background:
+    radial-gradient(circle at 82% 0%, color-mix(in srgb, var(--ty-accent) 5%, transparent), transparent 260px),
+    var(--ty-bg);
+}
+.source-scroll:not(.split-right) .source-editor {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 48px 56px 120px;
 }
 .empty-state {
   position: absolute;

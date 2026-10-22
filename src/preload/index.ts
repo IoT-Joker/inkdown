@@ -28,6 +28,8 @@ const api = {
   },
 
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
+  /** 只选图片，供编辑器的“插入图片”入口使用。 */
+  openImageDialog: () => ipcRenderer.invoke('dialog:openImage'),
   openFolderDialog: () => ipcRenderer.invoke('dialog:openFolder'),
   saveAsDialog: (defaultName: string) => ipcRenderer.invoke('dialog:saveAs', defaultName),
   saveFileDialog: (defaultName: string, content: string) =>

@@ -238,6 +238,20 @@ export function registerIpc(): void {
     )
   })
 
+  ipcMain.handle('dialog:openImage', async () => {
+    const win = getMainWindow()
+    const result = await dialog.showOpenDialog(win!, {
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'Images',
+          extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif']
+        }
+      ]
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
   ipcMain.handle('dialog:openFolder', async () => {
     const win = getMainWindow()
     const result = await dialog.showOpenDialog(win!, { properties: ['openDirectory'] })

@@ -571,7 +571,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 源码模式 OK: 双向同步且不丢改动')
 
-  // 4b-5b. 分栏预览：左侧编辑源码 + 右侧静态预览，且内容随文档更新
+  // 4b-5b. 分栏预览：左侧静态预览 + 右侧编辑源码，且内容随文档更新
   const splitCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -592,7 +592,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const body = document.querySelector('.split-preview-body')
       const html = body ? body.innerHTML : ''
 
-      // 分栏的左侧必须是「源码编辑器」而不是所见即所得编辑器
+      // 分栏的右侧必须是「源码编辑器」，左侧是静态预览
       const textarea = document.querySelector('.source-editor')
       const textareaVisible = !!textarea && textarea.offsetParent !== null
       const textareaHasSource = !!textarea && /^#\\s*分栏标题/.test(textarea.value)
@@ -601,14 +601,14 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const wysiwygEl = document.querySelector('.editor-scroll')
       const wysiwygHidden = !wysiwygEl || wysiwygEl.offsetParent === null
 
-      // 布局：左半是源码、右半是预览
-      let leftIsSource = false
-      let rightIsPreview = false
+      // 布局：左半是预览、右半是源码
+      let leftIsPreview = false
+      let rightIsSource = false
       if (textarea && body) {
         const taRect = textarea.getBoundingClientRect()
         const pvRect = body.getBoundingClientRect()
-        leftIsSource = taRect.left < pvRect.left
-        rightIsPreview = pvRect.left >= taRect.left
+        leftIsPreview = pvRect.left < taRect.left
+        rightIsSource = taRect.left >= pvRect.left
       }
 
       // 改内容，预览应跟着更新
@@ -627,8 +627,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         textareaVisible,
         textareaHasSource,
         wysiwygHidden,
-        leftIsSource,
-        rightIsPreview,
+        leftIsPreview,
+        rightIsSource,
         hasH1: /分栏标题/.test(html),
         hasStrong: /<strong>/.test(html),
         hasList: /<li>/.test(html),
@@ -649,15 +649,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   if (!splitCheck.textareaHasSource) {
-    console.error('[selfcheck] FAIL: 分栏左侧未显示源码内容:', JSON.stringify(splitCheck))
+    console.error('[selfcheck] FAIL: 分栏右侧未显示源码内容:', JSON.stringify(splitCheck))
     return false
   }
   if (!splitCheck.wysiwygHidden) {
     console.error('[selfcheck] FAIL: 分栏下所见即所得编辑器应隐藏:', JSON.stringify(splitCheck))
     return false
   }
-  if (!splitCheck.leftIsSource || !splitCheck.rightIsPreview) {
-    console.error('[selfcheck] FAIL: 分栏布局应为左源码右预览:', JSON.stringify(splitCheck))
+  if (!splitCheck.leftIsPreview || !splitCheck.rightIsSource) {
+    console.error('[selfcheck] FAIL: 分栏布局应为左预览右源码:', JSON.stringify(splitCheck))
     return false
   }
   if (!splitCheck.hasH1 || !splitCheck.hasStrong || !splitCheck.hasList) {
@@ -676,7 +676,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 未能切回所见即所得:', JSON.stringify(splitCheck))
     return false
   }
-  console.log('[selfcheck] 分栏预览 OK: 左源码 + 右预览，标题/加粗/列表渲染正确且实时更新')
+  console.log('[selfcheck] 分栏预览 OK: 左预览 + 右源码，标题/加粗/列表渲染正确且实时更新')
 
   // 4b-5c. 分栏的光标联动：虚线框标出对应块 + 视角跟随
   const splitSyncCheck = await win.webContents.executeJavaScript(`
@@ -1884,14 +1884,14 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     `[selfcheck] 正文右键菜单 OK: ${ctxCheck.items.length} 项 ${ctxCheck.seps} 个分隔，插入代码块命令生效`
   )
 
-  // 4b-11c. 悬浮球：三圈菜单（分类 → 具体项 → 表格规格）且插入真的生效
+  // 4b-11c. 悬浮球：两级环菜单（分类 → 具体项）且插入真的生效
   const orbCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const app = window.__inkdownApp
       const c = window.__inkdownCommands
 
-      // 悬浮球在分栏预览右上角，先切到分栏
+      // 悬浮球只在分栏状态出现，先切到分栏
       for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {
         await c.execute('view:toggleSource')
         await wait(350)
@@ -1905,38 +1905,42 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       // 悬停展开第一圈
       wrap.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
       await wait(400)
-      const ring1 = [...document.querySelectorAll('.orb-item')].map((b) => b.textContent.trim())
+      const ring1 = [...document.querySelectorAll('.ring-root .ring-sector-group')].map((b) =>
+        b.textContent.trim()
+      )
 
-      // 点「表格」进入第二圈（规格）
-      const tableBtn = [...document.querySelectorAll('.orb-item')].find((b) => /表格/.test(b.textContent))
+      // 悬停「表格」展开外圈规格
+      const tableBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
+        /表格/.test(b.textContent)
+      )
       let ring2 = []
       if (tableBtn) {
-        tableBtn.click()
+        tableBtn.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
         await wait(350)
-        ring2 = [...document.querySelectorAll('.orb-item')].map((b) => b.textContent.trim())
+        ring2 = [...document.querySelectorAll('.ring-actions .ring-sector-group')].map((b) =>
+          b.textContent.trim()
+        )
       }
 
-      // 点「2 × 2」插入表格，验证行列数真的对
+      // 外圈叶子项插入表格，验证行列数真的对
       let rows = 0
       let cols = 0
       let inserted = false
-      const spec = [...document.querySelectorAll('.orb-item')].find((b) => /2\\s*×\\s*2/.test(b.textContent))
+      const spec = [...document.querySelectorAll('.ring-actions .ring-sector-group')].find((b) =>
+        /2\\s*×\\s*2/.test(b.textContent)
+      )
       if (spec) {
-        // 切回所见即所得（表格只能插在编辑器里）
-        await c.execute('view:toggleSplit')
-        await wait(500)
-        window.__inkdownLoad('\\n')
-        await wait(800)
-        window.__inkdownMuya.focus()
-        await wait(300)
-        window.__inkdownOrb.insert('table-2x2')
-        await wait(1200)
-        const t = document.querySelector('.muya-container table, .muya-container .mu-table')
-        if (t) {
-          rows = t.querySelectorAll('tr').length
-          cols = t.querySelector('tr')?.querySelectorAll('td, th').length || 0
-          inserted = true
-        }
+        // 分栏下应直接写入右侧源码，而不是隐藏的所见即所得编辑器
+        const ta = document.querySelector('.source-editor')
+        ta.focus()
+        ta.setSelectionRange(ta.value.length, ta.value.length)
+        spec.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await wait(700)
+        const md = ta.value
+        inserted = /\\|\\s*列 1\\s*\\|\\s*列 2\\s*\\|/.test(md) && /\\|\\s*---\\s*\\|\\s*---\\s*\\|/.test(md)
+        const tableLines = md.split('\\n').filter((line) => /^\\|/.test(line))
+        rows = tableLines.length
+        cols = tableLines[0] ? tableLines[0].split('|').filter((s) => s.trim()).length : 0
       }
 
       return { ring1, ring2, inserted, rows, cols }
@@ -1954,15 +1958,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 表格未展开规格圈:', JSON.stringify(orbCheck))
     return false
   }
-  if (!orbCheck.inserted || orbCheck.rows !== 2 || orbCheck.cols !== 2) {
+  if (!orbCheck.inserted || orbCheck.rows !== 3 || orbCheck.cols !== 2) {
     console.error(
-      `[selfcheck] FAIL: 悬浮球插入表格规格不对（期望 2×2，实际 ${orbCheck.rows}×${orbCheck.cols}）:`,
+      `[selfcheck] FAIL: 悬浮球插入表格规格不对（期望 3 行 2 列，实际 ${orbCheck.rows}×${orbCheck.cols}）:`,
       JSON.stringify(orbCheck)
     )
     return false
   }
   console.log(
-    `[selfcheck] 悬浮球 OK: 第一圈 ${orbCheck.ring1.length} 项，表格规格圈可展开，插入 ${orbCheck.rows}×${orbCheck.cols} 表格生效`
+    `[selfcheck] 悬浮球 OK: 第一圈 ${orbCheck.ring1.length} 项，外圈可展开，插入 ${orbCheck.rows} 行 ${orbCheck.cols} 列 Markdown 表格`
   )
 
   console.log('[selfcheck] PASS: 编辑器挂载、块渲染、Markdown 往返、大纲与字数统计均正常')

@@ -172,18 +172,22 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
           markedText = document.querySelector('.split-cursor-block')?.textContent?.trim().slice(0, 20) || ''
         }
       }
-      // 展开悬浮球的表格规格圈，便于截图核对环形菜单
+      // 展开悬浮球的表格外圈，便于截图核对环形菜单
       let orbItems = []
       const wrap = document.querySelector('.orb-wrap')
       if (wrap) {
         wrap.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
         await wait(400)
-        const tb = [...document.querySelectorAll('.orb-item')].find((b) => /表格/.test(b.textContent))
+        const tb = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
+          /表格/.test(b.textContent)
+        )
         if (tb) {
-          tb.click()
+          tb.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
           await wait(400)
         }
-        orbItems = [...document.querySelectorAll('.orb-item')].map((b) => b.textContent.trim())
+        orbItems = [...document.querySelectorAll('.ring-actions .ring-sector-group')].map((b) =>
+          b.textContent.trim()
+        )
       }
       return {
         mode: app.viewMode(),
