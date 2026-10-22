@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import { promises as fsp } from 'node:fs'
 import { join } from 'node:path'
+import { runStabilityCheck } from './stabilityCheck'
 
 /**
  * 端到端自检：在真实渲染进程里验证编辑器内核是否成功挂载、
@@ -2083,14 +2084,14 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       // 悬停展开第一圈
       wrap.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
       await wait(400)
-      const ring1 = [...document.querySelectorAll('.ring-root .ring-sector-group')].map((b) =>
-        b.textContent.trim()
+      const ring1 = [...document.querySelectorAll('.ring-root .ring-sector-group')].map(
+        (b) => b.getAttribute('data-orb-label') || ''
       )
       const orbInSplit = !!document.querySelector('.orb')
 
       // 悬停「表格」展开外圈规格
-      const tableBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
-        /表格/.test(b.textContent)
+      const tableBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find(
+        (b) => b.getAttribute('data-orb-id') === 'table'
       )
       let ring2 = []
       if (tableBtn) {
@@ -2098,15 +2099,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
           new PointerEvent('pointerenter', { bubbles: true, clientX: 320, clientY: 180 })
         )
         await wait(350)
-        ring2 = [...document.querySelectorAll('.ring-actions .ring-sector-group')].map((b) =>
-          b.textContent.trim()
+        ring2 = [...document.querySelectorAll('.ring-actions .ring-sector-group')].map(
+          (b) => b.getAttribute('data-orb-label') || ''
         )
       }
 
       // 外圈展开后，从中心穿到对面的分类：持续移动不能切类，
       // 停稳 260ms 才切换。用合成 pointermove 模拟直线穿越。
-      const crossTextBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
-        /文字/.test(b.textContent)
+      const crossTextBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find(
+        (b) => b.getAttribute('data-orb-id') === 'text'
       )
       let crossKeptRoot = false
       let crossSwitchedRoot = false
@@ -2132,9 +2133,9 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         }
         crossKeptRoot = document.querySelector('.orb-palette')?.getAttribute('data-active-root') === 'table'
         const crossActiveAfterMove =
-          document.querySelector('.ring-root .ring-sector-group.active')?.textContent?.trim() || ''
+          document.querySelector('.ring-root .ring-sector-group.active')?.getAttribute('data-orb-label') || ''
         const crossPendingAfterMove =
-          document.querySelector('.ring-root .ring-sector-group.pending')?.textContent?.trim() || ''
+          document.querySelector('.ring-root .ring-sector-group.pending')?.getAttribute('data-orb-label') || ''
         const crossTimerAfterMove = {
           active: document.querySelector('.orb-palette')?.getAttribute('data-active-root') || '',
           pending: document.querySelector('.orb-palette')?.getAttribute('data-pending-root') || ''
@@ -2161,7 +2162,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
           await wait(40)
         }
         const crossActiveAfterDwell =
-          document.querySelector('.ring-root .ring-sector-group.active')?.textContent?.trim() || ''
+          document.querySelector('.ring-root .ring-sector-group.active')?.getAttribute('data-orb-label') || ''
         Object.assign(window, {
           __crossDebug: {
             crossActiveAfterMove,
@@ -2182,8 +2183,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       let rows = 0
       let cols = 0
       let inserted = false
-      const spec = [...document.querySelectorAll('.ring-actions .ring-sector-group')].find((b) =>
-        /2\\s*×\\s*2/.test(b.textContent)
+      const spec = [...document.querySelectorAll('.ring-actions .ring-sector-group')].find(
+        (b) => b.getAttribute('data-orb-id') === 'table-2x2'
       )
       if (spec) {
         // 分栏下应直接写入右侧源码，而不是隐藏的所见即所得编辑器
@@ -2209,8 +2210,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const sourceOrbWrap = document.querySelector('.orb-wrap')
       sourceOrbWrap?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
       await wait(350)
-      const textBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
-        /文字/.test(b.textContent)
+      const textBtn = [...document.querySelectorAll('.ring-root .ring-sector-group')].find(
+        (b) => b.getAttribute('data-orb-id') === 'text'
       )
       if (textBtn) {
         textBtn.dispatchEvent(
@@ -2218,8 +2219,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         )
         await wait(350)
       }
-      const underlineBtn = [...document.querySelectorAll('.ring-actions .ring-sector-group')].find((b) =>
-        /下划线/.test(b.textContent)
+      const underlineBtn = [...document.querySelectorAll('.ring-actions .ring-sector-group')].find(
+        (b) => b.getAttribute('data-orb-id') === 'underline'
       )
       const sourceTa = document.querySelector('.source-editor')
       if (underlineBtn && sourceTa) {
@@ -2371,6 +2372,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     `[selfcheck] 悬浮球 OK: 第一圈 ${orbCheck.ring1.length} 项，分栏/源码均可展开，插入 ${orbCheck.rows} 行 ${orbCheck.cols} 列 Markdown 表格`
   )
 
+  if (!(await runStabilityCheck(win))) return false
   console.log('[selfcheck] PASS: 编辑器挂载、块渲染、Markdown 往返、大纲与字数统计均正常')
   // PASS 必须先输出，避免收尾清理因系统句柄延迟而掩盖测试结果；
   // 主进程随后会立即退出，清理失败也不影响用户工程。

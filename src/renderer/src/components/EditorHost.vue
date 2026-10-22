@@ -35,6 +35,35 @@ const previewRef = ref<HTMLElement | null>(null)
 const sourceLine = ref(1)
 const sourceLines = computed(() => state.sourceContent.split('\n').length)
 let sourceResizeObserver: ResizeObserver | null = null
+let previewFrame: number | null = null
+let previewTimer: number | null = null
+let previewDirtySince = 0
+
+/**
+ * Let input paint first; merge bursts of edits and refresh at least every
+ * 240ms during continuous typing instead of parsing the whole file per key.
+ */
+function schedulePreviewRefresh(): void {
+  if (!previewDirtySince) previewDirtySince = performance.now()
+  if (previewTimer != null) window.clearTimeout(previewTimer)
+  if (previewFrame != null) return
+  previewTimer = window.setTimeout(() => {
+    previewTimer = null
+    previewFrame = requestAnimationFrame(() => {
+      previewFrame = null
+      previewDirtySince = 0
+      refreshPreview()
+    })
+  }, Math.min(70, Math.max(0, 240 - (performance.now() - previewDirtySince))))
+}
+
+function cancelPreviewRefresh(): void {
+  if (previewFrame != null) cancelAnimationFrame(previewFrame)
+  if (previewTimer != null) window.clearTimeout(previewTimer)
+  previewFrame = null
+  previewTimer = null
+  previewDirtySince = 0
+}
 
 /**
  * 让 textarea 随内容长高，由外层 .source-scroll 统一滚动。
@@ -51,11 +80,19 @@ function resizeSourceEditor(): void {
 
 /** 刷新分栏预览区的内容。 */
 function refreshPreview(): void {
+  cancelPreviewRefresh()
   if (!isSplit.value) return
   const el = previewRef.value
   if (!el) return
   const tab = activeTab.value
-  el.innerHTML = tab ? renderPreviewHtml(tab.content) : ''
+  if (!tab) {
+    el.innerHTML = ''
+    return
+  }
+  // The split preview follows the textarea, not the delayed WYSIWYG tab
+  // content. Reading tab.content here made the preview lag one update behind
+  // while typing and forced an extra full Markdown conversion per keystroke.
+  el.innerHTML = renderPreviewHtml(state.sourceContent)
   injectPreviewHeadingIds(el)
   // 预览重建后高亮框会失效，重新定位一次
   nextTick(() => syncPreviewToCursor())
@@ -156,7 +193,7 @@ function previewBlocks(): HTMLElement[] {
 function activePreviewBlock(): HTMLElement | null {
   const md = state.sourceContent
   if (!md) return null
-  const starts = markdownBlockStarts(md)
+  const starts = sourceBlockStarts.value
   const offset = sourceCursorOffset()
   if (offset < 0) return null
   const idx = blockIndexAtOffset(starts, offset)
@@ -167,6 +204,7 @@ function activePreviewBlock(): HTMLElement | null {
 
 /** 上一次标出的元素，便于清除样式。 */
 let markedPreviewEl: HTMLElement | null = null
+const sourceBlockStarts = computed(() => markdownBlockStarts(state.sourceContent))
 
 /** 标出光标所在块 + 按需滚动。两个行为分别受设置控制。 */
 function syncPreviewToCursor(): void {
@@ -199,22 +237,21 @@ function syncPreviewToCursor(): void {
   scroller.scrollTo({ top: Math.max(0, top), behavior: 'auto' })
 }
 
-// 分栏模式下内容或视图变化时更新预览
-watch(
-  () => [state.viewMode, activeTab.value?.content, state.activeId],
-  () => {
-    if (!isSplit.value) return
-    nextTick(() => refreshPreview())
-  },
-  { flush: 'post' }
-)
-
 function updateCounts(markdown: string): void {
-  const cjk = (markdown.match(/[\u4e00-\u9fa5]/g) || []).length
-  const words = (markdown.replace(/[\u4e00-\u9fa5]/g, ' ').match(/[A-Za-z0-9_'-]+/g) || []).length
-  state.wordCount = cjk + words
+  state.wordCount = (markdown.match(/[\u4e00-\u9fa5]|[A-Za-z0-9_'-]+/g) || []).length
   state.charCount = markdown.length
 }
+
+// File reloads and application commands can replace the tab without input
+// events. Synchronize the textarea once; its watcher schedules the preview.
+watch(
+  () => activeTab.value?.content,
+  (content) => {
+    if ((isSource.value || isSplit.value) && content != null && content !== state.sourceContent) {
+      state.sourceContent = content
+    }
+  }
+)
 
 /** 保存当前标签的视图状态，供切换标签时恢复。 */
 function stashViewState(): void {
@@ -325,7 +362,6 @@ function mountEditor(): void {
     if (!t || !muya) return
     const cursor = muya.getCursorOffset()
     if (cursor) t.cursor = cursor
-    refreshOutline()
     if (state.typewriterMode) keepCursorCentered()
   })
 
@@ -391,6 +427,8 @@ watch(
 watch(
   () => state.viewMode,
   (mode, prev) => {
+    cancelPreviewRefresh()
+    muya?.hideAllFloatTools()
     const tab = activeTab.value
     if (!tab) return
 
@@ -434,7 +472,7 @@ watch(
     updateCounts(val)
     updateSourceLine()
     nextTick(resizeSourceEditor)
-    if (isSplit.value) refreshPreview()
+    if (isSplit.value) schedulePreviewRefresh()
   }
 )
 
@@ -647,6 +685,7 @@ function mediaSnippet(tag: 'video' | 'audio', path: string): Snippet {
 }
 
 function snippetFor(id: string): Snippet | null {
+  if (id === 'toc') return { text: tableOfContentsMarkdown(), block: true }
   const tableMatch = id.match(/^table-(\d+)x(\d+)$/)
   if (tableMatch) {
     return { text: tableMarkdown(Number(tableMatch[1]), Number(tableMatch[2])), block: true }
@@ -703,7 +742,6 @@ function snippetFor(id: string): Snippet | null {
       selectTo: 18,
       block: true
     },
-    toc: { text: tableOfContentsMarkdown(), block: true },
     hr: { text: '---', block: true },
     htmlBlock: { text: '<div>\n\n</div>', selectFrom: 5, selectTo: 5, block: true },
     video: mediaSnippet('video', 'media/video.mp4'),
@@ -1133,6 +1171,7 @@ function reportMatches(): void {
 
 function onFindClose(): void {
   muya?.hideAllFloatTools()
+  if (isSource.value || isSplit.value) return
   const tab = activeTab.value
   if (tab) tab.content = muya?.getMarkdown() ?? tab.content
 }
@@ -1169,7 +1208,12 @@ function onSettingsChanged(): void {
  */
 async function onInsertText(e: Event): Promise<void> {
   const text = (e as CustomEvent).detail?.text
-  if (typeof text !== 'string' || !text || !muya) return
+  if (typeof text !== 'string' || !text) return
+  if (isSource.value || isSplit.value) {
+    insertSourceSnippet({ text })
+    return
+  }
+  if (!muya) return
   await window.inkdown.writeClipboardText(text)
   focus()
   await muya.pasteAsPlainText()
@@ -1312,6 +1356,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  cancelPreviewRefresh()
   window.removeEventListener('contextmenu', onEditorContextMenu, true)
   window.removeEventListener('inkdown:find', onFind)
   window.removeEventListener('inkdown:find-close', onFindClose)

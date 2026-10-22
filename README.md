@@ -289,6 +289,17 @@ node_modules\electron\dist\electron.exe .
 
 ## 已知环境问题
 
+### 稳定性检查与异常日志
+
+构建后运行 `node scripts/stability-test.js`，检查表格重复点击、拖拽取消、
+失效表格菜单、深色菜单对比度和分栏内容同步。`--smoke` 运行完整编辑器自检，
+`--shots` 生成界面截图。每次使用独立的临时用户目录，不会结束正在使用的应用进程。
+
+应用异常记录在用户数据目录的 `logs/diagnostics.log`；Windows 默认位于
+`%APPDATA%/inkdown/logs/diagnostics.log`。日志包含渲染进程退出原因、子进程异常、
+未捕获错误和窗口无响应事件，单份最多约 2 MB，保留一份轮转备份。
+原生崩溃转储由 Electron 保存在本机，不上传到服务器。
+
 部分环境（如宿主设置了 `ELECTRON_RUN_AS_NODE=1`）会让 Electron 退化为纯 Node 模式，
 启动时报 `Cannot read properties of undefined (reading 'whenReady')`。
 三个测试脚本已自动剔除该变量；本地 `pnpm dev` 若遇到同样报错，请先清除它。

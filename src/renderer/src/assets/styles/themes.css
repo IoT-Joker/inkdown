@@ -45,6 +45,10 @@ body.theme-light {
   --hr-color: #d8dee4;
   --theme-color: #0969da;
   --selection-color: rgba(9, 105, 218, 0.25);
+  --float-bg-color: #ffffff;
+  --float-hover-color: rgba(0, 0, 0, 0.045);
+  --float-border-color: rgba(0, 0, 0, 0.1);
+  --float-shadow: 0 0 0 1px rgba(15, 15, 15, 0.04), 0 4px 12px rgba(15, 15, 15, 0.1);
 }
 
 body.theme-dark {
@@ -88,6 +92,10 @@ body.theme-dark {
   --code-new-inline-diff-background-color: #2d4a35;
   --code-old-inline-diff-background-color: #4a2d33;
   --icon-color: #9a9a9a;
+  --float-bg-color: #252526;
+  --float-hover-color: rgba(255, 255, 255, 0.08);
+  --float-border-color: rgba(255, 255, 255, 0.12);
+  --float-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 6px 18px rgba(0, 0, 0, 0.42);
 }
 
 body.theme-github {
@@ -124,6 +132,10 @@ body.theme-github {
   --hr-color: #d0d7de;
   --theme-color: #0969da;
   --selection-color: rgba(9, 105, 218, 0.22);
+  --float-bg-color: #ffffff;
+  --float-hover-color: rgba(0, 0, 0, 0.045);
+  --float-border-color: rgba(0, 0, 0, 0.1);
+  --float-shadow: 0 0 0 1px rgba(15, 15, 15, 0.04), 0 4px 12px rgba(15, 15, 15, 0.1);
 }
 
 /* 报刊：偏暖的纸张底色，适合长文阅读 */
@@ -161,6 +173,10 @@ body.theme-newsprint {
   --hr-color: #ddd8cd;
   --theme-color: #a06e28;
   --selection-color: rgba(160, 110, 40, 0.24);
+  --float-bg-color: #fbfaf7;
+  --float-hover-color: rgba(120, 100, 60, 0.07);
+  --float-border-color: rgba(120, 100, 60, 0.14);
+  --float-shadow: 0 0 0 1px rgba(120, 100, 60, 0.06), 0 4px 12px rgba(90, 75, 50, 0.12);
 }
 
 /* 夜间：低饱和深色，减少蓝光 */
@@ -201,6 +217,10 @@ body.theme-night {
   --code-new-inline-diff-background-color: #2a3d2e;
   --code-old-inline-diff-background-color: #40292e;
   --icon-color: #8a8782;
+  --float-bg-color: #1f1f24;
+  --float-hover-color: rgba(255, 255, 255, 0.07);
+  --float-border-color: rgba(255, 255, 255, 0.1);
+  --float-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 6px 18px rgba(0, 0, 0, 0.46);
 }
 
 /* 编辑器内容随主题着色（外壳变量与内核变量都已在上面设好） */
@@ -244,4 +264,25 @@ body.theme-night {
 
 .muya-container a {
   color: var(--theme-color);
+}
+
+/*
+ * Muya floating toolbars/menus live under body, outside .muya-container, so
+ * theme variables declared on body must still reach them. Keep the menu text
+ * and hover separators readable over the dark floating surface.
+ */
+.mu-float-wrapper {
+  color: var(--editor-color);
+}
+
+.mu-table-bar-tools li.item {
+  color: var(--editor-color);
+}
+
+.mu-table-bar-tools li.item[data-label='remove']::before {
+  background: var(--float-border-color);
+}
+
+.mu-table-bar-tools li.item:hover {
+  background: var(--float-hover-color);
 }

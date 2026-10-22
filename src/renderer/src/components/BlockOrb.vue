@@ -27,6 +27,12 @@ interface RingGeometry {
   labelY: number
 }
 
+interface HtmlLabel {
+  item: OrbItem
+  x: number
+  y: number
+}
+
 const emit = defineEmits<{ insert: [id: string] }>()
 
 const open = ref(false)
@@ -36,15 +42,19 @@ const dragging = ref(false)
 const dragCooldown = ref(false)
 const wrapRef = ref<HTMLElement | null>(null)
 
-const RING1_INNER = 42
-const RING1_OUTER = 84
-const RING2_INNER = 94
-const RING2_OUTER = 142
-/** 环菜单整体宽高：外圈 142 + 少量阴影余量。 */
-const PALETTE_EXTENT = 154
-const CLOSE_RADIUS = 176
-/** 环菜单展开时略收一点，静止球保持轻巧，展开信息密度也更舒服。 */
-const OPEN_SCALE = 0.92
+/**
+ * 环菜单直接按屏幕像素 1:1 绘制。
+ * 之前给整个圆盘设置 0.92~0.96 的缩放，Chromium 会把 HTML/SVG 文本
+ * 先按缩放后的尺寸栅格化再合成，Windows 上表现为明显的灰色毛边。
+ * 这里不再缩放容器，直接缩小半径来维持原来的视觉尺寸。
+ */
+const RING1_INNER = 40
+const RING1_OUTER = 80
+const RING2_INNER = 88
+const RING2_OUTER = 133
+/** 环菜单视觉半径：外圈 133 + 少量阴影余量。 */
+const PALETTE_EXTENT = 145
+const CLOSE_RADIUS = 166
 /** 二级分类需要静止停留这么久才切换，避免穿过圆环时误切。 */
 const ROOT_SWITCH_DELAY = 260
 /** 在候选二级分类上移动超过这个距离，就重新计时。 */
@@ -199,6 +209,21 @@ function buildRing(items: OrbItem[], inner: number, outer: number): RingGeometry
 
 const rootRing = computed(() => buildRing(rootItems.value, RING1_INNER, RING1_OUTER))
 const actionRing = computed(() => buildRing(actionItems.value, RING2_INNER, RING2_OUTER))
+/** 标签用 HTML 排版，避免 SVG 文本在整体缩放后被栅格化成毛边。 */
+const rootLabels = computed<HtmlLabel[]>(() =>
+  rootRing.value.map((entry) => ({
+    item: entry.item,
+    x: entry.labelX,
+    y: entry.labelY
+  }))
+)
+const actionLabels = computed<HtmlLabel[]>(() =>
+  actionRing.value.map((entry) => ({
+    item: entry.item,
+    x: entry.labelX,
+    y: entry.labelY
+  }))
+)
 
 const pos = ref({ x: 0, y: 0 })
 
@@ -232,21 +257,16 @@ function savePosition(): void {
   }
 }
 
-const wrapStyle = computed(() => {
-  const fitScale = Math.min(
-    1,
-    Math.max(0.62, (window.innerWidth - 24) / (PALETTE_EXTENT * 2))
-  )
-  const scale = fitScale * OPEN_SCALE
-  return {
-    left: `${pos.value.x}px`,
-    top: `${pos.value.y}px`,
-    '--palette-scale': scale.toFixed(3)
-  }
-})
+const wrapStyle = computed(() => ({
+  left: `${pos.value.x}px`,
+  top: `${pos.value.y}px`
+}))
 
 let closeTimer: number | null = null
 let rootSwitchTimer: number | null = null
+/** Ignore repeat inserts while a clipboard-backed action is still running. */
+let insertLocked = false
+let insertUnlockTimer: number | null = null
 /** 等待静止确认的二级分类，以及最后一次有效移动的位置。 */
 const pendingRootId = ref<string | null>(null)
 let pendingRoot: OrbItem | null = null
@@ -376,12 +396,25 @@ function onRootClick(item: OrbItem): void {
     openRing()
     return
   }
-  emit('insert', item.id)
-  close()
+  insertAndClose(item.id)
 }
 
 function onActionClick(item: OrbItem): void {
-  emit('insert', item.id)
+  insertAndClose(item.id)
+}
+
+function insertAndClose(id: string): void {
+  if (insertLocked) return
+  insertLocked = true
+  emit('insert', id)
+  // The parent handler is async, but an emitted event cannot await it. Hold
+  // the lock briefly so double clicks cannot launch two clipboard pastes
+  // against the same selection.
+  if (insertUnlockTimer != null) window.clearTimeout(insertUnlockTimer)
+  insertUnlockTimer = window.setTimeout(() => {
+    insertUnlockTimer = null
+    insertLocked = false
+  }, 240)
   close()
 }
 
@@ -514,6 +547,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   cancelClose()
   cancelRootSwitch()
+  if (insertUnlockTimer != null) window.clearTimeout(insertUnlockTimer)
   if (dragCooldownTimer != null) window.clearTimeout(dragCooldownTimer)
   window.removeEventListener('pointermove', onDragMove)
   window.removeEventListener('pointerup', stopDrag)
@@ -557,10 +591,12 @@ onBeforeUnmount(() => {
               active: activeRoot?.id === entry.item.id,
               pending: pendingRootId === entry.item.id
             }"
+            :data-orb-id="entry.item.id"
+            :data-orb-label="entry.item.label"
+            :aria-label="entry.item.label"
             :style="{ animationDelay: `${index * 18}ms` }"
             role="button"
             :tabindex="open ? 0 : -1"
-            :aria-label="entry.item.label"
             @pointerenter="onRootEnter(entry.item, $event as PointerEvent)"
             @pointermove="onRootMove(entry.item, $event as PointerEvent)"
             @pointerleave="onRootLeave(entry.item)"
@@ -569,14 +605,7 @@ onBeforeUnmount(() => {
             @keydown.enter.prevent="onRootClick(entry.item)"
             @keydown.space.prevent="onRootClick(entry.item)"
           >
-            <title>{{ entry.item.label }}</title>
             <path class="ring-sector" :d="entry.path" />
-            <text class="ring-icon" :x="entry.labelX" :y="entry.labelY - 7">
-              {{ entry.item.icon }}
-            </text>
-            <text class="ring-label" :x="entry.labelX" :y="entry.labelY + 9">
-              {{ entry.item.label }}
-            </text>
           </g>
         </g>
 
@@ -585,23 +614,54 @@ onBeforeUnmount(() => {
             v-for="(entry, index) in actionRing"
             :key="`${activeRoot.id}-${entry.item.id}`"
             class="ring-sector-group"
+            :data-orb-id="entry.item.id"
+            :data-orb-label="entry.item.label"
+            :aria-label="entry.item.label"
             :style="{ animationDelay: `${index * 22}ms` }"
             role="button"
             :tabindex="open ? 0 : -1"
-            :aria-label="entry.item.label"
             @pointerenter="onActionEnter"
             @click.stop="onActionClick(entry.item)"
             @keydown.enter.prevent="onActionClick(entry.item)"
             @keydown.space.prevent="onActionClick(entry.item)"
           >
-            <title>{{ entry.item.label }}</title>
             <path class="ring-sector action-sector" :d="entry.path" />
-            <text class="ring-label action-label" :x="entry.labelX" :y="entry.labelY">
-              {{ entry.item.label }}
-            </text>
           </g>
         </g>
       </svg>
+    </div>
+
+    <!--
+      标签不放在缩放中的 .orb-palette 内，确保圆盘展开动画不会把文字
+      一起栅格化；动画只作用于扇区，文字始终按最终尺寸绘制。
+    -->
+    <div v-if="open" class="ring-labels ring-labels-root" aria-hidden="true">
+      <span
+        v-for="entry in rootLabels"
+        :key="`label-${entry.item.id}`"
+        class="ring-label-item"
+        :class="{ active: activeRoot?.id === entry.item.id }"
+        :style="{
+          left: `calc(50% + ${entry.x}px)`,
+          top: `calc(50% + ${entry.y}px)`
+        }"
+      >
+        <span class="ring-label-icon">{{ entry.item.icon }}</span>
+        <span class="ring-label-text">{{ entry.item.label }}</span>
+      </span>
+    </div>
+    <div v-if="open && activeRoot && actionLabels.length" class="ring-labels ring-labels-action" aria-hidden="true">
+      <span
+        v-for="entry in actionLabels"
+        :key="`label-${activeRoot.id}-${entry.item.id}`"
+        class="ring-label-item"
+        :style="{
+          left: `calc(50% + ${entry.x}px)`,
+          top: `calc(50% + ${entry.y}px)`
+        }"
+      >
+        <span class="ring-label-text">{{ entry.item.label }}</span>
+      </span>
     </div>
 
     <button
@@ -660,7 +720,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: transparent;
   cursor: grab;
-  opacity: 0.5;
+  opacity: 0.82;
   outline: none;
   transition:
     opacity 0.22s ease,
@@ -669,7 +729,7 @@ onBeforeUnmount(() => {
 
 .orb:hover,
 .orb.active {
-  opacity: 0.92;
+  opacity: 1;
   transform: scale(1.06);
 }
 
@@ -687,13 +747,12 @@ onBeforeUnmount(() => {
     radial-gradient(circle, color-mix(in srgb, var(--ty-accent) 10%, transparent), transparent 62%);
   opacity: 0.05;
   filter: blur(7px);
-  animation: halo-breathe 2.8s ease-in-out infinite;
   transition: opacity 0.25s ease;
 }
 
 .orb.active .orb-halo {
   opacity: 0.16;
-  animation-duration: 1.4s;
+  animation: halo-breathe 2.8s ease-in-out infinite;
 }
 
 .orb-core {
@@ -769,7 +828,7 @@ onBeforeUnmount(() => {
   height: 0;
   opacity: 0;
   pointer-events: none;
-  transform: scale(0.72) rotate(-7deg);
+  transform: scale(0.75) rotate(-7deg);
   transform-origin: 0 0;
   transition:
     opacity 0.2s ease,
@@ -779,7 +838,7 @@ onBeforeUnmount(() => {
 .orb-palette.open {
   opacity: 1;
   pointer-events: auto;
-  transform: scale(var(--palette-scale, 1)) rotate(0deg);
+  transform: scale(1) rotate(0deg);
   transform-origin: 0 0;
 }
 
@@ -804,10 +863,12 @@ onBeforeUnmount(() => {
   filter: blur(13px);
   transition: opacity 0.28s ease;
   animation: aura-spin 9s linear infinite;
+  animation-play-state: paused;
 }
 
 .orb-aura.lit {
   opacity: 0.16;
+  animation-play-state: running;
 }
 
 .orb-svg {
@@ -819,6 +880,63 @@ onBeforeUnmount(() => {
   overflow: visible;
   filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.09));
   pointer-events: none;
+}
+
+/*
+ * 标签脱离 SVG 后用 HTML 排版：字体由 Chromium 直接按设备像素栅格化，
+ * 不再受 SVG 内部坐标系与整体缩放叠加影响。坐标使用视觉半径，
+ * 位置直接使用与 SVG 相同的 1:1 屏幕坐标。
+ */
+.ring-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  animation: labels-in 0.2s ease both;
+}
+
+.ring-label-item {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  max-width: 68px;
+  color: var(--ty-text);
+  line-height: 1.15;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+.ring-label-icon {
+  color: color-mix(in srgb, var(--ty-accent) 58%, var(--ty-text));
+  font-family: 'Segoe UI Symbol', 'Segoe UI', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ring-label-text {
+  margin-top: 3px;
+  font-family: var(--ty-font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-rendering: geometricPrecision;
+  /* 全局 antialiased 会让 Windows 上的小号中文发灰，圆盘标签恢复原生字重渲染。 */
+  -webkit-font-smoothing: auto;
+  white-space: nowrap;
+}
+
+.ring-labels-action .ring-label-text {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.ring-label-item.active {
+  color: color-mix(in srgb, var(--ty-accent) 72%, var(--ty-text));
+  font-weight: 700;
 }
 
 .ring-sector-group {
@@ -851,8 +969,8 @@ onBeforeUnmount(() => {
 .ring-sector {
   fill: color-mix(in srgb, var(--ty-bg) 96%, var(--ty-accent));
   stroke: color-mix(in srgb, var(--ty-border) 84%, var(--ty-accent));
-  fill-opacity: 0.6;
-  stroke-opacity: 0.4;
+  fill-opacity: 0.96;
+  stroke-opacity: 0.72;
   stroke-width: 0.65;
   pointer-events: all;
   transition:
@@ -880,11 +998,6 @@ onBeforeUnmount(() => {
     drop-shadow(0 0 5px color-mix(in srgb, var(--ty-accent) 22%, transparent));
 }
 
-.ring-root .ring-sector-group.active .ring-label {
-  fill: color-mix(in srgb, var(--ty-accent) 74%, var(--ty-text));
-  font-weight: 700;
-}
-
 .ring-root .ring-sector-group.pending .ring-sector {
   fill: color-mix(in srgb, var(--ty-accent) 5%, var(--ty-bg));
   stroke-dasharray: 3 2;
@@ -893,36 +1006,8 @@ onBeforeUnmount(() => {
 .action-sector {
   fill: color-mix(in srgb, var(--ty-bg) 97%, var(--ty-accent));
   stroke: color-mix(in srgb, var(--ty-border) 76%, var(--ty-accent));
-  fill-opacity: 0.52;
-  stroke-opacity: 0.34;
-}
-
-.ring-icon,
-.ring-label {
-  fill: var(--ty-text);
-  text-anchor: middle;
-  dominant-baseline: middle;
-  pointer-events: none;
-}
-
-.ring-icon {
-  fill: color-mix(in srgb, var(--ty-accent) 52%, var(--ty-muted));
-  font-family: 'Segoe UI Symbol', 'Segoe UI', sans-serif;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-}
-
-.ring-label {
-  font-family: var(--ty-font-ui);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.action-label {
-  font-size: 9px;
-  font-weight: 550;
+  fill-opacity: 0.96;
+  stroke-opacity: 0.68;
 }
 
 .orb-palette.open .ring-actions .ring-sector-group {
@@ -963,6 +1048,15 @@ onBeforeUnmount(() => {
   }
 }
 
+@keyframes labels-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes aura-spin {
   to {
     transform: rotate(360deg);
@@ -972,6 +1066,7 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .orb-halo,
   .orb-aura,
+  .ring-labels,
   .ring-sector-group {
     animation: none;
   }

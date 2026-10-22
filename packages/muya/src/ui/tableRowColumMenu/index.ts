@@ -48,10 +48,12 @@ export class TableRowColumMenu extends BaseFloat {
             'muya-table-bar',
             ({ reference, tableInfo, block }) => {
                 if (reference) {
+                    if (!block?.outMostBlock)
+                        return this.hide();
                     this._tableInfo = tableInfo;
                     this._block = block;
-                    this.show(reference);
                     this.render();
+                    this.show(reference);
                 }
                 else {
                     this.hide();
@@ -99,7 +101,12 @@ export class TableRowColumMenu extends BaseFloat {
         event.preventDefault();
         event.stopPropagation();
 
+        if (!this.status)
+            return;
         const block = this._block;
+        // Consume this menu session before mutating the document. A queued
+        // second click must not reuse the same cell after the menu closes.
+        this.hide();
         // The menu stays open while the document changes under it. Once an
         // Undo has removed the table, its cells are detached and editing one
         // threw instead of doing nothing.
@@ -140,5 +147,11 @@ export class TableRowColumMenu extends BaseFloat {
         }
 
         this.hide();
+    }
+
+    override hide() {
+        super.hide();
+        this._block = null;
+        this._tableInfo = null;
     }
 }

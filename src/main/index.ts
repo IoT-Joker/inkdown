@@ -22,6 +22,8 @@ import {
 import { getMainWindow } from './window'
 import { initUpdater, humanizeUpdateErrorForTest } from './updater'
 import { markdownToDocx } from './exportDocx'
+import { runStabilityCheck } from './stabilityCheck'
+import { installDiagnostics } from './diagnostics'
 
 /**
  * Inkdown 主进程入口。
@@ -43,6 +45,7 @@ import { markdownToDocx } from './exportDocx'
 // 否则它验证不了「第二个实例把文件转发给第一个实例」。
 const isTestRun = !!(
   process.env['INKDOWN_SELF_CHECK'] ||
+  process.env['INKDOWN_STABILITY_CHECK'] ||
   process.env['INKDOWN_FILE_TEST'] ||
   process.env['INKDOWN_SESSION_TEST'] ||
   process.env['INKDOWN_SCREENSHOT'] ||
@@ -58,6 +61,8 @@ if (!isTestRun && !acquireSingleInstanceLock()) {
   // 用立即退出而非 return：本文件是模块顶层，return 不适用
   process.exit(0)
 }
+
+installDiagnostics()
 
 // 启动参数里的文档路径（文件关联双击时由系统传入）
 const startupFile = extractFileFromArgv(process.argv)
@@ -691,6 +696,12 @@ app.whenReady().then(async () => {
   registerIpc()
   buildAppMenu()
   const win = createWindow()
+
+  if (process.env['INKDOWN_STABILITY_CHECK']) {
+    const ok = await runStabilityCheck(win)
+    app.exit(ok ? 0 : 1)
+    return
+  }
 
   // INKDOWN_SELF_CHECK=1 时执行端到端自检（用于 CI/验证），完成后自动退出
   if (process.env['INKDOWN_SELF_CHECK']) {

@@ -1,6 +1,7 @@
 import { BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
+import { observeWindow } from './diagnostics'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -45,6 +46,7 @@ export function createWindow(): BrowserWindow {
   })
 
   mainWindow = win
+  observeWindow(win)
 
   win.on('ready-to-show', () => win.show())
   win.on('closed', () => {

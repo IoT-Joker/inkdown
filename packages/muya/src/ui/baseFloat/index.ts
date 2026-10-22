@@ -34,6 +34,7 @@ abstract class BaseFloat {
 
     private _cleanup: (() => void) | null = null;
     private _resizeObserver: ResizeObserver | null = null;
+    private _resizeFrame: number | null = null;
 
     constructor(
         public muya: Muya,
@@ -62,7 +63,12 @@ abstract class BaseFloat {
         // the floatBox needs to set the size according to the container size
         const resizeObserver = (this._resizeObserver = new ResizeObserver(() => {
             // Use requestAnimationFrame to avoid "ResizeObserver loop completed" warning
-            requestAnimationFrame(() => {
+            if (this._resizeFrame !== null)
+                return;
+            this._resizeFrame = requestAnimationFrame(() => {
+                this._resizeFrame = null;
+                if (!floatBox.isConnected)
+                    return;
                 const { offsetWidth, offsetHeight } = container;
 
                 Object.assign(floatBox.style, {
@@ -153,9 +159,8 @@ abstract class BaseFloat {
         const { floatBox } = this;
         const { eventCenter } = this.muya;
         const { placement, offsetOptions } = this.options;
-        if (!floatBox) {
-            throw new Error('The float box is not existed.');
-        }
+        if (!floatBox?.isConnected)
+            return;
         if (this._cleanup) {
             this._cleanup();
             this._cleanup = null;
@@ -165,6 +170,13 @@ abstract class BaseFloat {
         // concrete callback shape is accepted; the field stores it as
         // `unknown[]` so internal call sites can forward arbitrary args.
         this.cb = cb as (...args: unknown[]) => void;
+
+        // Rendered menu dimensions must be applied before the first position
+        // calculation, rather than waiting for the ResizeObserver's next frame.
+        if (this.container) {
+            floatBox.style.width = `${this.container.offsetWidth}px`;
+            floatBox.style.height = `${this.container.offsetHeight}px`;
+        }
 
         const cleanup = autoUpdate(reference, floatBox, () => {
             computePosition(reference, floatBox, {
@@ -183,6 +195,11 @@ abstract class BaseFloat {
                     top: `${y}px`,
                     opacity: 1,
                 });
+            }).catch((error: unknown) => {
+                if (this._cleanup !== cleanup)
+                    return;
+                console.error(`[${this.name}] Position update failed`, error);
+                this.hide();
             });
         });
         this._cleanup = cleanup;
@@ -195,8 +212,13 @@ abstract class BaseFloat {
     }
 
     destroy() {
-        if (this.container && this._resizeObserver)
-            this._resizeObserver.unobserve(this.container);
+        this.hide();
+        this._resizeObserver?.disconnect();
+        this._resizeObserver = null;
+        if (this._resizeFrame !== null) {
+            cancelAnimationFrame(this._resizeFrame);
+            this._resizeFrame = null;
+        }
 
         if (this._cleanup) {
             this._cleanup();

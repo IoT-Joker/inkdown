@@ -46,7 +46,7 @@ export class TableColumnToolbar extends BaseFloat {
         super.listen();
 
         const handler = throttle((event: Event) => {
-            if (!isMouseEvent(event))
+            if (!isMouseEvent(event) || !this.muya.domNode.isConnected || !this.muya.domNode.getClientRects().length)
                 return;
 
             const { x, y } = event;
@@ -83,10 +83,14 @@ export class TableColumnToolbar extends BaseFloat {
                         ele[BLOCK_DOM_PROPERTY]
                         && ele[BLOCK_DOM_PROPERTY].blockName === 'table.cell',
                 );
-                const cellBlock = tableCellEle![BLOCK_DOM_PROPERTY];
+                const cellBlock = tableCellEle![BLOCK_DOM_PROPERTY] as CellBlock;
+                if (!cellBlock.outMostBlock)
+                    return this.hide();
+                if (this.status && this._block === cellBlock)
+                    return;
                 this._block = cellBlock as CellBlock;
-                this.show(tableCellEle!);
                 this.render();
+                this.show(tableCellEle!);
             }
             else {
                 this.hide();
@@ -116,7 +120,7 @@ export class TableColumnToolbar extends BaseFloat {
             );
             const iconWrapper = h(iconWrapperSelector, icon);
 
-            let itemSelector = `li.item.${i.type}`;
+            let itemSelector = `li.item.${i.type.replace(/ /g, '.')}`;
             if (block?.align === i.type)
                 itemSelector += '.active';
 
@@ -153,6 +157,8 @@ export class TableColumnToolbar extends BaseFloat {
         event.preventDefault();
         event.stopPropagation();
 
+        if (!this.status)
+            return;
         const { _block: block } = this;
         // The toolbar stays open while the document changes under it. Once an
         // Undo has removed the table, its cells are detached — and a detached
@@ -164,6 +170,9 @@ export class TableColumnToolbar extends BaseFloat {
         const offset = block.parent!.offset(block);
         const { table, row } = block;
         const columnCount = row.offset(block);
+
+        if (item.type === 'remove' || item.type.startsWith('insert '))
+            this.hide();
 
         switch (item.type) {
             case 'remove': {
@@ -196,5 +205,10 @@ export class TableColumnToolbar extends BaseFloat {
 
                 return this.render();
         }
+    }
+
+    override hide() {
+        super.hide();
+        this._block = null;
     }
 }

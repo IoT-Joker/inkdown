@@ -178,15 +178,15 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
       if (wrap) {
         wrap.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
         await wait(400)
-        const tb = [...document.querySelectorAll('.ring-root .ring-sector-group')].find((b) =>
-          /表格/.test(b.textContent)
+        const tb = [...document.querySelectorAll('.ring-root .ring-sector-group')].find(
+          (b) => b.getAttribute('data-orb-id') === 'table'
         )
         if (tb) {
           tb.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
           await wait(400)
         }
-        orbItems = [...document.querySelectorAll('.ring-actions .ring-sector-group')].map((b) =>
-          b.textContent.trim()
+        orbItems = [...document.querySelectorAll('.ring-actions .ring-sector-group')].map(
+          (b) => b.getAttribute('data-orb-label') || ''
         )
       }
       return {
@@ -282,18 +282,67 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
           const wait = (ms) => new Promise((r) => setTimeout(r, ms))
           const app = window.__inkdownApp
           const c = window.__inkdownCommands
-          if (app.viewMode() !== 'source') await c.execute('view:toggleSource')
-          await wait(500)
+          // 截图脚本在多个视图间复用同一个 textarea，状态切换存在异步延迟；
+          // 先显式稳定到源码，再展开圆盘，避免拍到上一张的静止球状态。
+          for (let i = 0; i < 4 && app.viewMode() !== 'source'; i++) {
+            await c.execute('view:toggleSource')
+            await wait(450)
+          }
+          if (app.viewMode() !== 'source') return false
+          await wait(700)
           const wrap = document.querySelector('.orb-wrap')
+          if (!wrap) return false
           wrap?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
-          await wait(450)
+          await wait(650)
           return !!document.querySelector('.orb-palette.open')
+        })()
+      `
+    },
+    {
+      name: '15-dark-table-menu.png',
+      setup: `
+        (async () => {
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+          const app = window.__inkdownApp
+          const commands = window.__inkdownCommands
+          document.body.className = 'theme-dark'
+          for (let i = 0; i < 4 && app.viewMode() !== 'wysiwyg'; i++) {
+            await commands.execute('view:toggleSource')
+            await wait(100)
+          }
+          window.__inkdownLoad('# Table editing\\n\\n| Feature | Status |\\n| --- | --- |\\n| Insert rows | Ready |\\n| Dark menus | Readable |\\n\\nClick a table handle to edit rows or columns.\\n')
+          await wait(300)
+          const muya = window.__inkdownMuya
+          const table = muya.editor.scrollPage.firstContentInDescendant().nextContentInContext().closestBlock('table')
+          const block = table.cellAt(2, 0)
+          muya.eventCenter.emit('muya-table-bar', { reference: block.domNode, block, tableInfo: { barType: 'right' } })
+          await wait(300)
+          return muya._uiPlugins.tableBarTools.status
+        })()
+      `
+    },
+    {
+      name: '16-dark-orb.png',
+      setup: `
+        (async () => {
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+          await window.__inkdownCommands.execute('view:toggleSplit')
+          await wait(200)
+          const wrap = document.querySelector('.orb-wrap')
+          wrap.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+          await wait(200)
+          document.querySelector('.ring-root [data-orb-id="table"]').dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }))
+          await wait(500)
+          return !!document.querySelector('.ring-actions')
         })()
       `
     }
   ]
   for (const e of extra) {
-    await win.webContents.executeJavaScript(e.setup)
+    if (!(await win.webContents.executeJavaScript(e.setup))) {
+      console.error('[shot] Setup failed:', e.name)
+      return false
+    }
     await new Promise((r) => setTimeout(r, 500))
     const shot = await win.webContents.capturePage()
     await fsp.writeFile(join(outDir, e.name), shot.toPNG())

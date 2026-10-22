@@ -22,6 +22,8 @@ interface IDragInfo {
     cells: HTMLTableCellElement[][];
     aspects: number[];
     offset: number;
+    rowCount: number;
+    columnCount: number;
 }
 
 function calculateAspects(tableBlock: Table, barType: BarType) {
@@ -160,6 +162,8 @@ export class TableDragBar extends BaseFloat {
     static pluginName = 'tableDragBar';
     private _block: TableBodyCell | null = null;
     private _mouseTimer: ReturnType<typeof setTimeout> | null = null;
+    private _dropTimer: ReturnType<typeof setTimeout> | null = null;
+    private _pendingMouseupId: string | null = null;
     private _dragEventIds: string[] = [];
     private _isDragTableBar: boolean = false;
     private _barType: 'bottom' | 'right' | null = null;
@@ -180,10 +184,16 @@ export class TableDragBar extends BaseFloat {
         super.listen();
 
         const handler = throttle((event: Event) => {
-            if (!isMouseEvent(event))
+            if (!isMouseEvent(event) || !this.muya.domNode.isConnected || !this.muya.domNode.getClientRects().length)
+                return;
+
+            if (this._dragInfo || this._mouseTimer || this._dropTimer)
                 return;
 
             const { x, y } = event;
+            const topmost = document.elementFromPoint(x, y);
+            if (this.status && topmost && this.floatBox?.contains(topmost))
+                return;
             const els = [...document.elementsFromPoint(x, y)];
             const aboveEls = [...document.elementsFromPoint(x, y - OFFSET)];
             const leftEls = [...document.elementsFromPoint(x - OFFSET, y)];
@@ -207,6 +217,10 @@ export class TableDragBar extends BaseFloat {
                 );
                 const cellBlock = tableCellEl![BLOCK_DOM_PROPERTY] as TableBodyCell;
                 const barType = hasTableCell(aboveEls) ? 'bottom' : 'right';
+                if (!cellBlock.outMostBlock)
+                    return this.hide();
+                if (this.status && this._block === cellBlock && this._barType === barType)
+                    return;
 
                 this.options = Object.assign(
                     {},
@@ -214,8 +228,8 @@ export class TableDragBar extends BaseFloat {
                 );
                 this._barType = barType;
                 this._block = cellBlock;
-                this.show(tableCellEl!);
                 this._render(barType);
+                this.show(tableCellEl!);
             }
             else {
                 this.hide();
@@ -228,12 +242,29 @@ export class TableDragBar extends BaseFloat {
     }
 
     private _mousedown = (event: Event) => {
+        if (!isMouseEvent(event) || event.button !== 0 || !this.status || !this._block?.outMostBlock || this._dropTimer)
+            return;
         event.preventDefault();
         event.stopPropagation();
+        this._resetDragTableBar();
+        // Releasing outside the handle must cancel the long-press timer too.
+        this._pendingMouseupId = this.muya.eventCenter.attachDOMEvent(document, 'mouseup', this._cancelPendingPress);
         this._mouseTimer = setTimeout(() => {
-            this._startDrag(event);
             this._mouseTimer = null;
+            this._cancelPendingPress();
+            this._startDrag(event);
         }, 300);
+    };
+
+    private _cancelPendingPress = () => {
+        if (this._mouseTimer) {
+            clearTimeout(this._mouseTimer);
+            this._mouseTimer = null;
+        }
+        if (this._pendingMouseupId) {
+            this.muya.eventCenter.detachDOMEvent(this._pendingMouseupId);
+            this._pendingMouseupId = null;
+        }
     };
 
     private _mouseup = (event: Event) => {
@@ -243,12 +274,12 @@ export class TableDragBar extends BaseFloat {
         const { eventCenter } = this.muya;
 
         if (this._mouseTimer) {
-            clearTimeout(this._mouseTimer);
-            this._mouseTimer = null;
-            if (barType && this._block) {
+            this._cancelPendingPress();
+            if (barType && this._block?.outMostBlock) {
+                const rect = container!.getBoundingClientRect();
                 eventCenter.emit('muya-table-bar', {
                     reference: {
-                        getBoundingClientRect: () => container!.getBoundingClientRect(),
+                        getBoundingClientRect: () => rect,
                     },
                     tableInfo: {
                         barType,
@@ -261,7 +292,7 @@ export class TableDragBar extends BaseFloat {
 
     private _startDrag(event: Event) {
         event.preventDefault();
-        if (!isMouseEvent(event) || !this._block || !this._barType)
+        if (!isMouseEvent(event) || !this._block?.outMostBlock || !this._block.domNode?.isConnected || !this._barType)
             return;
 
         const { table } = this._block;
@@ -281,6 +312,8 @@ export class TableDragBar extends BaseFloat {
             cells: getAllTableCells(table),
             aspects,
             offset: 0,
+            rowCount: table.rowCount,
+            columnCount: table.columnCount,
         };
 
         for (const row of this._dragInfo.cells) {
@@ -299,6 +332,11 @@ export class TableDragBar extends BaseFloat {
     private _docMousemove = (event: Event) => {
         if (!this._dragInfo || !isMouseEvent(event))
             return;
+
+        if (!this._dragIsValid()) {
+            this._resetDragTableBar();
+            return;
+        }
 
         const { barType } = this._dragInfo;
         const attrName = barType === 'bottom' ? 'clientX' : 'clientY';
@@ -322,15 +360,23 @@ export class TableDragBar extends BaseFloat {
             eventCenter.detachDOMEvent(id);
 
         this._dragEventIds = [];
-        if (!this._isDragTableBar)
+        if (!this._isDragTableBar || !this._dragIsValid()) {
+            this._resetDragTableBar();
             return;
+        }
 
         this._setDropTargetStyle();
 
         // The drop animation need 300ms.
-        setTimeout(() => {
-            this._switchTableData();
-            this._resetDragTableBar();
+        this._dropTimer = setTimeout(() => {
+            this._dropTimer = null;
+            try {
+                this._switchTableData();
+            }
+            finally {
+                this._resetDragTableBar();
+                this.hide();
+            }
         }, 300);
     };
 
@@ -433,10 +479,10 @@ export class TableDragBar extends BaseFloat {
     };
 
     private _switchTableData = () => {
-        if (!this._dragInfo)
+        if (!this._dragIsValid())
             return;
 
-        const { barType, index, curIndex, table, offset } = this._dragInfo;
+        const { barType, index, curIndex, table, offset } = this._dragInfo!;
         if (index === curIndex)
             return;
 
@@ -447,14 +493,11 @@ export class TableDragBar extends BaseFloat {
         let startOffset = 0;
         let endOffset = 0;
 
-        // Find the new cursor position in table.
-        if (table.active) {
-            // TODO: @JOCS remove use this.selection directly
-            const { anchorBlock, anchor, focus, isSelectionInSameBlock }
-                = this.muya.editor.selection ?? {};
-            const { rowOffset, columnOffset } = anchorBlock?.closestBlock(
-                'table.cell',
-            ) as TableBodyCell;
+        const selection = this.muya.editor.selection.getSelection();
+        const cursorCell = selection?.anchor.block.closestBlock('table.cell') as TableBodyCell | null;
+        if (cursorCell?.outMostBlock && cursorCell.table === table) {
+            const { anchor, focus, isSelectionInSameBlock } = selection!;
+            const { rowOffset, columnOffset } = cursorCell;
 
             startOffset = isSelectionInSameBlock
                 ? Math.min(anchor!.offset, focus!.offset)
@@ -493,6 +536,12 @@ export class TableDragBar extends BaseFloat {
                 }
             }
         }
+        else if (!selection && table.active) {
+            // Rectangular selection and toolbar clicks can clear the native
+            // range. Keep the caret in a live cell after replacing the table.
+            cursorRowOffset = barType === 'right' ? curIndex : 0;
+            cursorColumnOffset = barType === 'bottom' ? curIndex : 0;
+        }
 
         if (barType === 'bottom') {
             tableState.children.forEach((row) => {
@@ -520,10 +569,37 @@ export class TableDragBar extends BaseFloat {
         }
     };
 
+    private _dragIsValid(): boolean {
+        const info = this._dragInfo;
+        return !!info && !!info.table.outMostBlock && !!info.table.domNode?.isConnected
+            && this.muya.domNode.getClientRects().length > 0
+            && info.table.rowCount === info.rowCount && info.table.columnCount === info.columnCount
+            && info.cells.every(row => row.every(cell => cell.isConnected));
+    }
+
     private _resetDragTableBar = () => {
+        this._cancelPendingPress();
+        if (this._dropTimer) {
+            clearTimeout(this._dropTimer);
+            this._dropTimer = null;
+        }
+        for (const id of this._dragEventIds)
+            this.muya.eventCenter.detachDOMEvent(id);
+        this._dragEventIds = [];
+        for (const row of this._dragInfo?.cells ?? []) {
+            for (const cell of row) {
+                cell.style.transform = '';
+                cell.classList.remove('mu-cell-transform', 'mu-drag-cell', 'mu-drag-bottom', 'mu-drag-right');
+            }
+        }
         this._dragInfo = null;
         this._isDragTableBar = false;
     };
+
+    override destroy() {
+        this._resetDragTableBar();
+        super.destroy();
+    }
 
     private _render(barType: BarType) {
         this.container!.dataset.drag = barType;
