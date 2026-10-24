@@ -1,6 +1,6 @@
 {
   "name": "inkdown",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Inkdown - a Typora-like WYSIWYG markdown editor built on marktext's muya engine",
   "main": "./out/main/index.js",
   "author": "inkdown",
