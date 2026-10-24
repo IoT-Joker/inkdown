@@ -45,8 +45,12 @@ if (dev) {
   child.on('exit', (code) => process.exit(code ?? 0))
 } else {
   // 生产模式：直接用 Electron 运行构建产物
-  if (!fs.existsSync(path.join(root, 'out', 'main', 'index.js'))) {
-    console.error('尚未构建。请先执行：pnpm build')
+  const required = ['out/main/index.js', 'out/preload/index.js', 'out/renderer/index.html']
+  const missing = required.filter((file) => !fs.existsSync(path.join(root, file)))
+  if (missing.length) {
+    console.error('构建产物不完整，无法启动 Inkdown。缺少：')
+    for (const file of missing) console.error('  ' + file)
+    console.error('请先执行 pnpm build，等待构建成功后再启动。')
     process.exit(1)
   }
   console.log('正在启动 Inkdown …（关闭窗口即退出）')

@@ -7,6 +7,58 @@ const { test } = require('node:test')
 const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
+
+test('Word export layout probe remains valid JavaScript after template escaping', () => {
+  const source = fs.readFileSync(path.join(root, 'src/main/exportVisualDocx.ts'), 'utf8')
+  const raw = source.match(/executeJavaScript\(`([\s\S]*?)`\)/)[1]
+  const script = vm.runInNewContext('`' + raw + '`')
+  assert.doesNotThrow(() => new vm.Script(script))
+})
+
+
+test('launcher refuses incomplete builds instead of opening a blank window', () => {
+  for (const missing of ['out/main/index.js', 'out/preload/index.js', 'out/renderer/index.html']) {
+    const messages = []
+    let spawned = false
+    const context = {
+      __dirname: path.join(root, 'scripts'),
+      require: (name) => ({
+        child_process: { spawn() { spawned = true } }, path,
+        fs: { existsSync: (file) => file !== path.join(root, missing) }
+      })[name],
+      console: { error: (...args) => messages.push(args.join(' ')), log() {} },
+      process: { env: {}, argv: [], exit(code) { throw new Error('exit:' + code) } }
+    }
+    assert.throws(() => vm.runInNewContext(fs.readFileSync(path.join(root, 'scripts/start.js'), 'utf8'), context), /exit:1/)
+    assert.equal(spawned, false)
+    assert.ok(messages.some((message) => message.includes(missing)))
+  }
+})
+
+test('PlantUML waits for image load and reports network failures', async () => {
+  let img
+  const Diagram = load('packages/muya/src/utils/diagram/plantuml/index.ts', {
+    'plantuml-encoder': { default: { encode: () => 'encoded' } }
+  }, { URL, setTimeout, clearTimeout, document: { createElement: () => (img = {}) } }).default
+  const target = { tagName: 'DIV', replaceChildren() {} }
+  const diagram = Diagram.parse('diagram', 'https://example.test/plantuml/')
+  let finished = false
+  const pending = Promise.resolve(diagram.insertImgElement(target)).then(() => { finished = true })
+  await Promise.resolve()
+  assert.equal(finished, false, 'must not treat an unloaded image as a rendered diagram')
+  assert.equal(img.src, 'https://example.test/plantuml/svg/encoded')
+  img.onload()
+  await pending
+  const failed = diagram.insertImgElement(target)
+  img.onerror()
+  await assert.rejects(failed, /PlantUML.*(network|server)/i)
+})
+
+test('renderer CSP permits remote diagram images but not remote scripts', () => {
+  const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
+  assert.match(html, /img-src[^;]*https:/)
+  assert.match(html, /script-src 'self';/)
+})
 function load(file, deps = {}, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
@@ -45,7 +97,7 @@ function ipcHarness() {
     electron: { app: {}, dialog: {}, shell: {}, clipboard: {}, BrowserWindow: {}, ipcMain: { handle: (key, fn) => handlers.set(key, fn) } },
     './window': {}, './menu': {}, './locale': { getLocale: () => 'en' },
     '../shared/i18n': { translate: (_locale, key) => key }, './fileAssociation': {},
-    './updater': {}, './exportDocx': {}, './folderSearch': {}
+    './updater': {}, './exportDocx': {}, './folderSearch': {}, './exportWindow': {}, './exportVisualDocx': {}
   }, { Buffer, console, process, setTimeout, clearTimeout })
   ipc.registerIpc()
   return handlers

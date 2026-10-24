@@ -168,7 +168,7 @@ export async function renderDiagram({
     if (type === 'plantuml') {
         const diagram = render.parse(code, plantumlServer);
         target.innerHTML = '';
-        diagram.insertImgElement(target);
+        await diagram.insertImgElement(target);
     }
     else if (type === 'vega-lite') {
         await render(target, JSON.parse(code), options);

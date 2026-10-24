@@ -9,6 +9,8 @@ import { translate, type LocaleCode } from '../shared/i18n'
 import { takePendingFile } from './fileAssociation'
 import { checkForUpdatesManually } from './updater'
 import { markdownToDocx } from './exportDocx'
+import { writeHtmlPdf } from './exportWindow'
+import { htmlToVisualDocx } from './exportVisualDocx'
 import { searchInFolder, type SearchOptions } from './folderSearch'
 import { randomUUID } from 'node:crypto'
 
@@ -283,7 +285,7 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'app:exportDocx',
-    async (_e, markdown: string, defaultName: string, title: string) => {
+    async (_e, markdown: string, defaultName: string, title: string, html?: string) => {
       const win = getMainWindow()
       const result = await dialog.showSaveDialog(win!, {
         defaultPath: defaultName,
@@ -291,12 +293,12 @@ export function registerIpc(): void {
       })
       if (result.canceled || !result.filePath) return null
       try {
-        const buffer = await markdownToDocx(markdown, title)
+        const buffer = html ? await htmlToVisualDocx(html, title) : await markdownToDocx(markdown, title)
         await fsp.writeFile(result.filePath, buffer)
         return result.filePath
       } catch (err) {
         console.error('[exportDocx] 失败:', err)
-        return null
+        throw err
       }
     }
   )
@@ -354,29 +356,12 @@ export function registerIpc(): void {
   ipcMain.handle(
     'app:exportPdf',
     async (_e, filePath: string, html: string, options?: { landscape?: boolean }) => {
-      const printer = new BrowserWindow({
-        show: false,
-        width: 900,
-        height: 1200,
-        webPreferences: { sandbox: true, contextIsolation: true, javascript: false }
-      })
       try {
-        await printer.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
-        // 等待字体与布局稳定
-        await new Promise((r) => setTimeout(r, 600))
-        const data = await printer.webContents.printToPDF({
-          printBackground: true,
-          landscape: options?.landscape ?? false,
-          pageSize: 'A4',
-          margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 }
-        })
-        await fsp.writeFile(filePath, data)
+        await writeHtmlPdf(filePath, html, options?.landscape)
         return true
       } catch (err) {
         console.error('[exportPdf] 失败:', err)
         return false
-      } finally {
-        if (!printer.isDestroyed()) printer.destroy()
       }
     }
   )

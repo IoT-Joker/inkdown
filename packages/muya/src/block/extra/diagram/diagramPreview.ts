@@ -13,6 +13,7 @@ class DiagramPreview extends Parent {
     private _code: string;
     private _type: string;
     private _cancelFinalize: (() => void) | null = null;
+    private _renderVersion = 0;
     static override blockName = 'diagram-preview';
 
     static create(muya: Muya, state: IDiagramState) {
@@ -63,6 +64,7 @@ class DiagramPreview extends Parent {
     }
 
     async update(code = this._code) {
+        const version = ++this._renderVersion;
         const { i18n } = this.muya;
         if (this._code !== code)
             this._code = code;
@@ -89,14 +91,18 @@ class DiagramPreview extends Parent {
                     plantumlServer,
                     sequenceTheme,
                 });
+                if (version !== this._renderVersion)
+                    return;
                 this._cancelFinalize = finalizeRenderedDiagram(this.domNode!, i18n.t('Diagram'));
             }
             catch (error) {
+                if (version !== this._renderVersion)
+                    return;
                 const detail
                     = error instanceof Error ? error.message : String(error);
                 debug.error(`render ${type} diagram failed: ${detail}`);
                 this.domNode!.innerHTML = `<div class="mu-diagram-error">&lt; ${i18n.t(
-                    'Invalid Diagram Code',
+                    type === 'plantuml' ? 'PlantUML' : 'Invalid Diagram Code',
                 )} &gt;<div class="mu-diagram-error-detail">${sanitize(
                     detail,
                     PREVIEW_DOMPURIFY_CONFIG,

@@ -30,7 +30,7 @@ export default class Diagram {
         this.encodedInput = plantumlEncoder.encode(value);
     }
 
-    insertImgElement(container: string | HTMLElement) {
+    async insertImgElement(container: string | HTMLElement): Promise<void> {
         const div
             = typeof container === 'string'
                 ? document.getElementById(container)
@@ -38,8 +38,32 @@ export default class Diagram {
         if (div === null || !div.tagName)
             throw new Error(`Invalid container: ${container}`);
 
-        const src = `${this.plantumlServer}/svg/${this.encodedInput}`;
+        const server = this.plantumlServer.replace(/\/+$/, '');
+        const url = new URL(`${server}/svg/${this.encodedInput}`);
+        if (!['https:', 'http:'].includes(url.protocol))
+            throw new Error('PlantUML server must use HTTP or HTTPS.');
 
-        div.innerHTML = `<img src="${src}" >`;
+        const img = document.createElement('img');
+        img.alt = 'PlantUML';
+        await new Promise<void>((resolve, reject) => {
+            const finish = (error?: Error) => {
+                clearTimeout(timer);
+                img.onload = null;
+                img.onerror = null;
+                if (error)
+                    reject(error);
+                else
+                    resolve();
+            };
+            const timer = setTimeout(() => finish(new Error(
+                'PlantUML server timed out. Check your network or PlantUML server settings.',
+            )), 15000);
+            img.onload = () => finish();
+            img.onerror = () => finish(new Error(
+                'PlantUML image could not be loaded. Check your network or PlantUML server settings.',
+            ));
+            div.replaceChildren(img);
+            img.src = url.href;
+        });
     }
 }

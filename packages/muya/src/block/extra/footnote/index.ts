@@ -5,6 +5,7 @@ import { mixins } from '../../../utils';
 import Parent from '../../base/parent';
 import IContainerQueryBlock from '../../mixins/containerQueryBlock';
 import { ScrollPage } from '../../scrollPage';
+import { scrollWithinEditor } from '../../../utils/dom';
 
 @mixins(IContainerQueryBlock)
 class Footnote extends Parent {
@@ -38,7 +39,8 @@ class Footnote extends Parent {
             event.preventDefault();
             event.stopPropagation();
             const target = document.getElementById(`noteref-${footnote.meta.identifier}`);
-            target?.scrollIntoView({ behavior: 'smooth' });
+            if (target)
+                scrollWithinEditor(muya.domNode, target);
         });
         footnote.domNode!.appendChild(backlink);
 

@@ -23,6 +23,7 @@ import { getMainWindow } from './window'
 import { initUpdater, humanizeUpdateErrorForTest } from './updater'
 import { markdownToDocx } from './exportDocx'
 import { runStabilityCheck } from './stabilityCheck'
+import { runExportCheck } from './exportCheck'
 import { installDiagnostics } from './diagnostics'
 import { runRecoveryTest } from './recoveryTest'
 
@@ -47,6 +48,7 @@ import { runRecoveryTest } from './recoveryTest'
 const isTestRun = !!(
   process.env['INKDOWN_SELF_CHECK'] ||
   process.env['INKDOWN_STABILITY_CHECK'] ||
+  process.env['INKDOWN_EXPORT_CHECK'] ||
   process.env['INKDOWN_RECOVERY_TEST'] ||
   process.env['INKDOWN_FILE_TEST'] ||
   process.env['INKDOWN_SESSION_TEST'] ||
@@ -707,6 +709,12 @@ app.whenReady().then(async () => {
 
   if (process.env['INKDOWN_STABILITY_CHECK']) {
     const ok = await runStabilityCheck(win)
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  if (process.env['INKDOWN_EXPORT_CHECK']) {
+    const ok = await runExportCheck(win).catch((error) => { console.error('[export-check] FAIL:', error); return false })
     app.exit(ok ? 0 : 1)
     return
   }

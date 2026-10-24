@@ -141,7 +141,7 @@ export class MarkdownToHtml {
                 if (functionType === 'plantuml') {
                     const diagram = render.parse(rawCode, this._muya?.options.plantumlServer);
                     diagramContainer.innerHTML = '';
-                    diagram.insertImgElement(diagramContainer);
+                    await diagram.insertImgElement(diagramContainer);
                 }
                 else if (functionType === 'flowchart' || functionType === 'sequence') {
                     const diagram = render.parse(rawCode);

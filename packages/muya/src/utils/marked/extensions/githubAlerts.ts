@@ -11,7 +11,7 @@ export interface IGithubAlertToken {
     tokens: Token[];
 }
 
-function trackHtmlParents(html: string, parents: string[]) {
+export function trackHtmlParents(html: string, parents: string[]) {
     for (const match of html.matchAll(/<!--[\s\S]*?-->|<\/?([a-z][\w:-]*)\b(?:"[^"]*"|'[^']*'|[^'">])*>/gi)) {
         const tag = match[1]?.toLowerCase();
         if (!tag || (VOID_HTML_TAGS as readonly string[]).includes(tag) || match[0].endsWith('/>'))

@@ -8,6 +8,7 @@ import { useI18n } from '../composables/useI18n'
 import BlockOrb from './BlockOrb.vue'
 import { TextHistory, editSource, replaceRange, textMatches, replaceTextMatch, lineOffsets, offsetIndex, type TextSnapshot } from '../editor/sourceEditing'
 import { patchPreview, previewBlockOffsets } from '../editor/previewBlocks'
+import { PreviewDiagrams, preparePreviewDiagrams } from '../editor/previewDiagrams'
 import { resolveExportImageSrc } from '@muyajs/core/utils/fileUrl'
 
 // 供主进程端到端自检调用
@@ -20,6 +21,7 @@ const containerRef = ref<HTMLElement | null>(null)
 const hostRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
 const sourceHistories = new Map<string, TextHistory>()
+const previewDiagrams = new PreviewDiagrams()
 
 function sourceSnapshot(): TextSnapshot {
   const ta = sourceRef.value
@@ -129,10 +131,12 @@ function refreshPreview(): void {
   markedPreviewEl?.classList.remove('split-cursor-block')
   markedPreviewEl = null
   patchPreview(el, renderPreviewHtml(state.sourceContent), (root) => {
+    preparePreviewDiagrams(root, { mermaidTheme: settings.mermaidTheme, vegaTheme: settings.vegaTheme, plantumlServer: settings.plantumlServer, sequenceTheme: settings.sequenceTheme })
     injectPreviewHeadingIds(root)
     for (const image of root.querySelectorAll('img')) image.setAttribute('src', resolveExportImageSrc(image.getAttribute('src') ?? ''))
   })
   previewStarts = previewBlockOffsets(state.sourceContent, settings)
+  previewDiagrams.update(el)
   injectPreviewHeadingIds(el)
   // 预览重建后高亮框会失效，重新定位一次
   nextTick(() => syncPreviewToCursor())
@@ -144,7 +148,7 @@ function refreshPreview(): void {
  * 把源码光标所在位置映射到预览里的对应元素。
  *
  * 做法：按「块」对齐。
- *   源码侧：把 textarea 的内容按空行切成块，算出光标属于第几块；
+ *   源码侧：由 Markdown 解析器计算块偏移，并合并 HTML 容器中的嵌套块；
  *   预览侧：取预览容器的顶层子元素（h1/p/ul/pre/table…），
  *           与源码块一一对应（两者都是同一份 Markdown 的块序列）。
  * 这种按序对齐简单可靠，不需要在渲染器里埋标记。
@@ -221,6 +225,29 @@ function activePreviewBlock(): HTMLElement | null {
 
 /** 上一次标出的元素，便于清除样式。 */
 let markedPreviewEl: HTMLElement | null = null
+
+function onPreviewClick(event: MouseEvent): void {
+  const root = previewRef.value
+  const ta = sourceRef.value
+  if (!isSplit.value || !root || !ta || !(event.target instanceof Element)) return
+  if (event.target.closest('a, button, input, select, textarea, summary')) return
+  // Do not steal the selection when the user is copying preview text.
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed && root.contains(selection.anchorNode)) return
+  let block: Element | null = event.target
+  while (block && block.parentElement !== root) block = block.parentElement
+  const index = previewBlocks().indexOf(block as HTMLElement)
+  const offset = previewStarts[index]
+  if (offset == null) return
+  if (caretFrame != null) cancelAnimationFrame(caretFrame)
+  caretFrame = null
+  markedPreviewEl?.classList.remove('split-cursor-block')
+  markedPreviewEl = null
+  ta.focus({ preventScroll: true })
+  ta.setSelectionRange(offset, offset)
+  updateSourceLine()
+  scrollSourceToOffset(offset)
+}
 
 /** 标出光标所在块 + 按需滚动。两个行为分别受设置控制。 */
 function syncPreviewToCursor(): void {
@@ -451,6 +478,7 @@ watch(
   () => state.viewMode,
   (mode, prev) => {
     cancelPreviewRefresh()
+    if (mode !== 'split') previewDiagrams.dispose()
     muya?.hideAllFloatTools()
     const tab = activeTab.value
     if (!tab) return
@@ -1123,9 +1151,25 @@ function scrollSourceToOffset(offset: number): void {
   const ta = sourceRef.value
   const scroller = ta?.closest('.source-scroll') as HTMLElement | null
   if (!ta || !scroller) return
-  const line = ta.value.slice(0, offset).split('\n').length - 1
-  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24
-  scroller.scrollTo({ top: Math.max(0, ta.offsetTop + line * lineHeight - scroller.clientHeight / 2), behavior: 'auto' })
+  const style = getComputedStyle(ta)
+  const mirror = document.createElement('div')
+  for (const name of ['width', 'box-sizing', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'word-spacing', 'tab-size', 'padding', 'border']) {
+    mirror.style.setProperty(name, style.getPropertyValue(name))
+  }
+  Object.assign(mirror.style, { position: 'fixed', left: '-100000px', top: '0', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', visibility: 'hidden' })
+  mirror.textContent = ta.value.slice(0, offset)
+  const marker = document.createElement('span')
+  marker.textContent = '\u200b'
+  marker.style.display = 'inline-block'
+  marker.style.height = style.lineHeight
+  marker.style.verticalAlign = 'top'
+  mirror.append(marker)
+  document.body.append(mirror)
+  const lineHeight = parseFloat(style.lineHeight) || 24
+  const caretTop = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top
+  mirror.remove()
+  const top = scroller.scrollTop + ta.getBoundingClientRect().top - scroller.getBoundingClientRect().top + caretTop + lineHeight / 2 - scroller.clientHeight / 2
+  scroller.scrollTo({ top: Math.max(0, top), behavior: 'auto' })
 }
 
 function onFind(e: Event): void {
@@ -1453,7 +1497,12 @@ onMounted(() => {
   }
   // 供端到端自检驱动分栏光标联动（程序化 setSelectionRange 不触发真实按键事件）
   ;(window as unknown as Record<string, unknown>).__inkdownSplitSync = {
-    sync: syncPreviewToCursor
+    sync: syncPreviewToCursor,
+    mapping: () => previewBlocks().map((node, i) => ({
+      source: state.sourceContent.slice(previewStarts[i], previewStarts[i + 1]).slice(0, 100),
+      tag: node.tagName,
+      text: node.textContent?.slice(0, 50)
+    }))
   }
   // 供端到端自检调用悬浮球插入逻辑
   ;(window as unknown as Record<string, unknown>).__inkdownOrb = {
@@ -1474,6 +1523,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  previewDiagrams.dispose()
   cancelPreviewRefresh()
   if (caretFrame != null) cancelAnimationFrame(caretFrame)
   window.removeEventListener('contextmenu', onEditorContextMenu, true)
@@ -1535,7 +1585,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
           {{ t('view.splitSyncScroll') }}
         </label>
       </div>
-      <div ref="previewRef" class="split-preview-body markdown-body" />
+      <div ref="previewRef" class="split-preview-body markdown-body" @click="onPreviewClick" />
     </div>
     <div
       v-show="isSource || isSplit"
@@ -1792,6 +1842,33 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 }
 .split-preview-body :deep(img) {
   max-width: 100%;
+}
+.split-preview-body :deep(.split-diagram) {
+  margin: 1em 0;
+  padding: 12px 0;
+  overflow-x: auto;
+  text-align: center;
+}
+.split-preview-body :deep(.split-diagram-status),
+.split-preview-body :deep(.split-diagram-error) {
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: var(--code-block-bg-color);
+  color: var(--ty-muted);
+  font-size: 0.9em;
+}
+.split-preview-body :deep(.split-diagram-error) {
+  border-left: 3px solid #d1242f;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.split-preview-body :deep(.split-diagram details) {
+  margin-top: 8px;
+  text-align: left;
+}
+.split-preview-body :deep(.katex-display) {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .split-preview-body :deep(a) {
   color: var(--theme-color);

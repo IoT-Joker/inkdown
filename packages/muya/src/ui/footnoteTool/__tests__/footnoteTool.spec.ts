@@ -52,6 +52,7 @@ function makeFakeFootnote(identifier: string, definitionText: string): IFakeFoot
 function makeFakeMuya(): { muya: Muya; eventCenter: EventCenter; appendSpy: ReturnType<typeof vi.fn> } {
     const eventCenter = new EventCenter();
     const editorDomNode = document.createElement('div');
+    editorDomNode.scrollTo = vi.fn();
     const editorWrapper = document.createElement('div');
     editorWrapper.appendChild(editorDomNode);
     document.body.appendChild(editorWrapper);
@@ -170,7 +171,8 @@ describe('footnoteTool — click actions', () => {
         const button = tool.container!.querySelector('a.btn') as HTMLAnchorElement;
         button.click();
 
-        expect(target.domNode.scrollIntoView).toHaveBeenCalledTimes(1);
+        expect(target.domNode.scrollIntoView).not.toHaveBeenCalled();
+        expect(muya.domNode.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
         expect(target.firstContentInDescendant().setCursor).toHaveBeenCalledWith(0, 0, true);
     });
 

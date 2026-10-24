@@ -1,5 +1,5 @@
 import { MarkdownToHtml, renderToStaticHTML } from '@muyajs/core'
-import { getActiveTab, settings } from '../store'
+import { getActiveTab, settings, state } from '../store'
 import { baseName } from './useFile'
 
 /** 导出时追加的排版样式：让脱离应用的 HTML/PDF 依然接近 Typora 的观感。 */
@@ -66,17 +66,20 @@ async function buildHtml(): Promise<string> {
   if (!tab) return ''
   const muya = (window as unknown as { __inkdownMuya?: unknown }).__inkdownMuya
   if (muya) {
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
       const converter = new MarkdownToHtml(tab.content, muya as never)
       // 图表渲染可能因外部依赖挂起，加超时保护，超时即回退
       const rendered = await Promise.race([
         converter.generate({ title: tab.title, extraCSS: EXPORT_CSS }),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000))
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 30000) })
       ])
       if (rendered) return rendered
       console.warn('[export] 图表渲染超时，回退到静态渲染')
     } catch (err) {
       console.warn('[export] 图表渲染导出失败，回退到静态渲染：', err)
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
   return wrapDocument(
@@ -126,9 +129,7 @@ export async function buildHtmlForCheck(): Promise<string> {
 /**
  * 把 Markdown 渲染成静态 HTML 片段，供分栏预览使用。
  *
- * 走同步的 renderToStaticHTML：不渲染 Mermaid/Vega 等图表（那些需要异步运行时），
- * 换来的是即时响应——预览区随输入实时更新，不适合每次等几秒渲染图表。
- * 需要完整图表时用导出功能。
+ * 同步生成基础 HTML；EditorHost 再异步渲染图表，复用未变化的图表节点。
  */
 export function renderPreviewHtml(markdown: string): string {
   try {
@@ -168,16 +169,20 @@ export async function exportHtml(): Promise<boolean> {
 /**
  * 导出为 Word (.docx)。
  *
- * 直接把 Markdown 源码交给主进程，由主进程解析成 Word 原生段落样式
- * （标题层级、列表、表格、代码块），这样在 Word 里是可继续编辑的真样式，
- * 而不是一张图片或一堆散落的 HTML。
+ * 普通正文和标题保留可编辑；复杂内容由主进程按实际渲染效果截图嵌入。
  */
 export async function exportDocxFile(): Promise<boolean> {
   const tab = getActiveTab()
   if (!tab) return false
   const title = tab.filePath ? baseName(tab.filePath).replace(/\.[^.]+$/, '') : tab.title
-  const saved = await window.inkdown.exportDocx(tab.content, exportName('docx'), title || 'Inkdown')
-  return !!saved
+  try {
+    const html = await buildHtml()
+    const saved = await window.inkdown.exportDocx(tab.content, exportName('docx'), title || 'Inkdown', html)
+    return !!saved
+  } catch (error) {
+    state.notice = { text: `Word 导出失败：${error instanceof Error ? error.message : String(error)}` }
+    return false
+  }
 }
 
 /**
@@ -191,6 +196,13 @@ export async function exportPdf(): Promise<boolean> {
   const target = await window.inkdown.saveAsDialog(exportName('pdf'))
   if (!target) return false
 
-  const html = await buildHtml()
-  return window.inkdown.exportPdf(target, html)
+  try {
+    const html = await buildHtml()
+    const saved = await window.inkdown.exportPdf(target, html)
+    if (!saved) state.notice = { text: 'PDF 导出失败，请检查图片路径和网络后重试。' }
+    return saved
+  } catch (error) {
+    state.notice = { text: `PDF 导出失败：${error instanceof Error ? error.message : String(error)}` }
+    return false
+  }
 }

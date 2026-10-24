@@ -45,6 +45,17 @@ export function findScrollContainer(node: HTMLElement): HTMLElement {
     return node;
 }
 
+/** Native scrollIntoView also scrolls overflow-hidden ancestors outside the editor. */
+export function scrollWithinEditor(editor: HTMLElement, target: HTMLElement): void {
+    const scroller = findScrollContainer(editor);
+    const rect = target.getBoundingClientRect();
+    const bounds = scroller.getBoundingClientRect();
+    scroller.scrollTo({
+        top: Math.max(0, scroller.scrollTop + rect.top - bounds.top - 16),
+        behavior: 'smooth',
+    });
+}
+
 // Read the Muya block stamped onto a DOM element. `BLOCK_DOM_PROPERTY` is a
 // string property attached by `TreeNode.attachDOMNode`; centralising the
 // cast here means callsites never need to reach into `element[KEY]` with

@@ -9,6 +9,7 @@ import type { IBaseOptions } from '../types';
 import { ScrollPage } from '../../block/scrollPage';
 import { h, patch } from '../../utils/snabbdom';
 import BaseFloat from '../baseFloat';
+import { scrollWithinEditor } from '../../utils/dom';
 
 import './index.css';
 
@@ -120,9 +121,10 @@ export class FootnoteTool extends BaseFloat {
         const block = this._footnotes.get(this._identifier);
         if (!block)
             return;
-        block.domNode?.scrollIntoView({ behavior: 'smooth' });
         const content = block.firstContentInDescendant();
         content?.setCursor(0, 0, true);
+        if (block.domNode)
+            scrollWithinEditor(this.muya.domNode, block.domNode);
     }
 
     private _createDefinition() {

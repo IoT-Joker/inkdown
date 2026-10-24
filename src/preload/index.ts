@@ -52,9 +52,9 @@ const api = {
   exportPdf: (filePath: string, html: string, options?: { landscape?: boolean }) =>
     ipcRenderer.invoke('app:exportPdf', filePath, html, options),
 
-  /** 导出 Word 文档：markdown 内容 → .docx 文件。返回保存路径或 null。 */
-  exportDocx: (markdown: string, defaultName: string, title: string) =>
-    ipcRenderer.invoke('app:exportDocx', markdown, defaultName, title),
+  /** Export rendered HTML when supplied; Markdown is the legacy fallback. */
+  exportDocx: (markdown: string, defaultName: string, title: string, html?: string) =>
+    ipcRenderer.invoke('app:exportDocx', markdown, defaultName, title, html),
   getPath: (name: 'home' | 'documents' | 'pictures' | 'userData') =>
     ipcRenderer.invoke('app:getPath', name),
   /** 关于对话框用：应用与运行时版本。 */

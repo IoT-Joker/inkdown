@@ -22,7 +22,10 @@ registerBlocks();
 // The stub below is the minimum surface we need to exercise create() +
 // getState() without booting a real editor.
 function makeFakeMuya(): Muya {
+    const domNode = document.createElement('div');
+    domNode.scrollTo = vi.fn();
     return {
+        domNode,
         i18n: { t: (s: string) => s },
         options: {
             autoPairBracket: false,
@@ -91,7 +94,8 @@ describe('footnote block — class API', () => {
 
 describe('footnote block — backlink', () => {
     it.each(['a.b', '锚点链接说明:1'])('scrolls back to the inline reference [^%s] (#5208)', (identifier) => {
-        const block = Footnote.create(makeFakeMuya(), { ...baseState, meta: { identifier } });
+        const muya = makeFakeMuya();
+        const block = Footnote.create(muya, { ...baseState, meta: { identifier } });
         const reference = document.createElement('sup');
         reference.id = `noteref-${identifier}`;
         const scrollIntoView = vi.fn();
@@ -100,7 +104,8 @@ describe('footnote block — backlink', () => {
 
         try {
             block.domNode!.querySelector<HTMLElement>(`.${CLASS_NAMES.MU_FOOTNOTE_BACKLINK}`)!.click();
-            expect(scrollIntoView).toHaveBeenCalledOnce();
+            expect(scrollIntoView).not.toHaveBeenCalled();
+            expect(muya.domNode.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
         }
         finally {
             reference.remove();
