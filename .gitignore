@@ -13,3 +13,7 @@ coverage/
 # 用通配覆盖所有 .tmp-* 目录，避免每新增一个测试就要改这里
 .tmp-*/
 screenshots/
+
+# 本地工具数据：含任务记录与本机绝对路径，不应进入版本库
+.dsh-project-memory/
+.dsh/
