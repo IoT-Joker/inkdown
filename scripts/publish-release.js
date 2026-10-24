@@ -107,9 +107,18 @@ async function uploadAsset(uploadUrl, filePath, name) {
 }
 
 ;(async () => {
-  const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version
+  // 默认发布 package.json 里的当前版本；可用 --version=<x.y.z> 补发历史版本。
+  // 补发时该版本的安装包必须仍在 release/ 目录，且不附带 latest.yml
+  // （latest.yml 只应指向最新版本，否则自动更新会把用户拉回旧版）。
+  const versionArg = process.argv.find((a) => a.startsWith('--version='))
+  const explicitVersion = versionArg ? versionArg.split('=')[1] : null
+  const version =
+    explicitVersion || JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version
   const tag = `v${version}`
-  console.log(`仓库: ${owner}/${repo}  版本: ${version}  标签: ${tag}`)
+  const isBackfill = !!explicitVersion
+  console.log(
+    `仓库: ${owner}/${repo}  版本: ${version}  标签: ${tag}${isBackfill ? '（补发历史版本）' : ''}`
+  )
 
   if (!token) {
     console.error('缺少 GITHUB_TOKEN')
@@ -126,11 +135,13 @@ async function uploadAsset(uploadUrl, filePath, name) {
     // 兼容旧命名（含空格），GitHub 会把空格转成点号
     `Inkdown Setup ${version}.exe`
   ]
-  for (const f of ['latest.yml', ...candidates]) {
+  // 补发历史版本时不带上 latest.yml：它只应指向最新版
+  const wanted = isBackfill ? candidates : ['latest.yml', ...candidates]
+  for (const f of wanted) {
     const p = path.join(relDir, f)
     if (fs.existsSync(p)) assets.push({ path: p, name: f })
   }
-  if (!assets.some((a) => a.name === 'latest.yml')) {
+  if (!isBackfill && !assets.some((a) => a.name === 'latest.yml')) {
     console.warn('缺少产物: latest.yml')
   }
   if (assets.length < 2) {
