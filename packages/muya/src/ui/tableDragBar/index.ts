@@ -6,6 +6,7 @@ import type { Muya } from '../../index';
 import { ScrollPage } from '../../block/scrollPage';
 import { BLOCK_DOM_PROPERTY } from '../../config';
 import { isMouseEvent, throttle } from '../../utils';
+import { isEditorHoverTarget } from '../../utils/dom';
 import BaseFloat from '../baseFloat';
 import './index.css';
 
@@ -184,7 +185,11 @@ export class TableDragBar extends BaseFloat {
         super.listen();
 
         const handler = throttle((event: Event) => {
-            if (!isMouseEvent(event) || !this.muya.domNode.isConnected || !this.muya.domNode.getClientRects().length)
+            if (!isMouseEvent(event))
+                return;
+            if (!isEditorHoverTarget(this.muya.domNode, event.target, this.status ? this.floatBox : null))
+                return this.hide();
+            if (this.status && this.floatBox?.contains(event.target))
                 return;
 
             if (this._dragInfo || this._mouseTimer || this._dropTimer)

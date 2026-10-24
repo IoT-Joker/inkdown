@@ -23,25 +23,49 @@ function belongsTo(path: string | null, parent: string): boolean {
 
 /** 文件读写与标签页管理。所有磁盘操作都经由 preload 桥接。 */
 export function useFile() {
-  async function openPath(filePath: string): Promise<void> {
+  async function openPath(filePath: string, options: { activate?: boolean } = {}): Promise<void> {
+    const activate = options.activate !== false
     const existing = state.tabs.find((t) => t.filePath && pathKey(t.filePath) === pathKey(filePath))
     if (existing) {
-      state.activeId = existing.id
+      if (activate) state.activeId = existing.id
       pushRecent(filePath)
       return
     }
     const key = pathKey(filePath)
-    if (openingFiles.has(key)) return openingFiles.get(key)
+    if (openingFiles.has(key)) {
+      await openingFiles.get(key)
+      const opened = state.tabs.find(tab => tab.filePath && pathKey(tab.filePath) === key)
+      if (activate && opened) state.activeId = opened.id
+      return
+    }
     const opening = (async () => {
       const { content, mtimeMs } = await window.inkdown.readFile(filePath)
       const tab = createTabFromFile(filePath, content, mtimeMs)
       state.tabs.push(tab)
-      state.activeId = tab.id
+      if (activate) state.activeId = tab.id
       void window.inkdown.watch(filePath)
       pushRecent(filePath)
     })()
     openingFiles.set(key, opening)
     try { await opening } finally { openingFiles.delete(key) }
+  }
+
+  /** Restore tab data first; build only the editor that will actually be shown. */
+  async function restoreSessionFiles(session: { files: string[]; activeFile?: string | null }): Promise<void> {
+    const activeBefore = state.activeId
+    let lastOpened: Tab | undefined
+    for (const filePath of session.files) {
+      try {
+        if (!(await window.inkdown.exists(filePath))) continue
+        await openPath(filePath, { activate: false })
+        lastOpened = state.tabs.find(tab => tab.filePath && pathKey(tab.filePath) === pathKey(filePath))
+      } catch { /* Missing or unavailable files must not prevent restoring others. */ }
+    }
+    const activeFile = session.activeFile
+    const requested = activeFile ? state.tabs.find(tab => tab.filePath && pathKey(tab.filePath) === pathKey(activeFile)) : undefined
+    const target = requested ?? (lastOpened && state.tabs.includes(lastOpened) ? lastOpened : state.tabs.at(-1))
+    // Do not steal focus if the user has already selected another tab while I/O ran.
+    if (target && state.activeId === activeBefore) state.activeId = target.id
   }
 
   async function openDialog(): Promise<void> {
@@ -169,7 +193,7 @@ export function useFile() {
     return true
   }
 
-  return { openPath, openDialog, saveTab, saveAll, confirmClose, openFolder, refreshWorkspace, renamePath, removePath }
+  return { openPath, restoreSessionFiles, openDialog, saveTab, saveAll, confirmClose, openFolder, refreshWorkspace, renamePath, removePath }
 }
 
 export function baseName(p: string): string {

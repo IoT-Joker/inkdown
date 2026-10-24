@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { getActiveTab, isDirty, state, closeTab, tabLabel, moveTab } from '../store'
-import { executeCommand } from '../composables/useCommands'
+import { displayShortcutFor, executeCommand } from '../composables/useCommands'
 import { useFile } from '../composables/useFile'
 import { useI18n } from '../composables/useI18n'
 
@@ -90,13 +90,13 @@ function resetDrag(): void {
         @dragend="onDragEnd"
       >
         <span class="tab-title">{{ tabLabel(tab) }}</span>
-        <button class="tab-close" :title="`${t('tab.close')} (Ctrl+W)`" @click="onClose(tab.id, $event)">×</button>
+        <button class="tab-close" :title="`${t('tab.close')} (${displayShortcutFor('file:closeTab')})`" @click="onClose(tab.id, $event)">×</button>
       </div>
     </div>
-    <button class="tab-new" :title="`${t('tab.new')} (Ctrl+N)`" @click="executeCommand('file:new')">+</button>
+    <button class="tab-new" :title="`${t('tab.new')} (${displayShortcutFor('file:new')})`" @click="executeCommand('file:new')">+</button>
     <button
       class="tab-settings"
-      :title="`${t('tab.settings')} (Ctrl+,)`"
+      :title="`${t('tab.settings')} (${displayShortcutFor('app:preferences')})`"
       @click="executeCommand('app:preferences')"
     >
       ⚙

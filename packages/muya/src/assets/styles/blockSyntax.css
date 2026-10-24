@@ -808,7 +808,8 @@ figure.mu-diagram-block .mu-diagram-preview img {
 
 /* to prevent rendered diagram <svg> (e.g. a wide sequence diagram) overflowing
    and getting clipped by the block */
-figure.mu-diagram-block .mu-diagram-preview > svg {
+figure.mu-diagram-block .mu-diagram-preview > svg,
+figure.mu-diagram-block .mu-diagram-render > svg {
     max-width: 100%;
     height: auto;
 }

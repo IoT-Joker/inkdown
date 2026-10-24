@@ -1,6 +1,8 @@
 import type { TState } from './state/types';
 
 export interface IMuyaOptions {
+    /** Optional desktop scheduling; exports continue to render all diagrams directly. */
+    scheduleDiagramRender?: (target: HTMLElement, render: () => Promise<void>) => Promise<void>;
     fontSize: number;
     lineHeight: number;
     editorFontFamily?: string;

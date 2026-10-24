@@ -3,11 +3,17 @@ import { promises as fsp, constants } from 'node:fs'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { getMainWindow } from './window'
-import { buildAppMenu } from './menu'
+import { buildAppMenu, setShortcutOverrides } from './menu'
 import { getLocale, setLocale } from './locale'
 import { translate, type LocaleCode } from '../shared/i18n'
 import { takePendingFile } from './fileAssociation'
-import { checkForUpdatesManually, getUpdateStatus, setAutoCheckEnabled } from './updater'
+import {
+  checkForUpdatesManually,
+  downloadUpdate,
+  getUpdateStatus,
+  restartToUpdate,
+  setAutoCheckEnabled
+} from './updater'
 import { markdownToDocx } from './exportDocx'
 import { writeHtmlPdf } from './exportWindow'
 import { htmlToVisualDocx } from './exportVisualDocx'
@@ -89,6 +95,15 @@ export function registerIpc(): void {
   ipcMain.handle('i18n:setLocale', async (_e, locale: LocaleCode) => {
     await setLocale(locale)
     buildAppMenu()
+    return true
+  })
+  /** 快捷键修改后立即重建原生菜单，让菜单显示与键盘加速器同步。 */
+  ipcMain.handle('shortcuts:setOverrides', (_e, overrides: Record<string, string>) => {
+    const clean: Record<string, string> = {}
+    for (const [id, value] of Object.entries(overrides ?? {})) {
+      if (typeof value === 'string' && value.length > 0 && value.length <= 80) clean[id] = value
+    }
+    setShortcutOverrides(clean)
     return true
   })
   /** 渲染层批量取词：避免逐条 IPC 往返。 */
@@ -389,6 +404,12 @@ export function registerIpc(): void {
 
   /** 读取当前更新状态（阶段 / 当前版本 / 下载进度）。 */
   ipcMain.handle('app:getUpdateStatus', () => getUpdateStatus())
+
+  /** 下载已发现的更新。 */
+  ipcMain.handle('app:downloadUpdate', () => downloadUpdate())
+
+  /** 退出并安装已下载的更新。 */
+  ipcMain.handle('app:restartToUpdate', () => restartToUpdate())
 
   /**
    * 渲染层同步「启动时自动检查更新」开关。

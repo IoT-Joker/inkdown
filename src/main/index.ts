@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { resolve } from 'node:path'
 import { registerIpc } from './ipc'
-import { buildAppMenu } from './menu'
+import { buildAppMenu, loadShortcutOverrides } from './menu'
 import { createWindow } from './window'
 import { runSelfCheck } from './selfCheck'
 import { captureScreenshots } from './screenshot'
@@ -857,6 +857,7 @@ async function probeUpdateFlow(): Promise<boolean> {
 app.whenReady().then(async () => {
   // 语言偏好需在创建菜单之前载入（菜单文案依赖它）
   await loadLocale()
+  loadShortcutOverrides()
   registerIpc()
   buildAppMenu()
   const win = createWindow()
@@ -1004,7 +1005,7 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
-  // 打包版启用自动更新（开发版自动跳过）。
+  // 打包版启用自动更新；开发版也初始化状态广播，让界面显示“开发版”而不是弹窗。
   // 测试运行不启用：它会发起网络请求，拖住进程退出，
   // 表现为「自检所有用例都 PASS，但整体判定失败」。
   if (!isTestRun) initUpdater()

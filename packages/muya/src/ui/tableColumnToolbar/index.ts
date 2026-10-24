@@ -4,6 +4,7 @@ import type { Muya } from '../../index';
 import type { TableColumnToolIcon } from './config';
 import { BLOCK_DOM_PROPERTY } from '../../config';
 import { isMouseEvent, throttle } from '../../utils';
+import { isEditorHoverTarget } from '../../utils/dom';
 import { h, patch } from '../../utils/snabbdom';
 import BaseFloat from '../baseFloat';
 import icons from './config';
@@ -46,7 +47,11 @@ export class TableColumnToolbar extends BaseFloat {
         super.listen();
 
         const handler = throttle((event: Event) => {
-            if (!isMouseEvent(event) || !this.muya.domNode.isConnected || !this.muya.domNode.getClientRects().length)
+            if (!isMouseEvent(event))
+                return;
+            if (!isEditorHoverTarget(this.muya.domNode, event.target, this.status ? this.floatBox : null))
+                return this.hide();
+            if (this.status && this.floatBox?.contains(event.target))
                 return;
 
             const { x, y } = event;

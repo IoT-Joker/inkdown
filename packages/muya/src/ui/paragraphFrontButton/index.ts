@@ -9,6 +9,7 @@ import BulletList from '../../block/commonMark/bulletList';
 import OrderList from '../../block/commonMark/orderList';
 import { BLOCK_DOM_PROPERTY } from '../../config';
 import { isMouseEvent, throttle, verticalPositionInRect } from '../../utils';
+import { isEditorHoverTarget } from '../../utils/dom';
 import { h, patch } from '../../utils/snabbdom';
 import { getIcon } from './config';
 
@@ -56,6 +57,7 @@ export class ParagraphFrontButton {
     private _options: IBaseOptions;
     private _block: Parent | null = null;
     private _oldVNode: VNode | null = null;
+    private _renderedIcon: string | null = null;
     private _status: boolean = false;
     private _floatBox: HTMLDivElement = document.createElement('div');
     private _container: HTMLDivElement = document.createElement('div');
@@ -119,6 +121,10 @@ export class ParagraphFrontButton {
             if (this._disableListen)
                 return;
             if (!isMouseEvent(event))
+                return;
+            if (!isEditorHoverTarget(this.muya.domNode, event.target, this._status ? this._floatBox : null))
+                return this.hide();
+            if (this._status && this._floatBox?.contains(event.target))
                 return;
 
             const { x, y } = event;
@@ -341,8 +347,16 @@ export class ParagraphFrontButton {
     render() {
         const { _container: container, _iconWrapper: iconWrapper, _block: block, _oldVNode: oldVNode } = this;
 
-        const iconWrapperSelector = 'div.mu-icon-wrapper';
+        // Read before patching; ordinary movement over the same block should
+        // neither invalidate layout nor rebuild the same two icons.
+        const { lineHeight } = getComputedStyle(block!.domNode!);
+        if (container.style.height !== lineHeight)
+            container.style.height = lineHeight;
         const i = getIcon(block!);
+        if (this._renderedIcon === i)
+            return;
+
+        const iconWrapperSelector = 'div.mu-icon-wrapper';
         const iconParagraph = renderIcon(i, 'paragraph');
         const iconDrag = renderIcon(dragIcon, 'drag');
 
@@ -354,10 +368,7 @@ export class ParagraphFrontButton {
             patch(iconWrapper, vnode);
 
         this._oldVNode = vnode;
-
-        // Reset float box style height
-        const { lineHeight } = getComputedStyle(block!.domNode!);
-        container.style.height = lineHeight;
+        this._renderedIcon = i;
     }
 
     hide() {

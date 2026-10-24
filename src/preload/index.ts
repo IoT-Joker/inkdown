@@ -65,6 +65,10 @@ const api = {
   getLocale: () => ipcRenderer.invoke('i18n:getLocale'),
   setLocale: (locale: 'zh-CN' | 'en') => ipcRenderer.invoke('i18n:setLocale', locale),
 
+  /** 同步快捷键覆盖列表到主进程并重建原生菜单。 */
+  setShortcutOverrides: (overrides: Record<string, string>) =>
+    ipcRenderer.invoke('shortcuts:setOverrides', overrides),
+
   /** 拖拽文件时把 File 对象解析为磁盘路径（Electron 33 的 webUtils）。 */
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 
@@ -89,6 +93,19 @@ const api = {
 
   /** 读取当前更新状态（阶段 / 当前版本 / 下载进度）。 */
   getUpdateStatus: () => ipcRenderer.invoke('app:getUpdateStatus'),
+
+  /** 订阅更新状态；返回取消订阅函数。 */
+  onUpdateStatus: (fn: (status: unknown) => void) => {
+    const listener = (_e: unknown, status: unknown) => fn(status)
+    ipcRenderer.on('update:status', listener)
+    return () => ipcRenderer.off('update:status', listener)
+  },
+
+  /** 下载已发现的更新。 */
+  downloadUpdate: () => ipcRenderer.invoke('app:downloadUpdate'),
+
+  /** 重启并安装已下载的更新。 */
+  restartToUpdate: () => ipcRenderer.invoke('app:restartToUpdate'),
 
   /** 同步「启动时自动检查更新」开关到主进程。 */
   setAutoCheckUpdate: (enabled: boolean) =>

@@ -11,12 +11,19 @@ import AboutDialog from './components/AboutDialog.vue'
 import ShortcutsDialog from './components/ShortcutsDialog.vue'
 import FolderSearchPanel from './components/FolderSearchPanel.vue'
 import CommandPalette from './components/CommandPalette.vue'
-import { executeCommand, registerGlobalCommands } from './composables/useCommands'
+import {
+  displayShortcutFor,
+  executeCommand,
+  installShortcutDispatcher,
+  loadShortcutOverrides,
+  persistShortcutOverrides,
+  registerGlobalCommands
+} from './composables/useCommands'
 import { useFile } from './composables/useFile'
 import { useI18n, initLocale } from './composables/useI18n'
 import { loadSettings, loadRecent, loadSession, persistSession, loadRecovery, persistRecovery, clearRecovery, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs, tabLabel } from './store'
 
-const { openPath, refreshWorkspace, saveTab, saveAll, openFolder } = useFile()
+const { openPath, restoreSessionFiles, refreshWorkspace, saveTab, saveAll, openFolder } = useFile()
 const editorRef = ref<InstanceType<typeof EditorHost> | null>(null)
 const { t } = useI18n()
 
@@ -64,7 +71,7 @@ watch(
   { immediate: true }
 )
 
-/** 首选项变化后实时应用到编辑器并持久化。 */
+/** 视图切换后把焦点交还编辑器。 */
 watch(() => JSON.stringify(state.viewMode), () => editorRef.value?.focus())
 
 /**
@@ -99,6 +106,8 @@ onMounted(async () => {
   // 语言需尽早载入：窗口标题与界面文案都依赖它
   await initLocale()
   registerGlobalCommands()
+  loadShortcutOverrides()
+  persistShortcutOverrides()
   loadSettings()
   loadRecent()
   // 暴露应用级文件 API 与退出入口，供主进程端到端文件测试使用
@@ -135,6 +144,15 @@ onMounted(async () => {
   ;(window as unknown as Record<string, unknown>).__inkdownQuit = () => executeCommand('file:quit')
 
   const off = window.inkdown.onMenuCommand(onMenuCommand)
+  const offShortcuts = installShortcutDispatcher()
+  const offUpdate = window.inkdown.onUpdateStatus((status) => {
+    state.updateStatus = status as typeof state.updateStatus
+  })
+  try {
+    state.updateStatus = (await window.inkdown.getUpdateStatus()) as typeof state.updateStatus
+  } catch {
+    /* 更新状态读取失败不应阻止启动。 */
+  }
   window.addEventListener('beforeunload', onBeforeUnload)
 
   // 外部修改文件时给出非阻塞提示（不再用模态对话框打断写作）。
@@ -162,17 +180,7 @@ onMounted(async () => {
     // 会话恢复：重启后自动重开上次的标签页（文件已被删除或移动的跳过）
     const session = loadSession()
     if (session?.files.length) {
-      for (const p of session.files) {
-        try {
-          if (await window.inkdown.exists(p)) await openPath(p)
-        } catch {
-          /* 文件不可用则跳过 */
-        }
-      }
-      if (session.activeFile) {
-        const target = state.tabs.find((t) => t.filePath === session.activeFile)
-        if (target) state.activeId = target.id
-      }
+      await restoreSessionFiles(session)
     }
     if (!state.tabs.length) createTab({ content: '' })
   }
@@ -220,6 +228,8 @@ onMounted(async () => {
 
   onBeforeUnmount(() => {
     off()
+    offShortcuts()
+    offUpdate()
     offFs()
     offOpenFile()
     window.removeEventListener('beforeunload', onBeforeUnload)
@@ -265,7 +275,7 @@ async function tryQuit(): Promise<void> {
         <button
           v-if="!state.sidebarVisible"
           class="sidebar-show"
-          :title="`${t('sidebar.show')} (Ctrl+Shift+L)`"
+          :title="`${t('sidebar.show')} (${displayShortcutFor('view:toggleSidebar')})`"
           @click="state.sidebarVisible = true"
         >
           »

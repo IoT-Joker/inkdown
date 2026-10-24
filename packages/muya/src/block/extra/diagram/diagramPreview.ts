@@ -81,34 +81,55 @@ class DiagramPreview extends Parent {
             const { mermaidTheme, vegaTheme, plantumlServer, sequenceTheme } = this.muya.options;
             const { _type: type } = this;
 
-            try {
-                await renderDiagram({
-                    target: this.domNode!,
-                    code,
-                    type,
-                    mermaidTheme,
-                    vegaTheme,
-                    plantumlServer,
-                    sequenceTheme,
-                });
+            const render = async () => {
                 if (version !== this._renderVersion)
                     return;
-                this._cancelFinalize = finalizeRenderedDiagram(this.domNode!, i18n.t('Diagram'));
+                // Each render owns its mount. A later update can detach this
+                // mount without an old renderer overwriting the new preview.
+                const target = document.createElement('div');
+                target.className = 'mu-diagram-render';
+                target.textContent = i18n.t('Loading...');
+                this.domNode!.replaceChildren(target);
+                try {
+                    await renderDiagram({
+                        target,
+                        code,
+                        type,
+                        mermaidTheme,
+                        vegaTheme,
+                        plantumlServer,
+                        sequenceTheme,
+                    });
+                    if (version !== this._renderVersion)
+                        return;
+                    this._cancelFinalize = finalizeRenderedDiagram(this.domNode!, i18n.t('Diagram'));
+                }
+                catch (error) {
+                    if (version !== this._renderVersion)
+                        return;
+                    const detail
+                        = error instanceof Error ? error.message : String(error);
+                    debug.error(`render ${type} diagram failed: ${detail}`);
+                    this.domNode!.innerHTML = `<div class="mu-diagram-error">&lt; ${i18n.t(
+                        type === 'plantuml' ? 'PlantUML' : 'Invalid Diagram Code',
+                    )} &gt;<div class="mu-diagram-error-detail">${sanitize(
+                        detail,
+                        PREVIEW_DOMPURIFY_CONFIG,
+                        true,
+                    )}</div></div>`;
+                }
+            };
+            const schedule = this.muya.options.scheduleDiagramRender;
+            if (schedule) {
+                // PlantUML waits on a remote image rather than CPU layout.
+                // Start it on demand, but never hold the local render queue
+                // during the network wait (including a subsequently deleted block).
+                await schedule(this.domNode!, this._type === 'plantuml'
+                    ? async () => { void render(); }
+                    : render);
             }
-            catch (error) {
-                if (version !== this._renderVersion)
-                    return;
-                const detail
-                    = error instanceof Error ? error.message : String(error);
-                debug.error(`render ${type} diagram failed: ${detail}`);
-                this.domNode!.innerHTML = `<div class="mu-diagram-error">&lt; ${i18n.t(
-                    type === 'plantuml' ? 'PlantUML' : 'Invalid Diagram Code',
-                )} &gt;<div class="mu-diagram-error-detail">${sanitize(
-                    detail,
-                    PREVIEW_DOMPURIFY_CONFIG,
-                    true,
-                )}</div></div>`;
-            }
+            else
+                await render();
         }
         else {
             this.domNode!.innerHTML = `<div class="${CLASS_NAMES.MU_EMPTY}">&lt; ${i18n.t(

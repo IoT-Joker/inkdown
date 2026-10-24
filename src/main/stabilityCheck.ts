@@ -29,18 +29,31 @@ export async function runStabilityCheck(win: BrowserWindow): Promise<boolean> {
     '```plantuml', '@startuml', 'actor User', '@enduml', '```', '', '### Vega', '',
     '```vega-lite', '{"data":{"values":[]},"mark":"bar"}', '```'
   ].join('\n')
+  const onStage = (_event: unknown, _level: number, message: string): void => {
+    if (message.startsWith('[stability-stage]')) console.log(message)
+  }
+  win.webContents.on('console-message', onStage)
   const result = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       const checks = []
       const check = (name, pass, detail = '') => checks.push({ name, pass: !!pass, detail })
-      const muya = window.__inkdownMuya
+      // Tab switching now retains live editors; do not pin an earlier tab's tools.
+      const liveProxy = (resolve) => new Proxy({}, {
+        get(_target, key) {
+          const live = resolve()
+          const value = live[key]
+          return typeof value === 'function' ? value.bind(live) : value
+        },
+        set(_target, key, value) { resolve()[key] = value; return true }
+      })
+      const muya = liveProxy(() => window.__inkdownMuya)
       const app = window.__inkdownApp
       const commands = window.__inkdownCommands
-      const plugins = muya._uiPlugins
-      const menu = plugins.tableBarTools
-      const columns = plugins.tableColumnTools
-      const drag = plugins.tableDragBar
+      const plugins = liveProxy(() => muya._uiPlugins)
+      const menu = liveProxy(() => plugins.tableBarTools)
+      const columns = liveProxy(() => plugins.tableColumnTools)
+      const drag = liveProxy(() => plugins.tableDragBar)
       const md = '| a | b | c |\\n| --- | --- | --- |\\n| 1 | 2 | 3 |\\n\\noutside\\n'
       const load = async () => {
         window.__inkdownLoad(md)
@@ -52,6 +65,7 @@ export async function runStabilityCheck(win: BrowserWindow): Promise<boolean> {
       window.addEventListener('error', onError)
       window.addEventListener('unhandledrejection', onError)
       const attempt = async (name, run) => {
+        console.log('[stability-stage] ' + name)
         try { await run() } catch (e) { check(name, false, String(e)) }
       }
       for (let i = 0; i < 4 && app.viewMode() !== 'wysiwyg'; i++) {
@@ -403,7 +417,10 @@ export async function runStabilityCheck(win: BrowserWindow): Promise<boolean> {
       check('no uncaught renderer errors', errors.length === 0, errors)
       return checks
     })()
-  `).finally(() => new Promise<void>((resolve) => diagramServer.close(() => resolve()))) as Array<{ name: string; pass: boolean; detail: unknown }>
+  `).finally(() => {
+    win.webContents.off('console-message', onStage)
+    return new Promise<void>((resolve) => diagramServer.close(() => resolve()))
+  }) as Array<{ name: string; pass: boolean; detail: unknown }>
   if (process.env['INKDOWN_PREVIEW_CAPTURE']) {
     const sample = '# Split preview\n\n> [!NOTE]\n> Note with **formatted text**.\n\n> [!TIP]\n> Click a block to locate its source.\n\n```mermaid\nflowchart LR\n A[Markdown] --> B[Live preview]\n B --> C[Source position]\n```\n\n| Feature | Result |\n| --- | --- |\n| Alerts | Color and border |\n| Diagrams | Live rendering |\n'
     await win.webContents.executeJavaScript(`(async () => {

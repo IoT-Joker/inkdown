@@ -27,6 +27,17 @@ export function queryAll<T extends Element = HTMLElement>(
     return Array.from(parent.querySelectorAll<T>(selector));
 }
 
+/** Reject unrelated global mouse events before hit tests or layout reads. */
+export function isEditorHoverTarget(
+    editor: HTMLElement,
+    target: EventTarget | null,
+    float?: HTMLElement | null,
+): target is Node {
+    return editor.isConnected
+        && target instanceof Node
+        && (editor.contains(target) || !!float?.contains(target));
+}
+
 // Walk up from `node` (inclusive) to the nearest scrollable ancestor. The
 // editor's scroll container is not fixed across embeddings — in the desktop
 // app `muya.domNode` itself scrolls (`overflow:auto`), while other hosts may

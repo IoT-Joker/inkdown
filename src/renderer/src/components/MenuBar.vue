@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { executeCommand } from '../composables/useCommands'
+import { executeCommand, shortcutFor } from '../composables/useCommands'
 import { useI18n } from '../composables/useI18n'
 import { state, settings, recentFiles } from '../store'
 
@@ -17,7 +17,6 @@ const { t } = useI18n()
 interface MenuItem {
   labelKey: string
   command?: string
-  accel?: string
   separator?: boolean
   /** 子菜单：最近打开列表 */
   submenu?: 'recent'
@@ -37,30 +36,30 @@ const menus = computed<MenuGroup[]>(() => [
   {
     labelKey: 'menu.file',
     items: [
-      { labelKey: 'menu.file.new', command: 'file:new', accel: 'Ctrl+N' },
-      { labelKey: 'menu.file.open', command: 'file:open', accel: 'Ctrl+O' },
-      { labelKey: 'menu.file.openFolder', command: 'file:openFolder', accel: 'Ctrl+Shift+O' },
+      { labelKey: 'menu.file.new', command: 'file:new' },
+      { labelKey: 'menu.file.open', command: 'file:open' },
+      { labelKey: 'menu.file.openFolder', command: 'file:openFolder' },
       { labelKey: 'menu.file.recent', submenu: 'recent' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.file.save', command: 'file:save', accel: 'Ctrl+S' },
-      { labelKey: 'menu.file.saveAs', command: 'file:saveAs', accel: 'Ctrl+Shift+S' },
-      { labelKey: 'menu.file.closeTab', command: 'file:closeTab', accel: 'Ctrl+W' },
+      { labelKey: 'menu.file.save', command: 'file:save' },
+      { labelKey: 'menu.file.saveAs', command: 'file:saveAs' },
+      { labelKey: 'menu.file.closeTab', command: 'file:closeTab' },
       { labelKey: '', separator: true },
       { labelKey: 'menu.file.exportHtml', command: 'file:exportHtml' },
       { labelKey: 'menu.file.exportPdf', command: 'file:exportPdf' },
       { labelKey: 'menu.file.exportDocx', command: 'file:exportDocx' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.file.preferences', command: 'app:preferences', accel: 'Ctrl+,' },
+      { labelKey: 'menu.file.preferences', command: 'app:preferences' },
       { labelKey: 'menu.file.quit', command: 'file:quit' }
     ]
   },
   {
     labelKey: 'menu.edit',
     items: [
-      { labelKey: 'menu.edit.undo', command: 'edit:undo', accel: 'Ctrl+Z' },
-      { labelKey: 'menu.edit.redo', command: 'edit:redo', accel: 'Ctrl+Shift+Z' },
+      { labelKey: 'menu.edit.undo', command: 'edit:undo' },
+      { labelKey: 'menu.edit.redo', command: 'edit:redo' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.edit.pastePlain', command: 'edit:pastePlain', accel: 'Ctrl+Shift+V' },
+      { labelKey: 'menu.edit.pastePlain', command: 'edit:pastePlain' },
       { labelKey: 'menu.edit.copyMarkdown', command: 'edit:copyMarkdown' },
       { labelKey: 'menu.edit.copyHtml', command: 'edit:copyHtml' },
       { labelKey: 'menu.edit.insertTime', command: 'edit:insertTime' },
@@ -72,29 +71,29 @@ const menus = computed<MenuGroup[]>(() => [
       { labelKey: 'menu.edit.lineEndingLf', command: 'edit:lineEnding', payload: 'lf', checked: settings.lineEnding === 'lf' },
       { labelKey: 'menu.edit.lineEndingCrlf', command: 'edit:lineEnding', payload: 'crlf', checked: settings.lineEnding === 'crlf' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.edit.find', command: 'edit:find', accel: 'Ctrl+F' },
-      { labelKey: 'menu.edit.replace', command: 'edit:replace', accel: 'Ctrl+H' },
-      { labelKey: 'search.folder', command: 'edit:findInFolder', accel: 'Ctrl+Shift+F' }
+      { labelKey: 'menu.edit.find', command: 'edit:find' },
+      { labelKey: 'menu.edit.replace', command: 'edit:replace' },
+      { labelKey: 'search.folder', command: 'edit:findInFolder' }
     ]
   },
   {
     labelKey: 'menu.paragraph',
     items: [
-      { labelKey: 'menu.paragraph.h1', command: 'paragraph:h1', accel: 'Ctrl+1' },
-      { labelKey: 'menu.paragraph.h2', command: 'paragraph:h2', accel: 'Ctrl+2' },
-      { labelKey: 'menu.paragraph.h3', command: 'paragraph:h3', accel: 'Ctrl+3' },
-      { labelKey: 'menu.paragraph.h4', command: 'paragraph:h4', accel: 'Ctrl+4' },
-      { labelKey: 'menu.paragraph.h5', command: 'paragraph:h5', accel: 'Ctrl+5' },
-      { labelKey: 'menu.paragraph.h6', command: 'paragraph:h6', accel: 'Ctrl+6' },
-      { labelKey: 'menu.paragraph.p', command: 'paragraph:p', accel: 'Ctrl+0' },
+      { labelKey: 'menu.paragraph.h1', command: 'paragraph:h1' },
+      { labelKey: 'menu.paragraph.h2', command: 'paragraph:h2' },
+      { labelKey: 'menu.paragraph.h3', command: 'paragraph:h3' },
+      { labelKey: 'menu.paragraph.h4', command: 'paragraph:h4' },
+      { labelKey: 'menu.paragraph.h5', command: 'paragraph:h5' },
+      { labelKey: 'menu.paragraph.h6', command: 'paragraph:h6' },
+      { labelKey: 'menu.paragraph.p', command: 'paragraph:p' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.paragraph.ul', command: 'paragraph:ul', accel: 'Ctrl+Shift+8' },
-      { labelKey: 'menu.paragraph.ol', command: 'paragraph:ol', accel: 'Ctrl+Shift+7' },
-      { labelKey: 'menu.paragraph.task', command: 'paragraph:task', accel: 'Ctrl+Shift+9' },
+      { labelKey: 'menu.paragraph.ul', command: 'paragraph:ul' },
+      { labelKey: 'menu.paragraph.ol', command: 'paragraph:ol' },
+      { labelKey: 'menu.paragraph.task', command: 'paragraph:task' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.paragraph.quote', command: 'paragraph:quote', accel: 'Ctrl+Shift+Q' },
-      { labelKey: 'menu.paragraph.code', command: 'paragraph:code', accel: 'Ctrl+Shift+K' },
-      { labelKey: 'menu.paragraph.math', command: 'paragraph:math', accel: 'Ctrl+Shift+M' },
+      { labelKey: 'menu.paragraph.quote', command: 'paragraph:quote' },
+      { labelKey: 'menu.paragraph.code', command: 'paragraph:code' },
+      { labelKey: 'menu.paragraph.math', command: 'paragraph:math' },
       { labelKey: 'menu.paragraph.table', command: 'paragraph:table' },
       { labelKey: 'menu.paragraph.hr', command: 'paragraph:hr' },
       { labelKey: 'menu.paragraph.frontMatter', command: 'paragraph:frontMatter' }
@@ -103,45 +102,45 @@ const menus = computed<MenuGroup[]>(() => [
   {
     labelKey: 'menu.format',
     items: [
-      { labelKey: 'menu.format.strong', command: 'format:strong', accel: 'Ctrl+B' },
-      { labelKey: 'menu.format.emphasis', command: 'format:emphasis', accel: 'Ctrl+I' },
-      { labelKey: 'menu.format.underline', command: 'format:underline', accel: 'Ctrl+U' },
-      { labelKey: 'menu.format.strike', command: 'format:strike', accel: 'Alt+Shift+5' },
-      { labelKey: 'menu.format.inlineCode', command: 'format:inlineCode', accel: 'Ctrl+Shift+`' },
-      { labelKey: 'menu.format.highlight', command: 'format:highlight', accel: 'Ctrl+Shift+H' },
-      { labelKey: 'menu.format.inlineMath', command: 'format:inlineMath', accel: 'Ctrl+Shift+E' },
+      { labelKey: 'menu.format.strong', command: 'format:strong' },
+      { labelKey: 'menu.format.emphasis', command: 'format:emphasis' },
+      { labelKey: 'menu.format.underline', command: 'format:underline' },
+      { labelKey: 'menu.format.strike', command: 'format:strike' },
+      { labelKey: 'menu.format.inlineCode', command: 'format:inlineCode' },
+      { labelKey: 'menu.format.highlight', command: 'format:highlight' },
+      { labelKey: 'menu.format.inlineMath', command: 'format:inlineMath' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.format.link', command: 'format:link', accel: 'Ctrl+L' },
-      { labelKey: 'menu.format.image', command: 'format:image', accel: 'Ctrl+Shift+I' },
-      { labelKey: 'menu.format.clear', command: 'format:clear', accel: 'Ctrl+\\' }
+      { labelKey: 'menu.format.link', command: 'format:link' },
+      { labelKey: 'menu.format.image', command: 'format:image' },
+      { labelKey: 'menu.format.clear', command: 'format:clear' }
     ]
   },
   {
     labelKey: 'menu.view',
     items: [
-      { labelKey: 'palette.title', command: 'app:commandPalette', accel: 'Ctrl+Shift+P' },
+      { labelKey: 'palette.title', command: 'app:commandPalette' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.view.toggleSidebar', command: 'view:toggleSidebar', accel: 'Ctrl+Shift+L' },
-      { labelKey: 'menu.view.toggleOutline', command: 'view:toggleOutline', accel: 'Ctrl+Shift+1' },
+      { labelKey: 'menu.view.toggleSidebar', command: 'view:toggleSidebar' },
+      { labelKey: 'menu.view.toggleOutline', command: 'view:toggleOutline' },
       { labelKey: '', separator: true },
-      { labelKey: 'menu.view.toggleSource', command: 'view:toggleSource', accel: 'Ctrl+/' },
+      { labelKey: 'menu.view.toggleSource', command: 'view:toggleSource' },
       { labelKey: 'view.splitPreview', command: 'view:toggleSplit' },
-      { labelKey: 'menu.view.toggleFocus', command: 'view:toggleFocus', accel: 'F8' },
-      { labelKey: 'menu.view.toggleTypewriter', command: 'view:toggleTypewriter', accel: 'F9' },
+      { labelKey: 'menu.view.toggleFocus', command: 'view:toggleFocus' },
+      { labelKey: 'menu.view.toggleTypewriter', command: 'view:toggleTypewriter' },
       { labelKey: '', separator: true },
       { labelKey: 'menu.view.toggleTheme', command: 'view:toggleTheme' },
-      { labelKey: 'menu.view.zoomIn', command: 'view:zoomIn', accel: 'Ctrl+=' },
-      { labelKey: 'menu.view.zoomOut', command: 'view:zoomOut', accel: 'Ctrl+-' },
-      { labelKey: 'menu.view.zoomReset', command: 'view:zoomReset', accel: 'Ctrl+Shift+0' },
+      { labelKey: 'menu.view.zoomIn', command: 'view:zoomIn' },
+      { labelKey: 'menu.view.zoomOut', command: 'view:zoomOut' },
+      { labelKey: 'menu.view.zoomReset', command: 'view:zoomReset' },
       { labelKey: '', separator: true },
       { labelKey: 'menu.view.fullscreen', command: 'view:fullscreen' },
-      { labelKey: 'menu.view.devtools', command: 'view:devtools', accel: 'F12' }
+      { labelKey: 'menu.view.devtools', command: 'view:devtools' }
     ]
   },
   {
     labelKey: 'menu.help',
     items: [
-      { labelKey: 'menu.help.shortcuts', command: 'help:shortcuts', accel: 'Ctrl+Shift+/' },
+      { labelKey: 'menu.help.shortcuts', command: 'help:shortcuts' },
       { labelKey: 'menu.help.repo', command: 'help:repo' },
       { labelKey: 'menu.help.feedback', command: 'help:feedback' },
       { labelKey: '', separator: true },
@@ -153,6 +152,57 @@ const menus = computed<MenuGroup[]>(() => [
 
 const openIndex = ref(-1)
 const menuRef = ref<HTMLElement | null>(null)
+const updatePending = ref(false)
+const updateCheckingPending = ref(false)
+const updateActionError = ref('')
+const updateChecking = computed(
+  () => state.updateStatus.phase === 'checking' || updateCheckingPending.value
+)
+const updateMessage = computed(() => updateActionError.value || state.updateStatus.message)
+const updateLabel = computed(() => {
+  const status = state.updateStatus
+  switch (status.phase) {
+    case 'checking':
+      return t('update.checking')
+    case 'available':
+      return t('update.availableShort', { version: status.version })
+    case 'downloading':
+      return t('update.downloading', { percent: status.percent })
+    case 'ready':
+      return t('update.inlineReady')
+    case 'up-to-date':
+      return t('update.upToDateShort')
+    case 'error':
+      return t('update.inlineCheckFailed')
+    default:
+      return ''
+  }
+})
+const updateBusy = computed(
+  () => updatePending.value || state.updateStatus.phase === 'checking' || state.updateStatus.phase === 'downloading'
+)
+
+async function runUpdateAction(action: 'check' | 'apply' = 'check'): Promise<void> {
+  if (updateBusy.value) return
+  updatePending.value = true
+  updateCheckingPending.value = action === 'check'
+  updateActionError.value = ''
+  try {
+    const phase = state.updateStatus.phase
+    if (action === 'apply' && phase === 'available') {
+      state.updateStatus = (await window.inkdown.downloadUpdate()) as typeof state.updateStatus
+    } else if (action === 'apply' && phase === 'ready') {
+      if (!(await window.inkdown.restartToUpdate())) updateActionError.value = t('update.inlineActionFailed')
+    } else {
+      state.updateStatus = (await window.inkdown.checkForUpdates()) as typeof state.updateStatus
+    }
+  } catch {
+    updateActionError.value = t('update.inlineActionFailed')
+  } finally {
+    updatePending.value = false
+    updateCheckingPending.value = false
+  }
+}
 
 function toggle(index: number): void {
   openIndex.value = openIndex.value === index ? -1 : index
@@ -178,6 +228,11 @@ async function run(item: MenuItem): Promise<void> {
 function recentName(p: string): string {
   const parts = p.split(/[\\/]/)
   return parts[parts.length - 1] || p
+}
+
+/** Show the currently effective shortcut, including user overrides. */
+function accelerator(item: MenuItem): string {
+  return item.command ? shortcutFor(item.command).replace(/CmdOrCtrl/g, 'Ctrl').replace(/Cmd/g, 'Win') : ''
 }
 
 function onGlobalPointerDown(e: PointerEvent): void {
@@ -240,15 +295,56 @@ defineExpose({ close })
               </template>
             </div>
           </div>
+          <div v-else-if="item.command === 'help:checkUpdate'" class="menu-update">
+            <div class="menu-update-row" :class="`phase-${state.updateStatus.phase}`">
+              <button
+                class="menu-item menu-update-check"
+                :disabled="updateBusy"
+                :aria-busy="updateBusy"
+                @click="runUpdateAction('check')"
+              >
+                <span class="menu-check" />
+                <span class="menu-item-label">{{ t(item.labelKey) }}</span>
+                <span class="menu-update-state" role="status" aria-live="polite" aria-atomic="true">
+                  <span v-if="updateLabel" class="update-label">{{ updateLabel }}</span>
+                  <span v-if="updateChecking" class="update-spinner" aria-hidden="true" />
+                </span>
+              </button>
+              <button
+                v-if="state.updateStatus.phase === 'available' || state.updateStatus.phase === 'ready'"
+                class="menu-update-action"
+                :disabled="updateBusy"
+                :aria-label="t(state.updateStatus.phase === 'available' ? 'update.download' : 'update.restart')"
+                :title="t(state.updateStatus.phase === 'available' ? 'update.download' : 'update.restart')"
+                @click.stop="runUpdateAction('apply')"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path v-if="state.updateStatus.phase === 'available'" d="M8 2v8m0 0 3-3m-3 3L5 7M3 13h10" />
+                  <path v-else d="M12.8 8a4.8 4.8 0 1 1-1.4-3.4M12.8 2v4h-4" />
+                </svg>
+              </button>
+            </div>
+            <div
+              v-if="state.updateStatus.phase === 'downloading'"
+              class="menu-update-progress"
+              role="progressbar"
+              :aria-label="t('update.downloading', { percent: state.updateStatus.percent })"
+              :aria-valuenow="state.updateStatus.percent"
+              :aria-valuemin="0"
+              :aria-valuemax="100"
+            >
+              <span :style="{ transform: `scaleX(${state.updateStatus.percent / 100})` }" />
+            </div>
+            <p v-if="updateMessage" class="menu-update-message" role="status">{{ updateMessage }}</p>
+          </div>
           <button v-else class="menu-item" @click="run(item)">
             <span class="menu-check">{{ item.checked ? '✓' : '' }}</span>
             <span class="menu-item-label">{{ t(item.labelKey) }}</span>
-            <span v-if="item.accel" class="menu-item-accel">{{ item.accel }}</span>
+            <span v-if="accelerator(item)" class="menu-item-accel">{{ accelerator(item) }}</span>
           </button>
         </template>
       </div>
     </div>
-    <!-- 右侧：主题与语言快捷入口 -->
     <div class="menu-spacer" />
     <span class="menu-app-name">{{ t('app.name') }}</span>
   </div>
@@ -291,7 +387,10 @@ defineExpose({ close })
   border: 1px solid var(--ty-border);
   border-radius: 6px;
   background: var(--ty-bg);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
+  /* Keep the menu surface crisp; a huge blurred shadow becomes expensive
+     while the editor below is repainting during scroll. */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+  contain: layout;
   z-index: 40;
 }
 .menu-item {
@@ -356,6 +455,109 @@ defineExpose({ close })
 }
 .menu-spacer {
   flex: 1;
+}
+.menu-update-row {
+  display: flex;
+  align-items: stretch;
+  border-radius: 4px;
+}
+.menu-update-row:hover {
+  background: var(--ty-hover);
+}
+.menu-update-check {
+  flex: 1;
+  min-width: 0;
+}
+.menu-update-check:disabled {
+  cursor: default;
+}
+.menu-update-check:disabled:hover {
+  background: transparent;
+}
+.menu-update-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  color: var(--ty-muted);
+  white-space: nowrap;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.phase-available .menu-update-state,
+.phase-ready .menu-update-state {
+  color: var(--ty-accent);
+}
+.menu-update-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ty-accent);
+  cursor: pointer;
+}
+.menu-update-action:hover:not(:disabled) {
+  background: var(--ty-active);
+}
+.menu-update-check:focus-visible,
+.menu-update-action:focus-visible {
+  outline: 1px solid var(--ty-accent);
+  outline-offset: -2px;
+}
+.menu-update-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.menu-update-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.menu-update-progress {
+  height: 2px;
+  margin: 0 10px 4px 30px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--ty-border);
+}
+.menu-update-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--ty-accent);
+  transform-origin: left;
+}
+.menu-update-message {
+  max-width: 280px;
+  margin: 3px 10px 6px 30px;
+  color: var(--ty-muted);
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.update-spinner {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1.3px solid color-mix(in srgb, var(--ty-muted) 38%, transparent);
+  border-top-color: var(--ty-accent);
+  border-radius: 50%;
+  animation: update-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-spinner { animation-duration: 2s; }
+}
+@keyframes update-spin {
+  to { transform: rotate(360deg); }
 }
 .menu-app-name {
   display: flex;

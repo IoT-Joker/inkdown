@@ -6,6 +6,7 @@ const MAX_LOG_BYTES = 2 * 1024 * 1024
 let logPath = ''
 let consoleWindowStart = 0
 let consoleCount = 0
+let outputPipeGuarded = false
 
 function describe(value: unknown): string {
   if (value instanceof Error) return value.stack || value.message
@@ -31,6 +32,21 @@ export function logDiagnostic(event: string, detail: unknown): void {
 }
 
 export function installDiagnostics(): void {
+  // 启动器被关闭后，继承的 stdout/stderr 管道会变成 broken pipe。
+  // Node 会为后续 console.* 写入派发 error；不监听就会变成主进程
+  // uncaughtException，Electron 随即弹出“A JavaScript error occurred”对话框。
+  // 这里吞掉 EPIPE（仅日志通道失效），其他流错误仍写入诊断日志。
+  if (!outputPipeGuarded) {
+    outputPipeGuarded = true
+    const onOutputError = (error: NodeJS.ErrnoException): void => {
+      const code = error?.code
+      if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return
+      logDiagnostic('output-stream-error', error)
+    }
+    process.stdout?.on('error', onOutputError)
+    process.stderr?.on('error', onOutputError)
+  }
+
   // Observe fatal exceptions without suppressing Node's normal exit behavior.
   process.on('uncaughtExceptionMonitor', (error, origin) => logDiagnostic(origin, error))
   app.on('render-process-gone', (_event, contents, details) => {

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '../composables/useI18n'
 import { settings } from '../store'
+import { executeCommand } from '../composables/useCommands'
 
 /**
  * Markdown 调色盘。
@@ -55,7 +56,6 @@ const RING2_INNER = 88
 const RING2_OUTER = 133
 /** 环菜单视觉半径：外圈 133 + 少量阴影余量。 */
 const PALETTE_EXTENT = 145
-const CLOSE_RADIUS = 166
 /** 二级分类需要静止停留这么久才切换，避免穿过圆环时误切。 */
 const ROOT_SWITCH_DELAY = 260
 /** 在候选二级分类上移动超过这个距离，就重新计时。 */
@@ -166,6 +166,19 @@ const rootItems = computed<OrbItem[]>(() => [
       { id: 'datetime', label: t('orb.time') },
       { id: 'date', label: t('orb.date') },
       { id: 'weekday', label: t('orb.weekday') }
+    ]
+  },
+  {
+    id: 'advanced',
+    label: t('orb.advanced'),
+    icon: '⌘',
+    children: [
+      { id: 'action:file:save', label: t('orb.save') },
+      { id: 'action:file:exportPdf', label: t('orb.exportPdf') },
+      { id: 'action:file:exportDocx', label: t('orb.exportDocx') },
+      { id: 'action:edit:find', label: t('orb.find') },
+      { id: 'action:theme:cycle', label: t('orb.theme') },
+      { id: 'action:view:toggleSidebar', label: t('orb.sidebar') }
     ]
   }
 ])
@@ -409,7 +422,11 @@ function onActionClick(item: OrbItem): void {
 function insertAndClose(id: string): void {
   if (insertLocked) return
   insertLocked = true
-  emit('insert', id)
+  if (id.startsWith('action:')) {
+    void executeCommand(id.slice('action:'.length))
+  } else {
+    emit('insert', id)
+  }
   // The parent handler is async, but an emitted event cannot await it. Hold
   // the lock briefly so double clicks cannot launch two clipboard pastes
   // against the same selection.
@@ -505,18 +522,6 @@ function onOrbClick(): void {
   toggleRing()
 }
 
-function onWindowPointerMove(e: PointerEvent): void {
-  if (!open.value || dragState || dragging.value) return
-  const target = e.target
-  if (target instanceof Node && wrapRef.value?.contains(target)) {
-    cancelClose()
-    return
-  }
-  const distance = Math.hypot(e.clientX - pos.value.x, e.clientY - pos.value.y)
-  if (distance <= CLOSE_RADIUS) cancelClose()
-  else scheduleClose()
-}
-
 function onWindowPointerDown(e: PointerEvent): void {
   if (dragState) return
   const target = e.target
@@ -541,7 +546,6 @@ onMounted(() => {
   const saved = readSavedPosition()
   pos.value = clampPosition(saved?.x ?? defaultX, saved?.y ?? defaultY)
 
-  window.addEventListener('pointermove', onWindowPointerMove, { passive: true })
   window.addEventListener('pointerdown', onWindowPointerDown, true)
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', onResize)
@@ -555,7 +559,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onDragMove)
   window.removeEventListener('pointerup', stopDrag)
   window.removeEventListener('pointercancel', stopDrag)
-  window.removeEventListener('pointermove', onWindowPointerMove)
   window.removeEventListener('pointerdown', onWindowPointerDown, true)
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onResize)
@@ -750,7 +753,8 @@ onBeforeUnmount(() => {
   background:
     radial-gradient(circle, color-mix(in srgb, var(--ty-accent) 10%, transparent), transparent 62%);
   opacity: 0.05;
-  filter: blur(7px);
+  /* Avoid a live blur filter on the always-mounted orb. The radial gradient
+     already supplies the soft edge with far less compositor work. */
   transition: opacity 0.25s ease;
 }
 
@@ -864,7 +868,6 @@ onBeforeUnmount(() => {
     ),
     radial-gradient(circle, color-mix(in srgb, var(--ty-accent) 5%, transparent), transparent 66%);
   opacity: 0;
-  filter: blur(13px);
   transition: opacity 0.28s ease;
   animation: aura-spin 9s linear infinite;
   animation-play-state: paused;
@@ -882,7 +885,6 @@ onBeforeUnmount(() => {
   width: 312px;
   height: 312px;
   overflow: visible;
-  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.09));
   pointer-events: none;
 }
 
@@ -981,8 +983,7 @@ onBeforeUnmount(() => {
     fill 0.16s ease,
     fill-opacity 0.16s ease,
     stroke-opacity 0.16s ease,
-    stroke 0.16s ease,
-    filter 0.16s ease;
+    stroke 0.16s ease;
 }
 
 .ring-sector-group:hover .ring-sector,
@@ -992,14 +993,11 @@ onBeforeUnmount(() => {
   fill-opacity: 1;
   stroke: var(--ty-accent);
   stroke-opacity: 1;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--ty-accent) 26%, transparent));
 }
 
 /* 锁定态给出明确但克制的视觉锚点，避免用户不知道当前外圈属于哪一类。 */
 .ring-root .ring-sector-group.active .ring-sector {
   stroke-width: 1.35;
-  filter:
-    drop-shadow(0 0 5px color-mix(in srgb, var(--ty-accent) 22%, transparent));
 }
 
 .ring-root .ring-sector-group.pending .ring-sector {

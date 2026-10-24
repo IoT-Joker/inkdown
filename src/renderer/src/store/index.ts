@@ -16,6 +16,25 @@ export interface EditorCursor {
   focus: SourcePos | null
 }
 
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'up-to-date'
+  | 'error'
+  | 'dev'
+
+export interface UpdateStatus {
+  phase: UpdatePhase
+  current: string
+  version: string
+  percent: number
+  message: string
+  autoCheck: boolean
+}
+
 export interface Tab {
   id: string
   filePath: string | null
@@ -56,6 +75,7 @@ export const state = reactive({
   outline: [] as OutlineItem[],
   workspace: null as { path: string; name: string; children: any[] } | null,
   viewMode: 'wysiwyg' as ViewMode,
+  wysiwygColumns: false,
   focusMode: false,
   typewriterMode: false,
   theme: 'light' as 'light' | 'dark' | 'github' | 'newsprint' | 'night',
@@ -82,7 +102,15 @@ export const state = reactive({
   /** 非阻塞提示条：用于外部改动等需要告知但不打断写作的情况 */
   notice: null as { text: string; action?: string; filePath?: string } | null,
   sourceContent: '',
-  quitConfirmed: false
+  quitConfirmed: false,
+  updateStatus: {
+    phase: 'idle',
+    current: '',
+    version: '',
+    percent: 0,
+    message: '',
+    autoCheck: true
+  } as UpdateStatus
 })
 
 export function getActiveTab(): Tab | undefined {
@@ -170,9 +198,9 @@ export const settings = reactive({
   orbAnimations: true,
   /** 存盘时使用的行尾符 */
   lineEnding: 'lf' as 'lf' | 'crlf',
-  /** 分栏：左侧预览跟随右侧源码光标滚动，把对应位置移到预览窗口中心 */
+  /** 源码预览：右侧预览跟随左侧源码光标滚动，把对应位置移到预览窗口中心 */
   splitSyncScroll: true,
-  /** 分栏：在左侧预览中用虚线框标出光标所在的块 */
+  /** 源码预览：在右侧预览中标出光标所在的块 */
   splitHighlightBlock: true,
   autoPairBracket: true,
   autoPairMarkdownSyntax: true,

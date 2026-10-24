@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
-import { generateGithubSlug } from '@muyajs/core'
+import { generateGithubSlug, type IPublicCursorInput } from '@muyajs/core'
 import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds } from '../composables/useCommands'
 import { exportHtml, exportPdf, exportDocxFile, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
 import { useI18n } from '../composables/useI18n'
@@ -9,6 +9,7 @@ import BlockOrb from './BlockOrb.vue'
 import { TextHistory, editSource, replaceRange, textMatches, replaceTextMatch, lineOffsets, offsetIndex, type TextSnapshot } from '../editor/sourceEditing'
 import { patchPreview, previewBlockOffsets } from '../editor/previewBlocks'
 import { PreviewDiagrams, preparePreviewDiagrams } from '../editor/previewDiagrams'
+import { DeferredDiagrams } from '../editor/deferredDiagrams'
 import { resolveExportImageSrc } from '@muyajs/core/utils/fileUrl'
 
 // 供主进程端到端自检调用
@@ -16,7 +17,7 @@ import { resolveExportImageSrc } from '@muyajs/core/utils/fileUrl'
 import { getActiveTab, isDirty, state, settings, type Tab } from '../store'
 import { baseName } from '../composables/useFile'
 
-const containerRef = ref<HTMLElement | null>(null)
+const editorScrollRef = ref<HTMLElement | null>(null)
 /** 编辑器根节点，用于判断右键是否发生在编辑区内。 */
 const hostRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
@@ -56,21 +57,223 @@ let suppress = false
 const CODE_FONT_FALLBACK =
   "'Cascadia Code', 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 /** 各标签页的光标与滚动位置，切回时恢复。 */
-const viewState = new Map<string, { cursor: Tab['cursor']; scrollTop: number }>()
+interface EditorSession {
+  id: string
+  instance: Muya
+  diagrams: DeferredDiagrams
+  content: string
+  markdown: string
+  cursor: IPublicCursorInput | null
+  scrollTop: number
+  scrollLeft: number
+  columnStart: number
+  suspended: boolean
+}
+const editorSessions = new Map<string, EditorSession>()
+let currentSession: EditorSession | null = null
+let cursorTimer: number | null = null
+let settingsGeneration = 0
+const sessionSettings = new WeakMap<Muya, number>()
+const columnsPage = ref(1)
+const columnsPages = ref(1)
+const columnsWide = ref(true)
+const columnsActive = computed(() => state.wysiwygColumns && state.viewMode === 'wysiwyg' && columnsWide.value)
+let columnsObserver: ResizeObserver | null = null
+let columnsFrame: number | null = null
+// Scrolling uses cached geometry; only document/viewport changes invalidate it.
+let columnLayoutDirty = true
+// Distance between adjacent pages, half of a two-page viewport plus its gutter.
+const columnStride = ref(0)
+const columnsLastStart = computed(() => Math.max(1, columnsPages.value - 1))
+const columnsRange = computed(() => {
+  const end = Math.min(columnsPages.value, columnsPage.value + 1)
+  return end === columnsPage.value ? String(end) : `${columnsPage.value}–${end}`
+})
+let columnWheelDelta = 0
+let columnWheelAt = 0
+let columnRestorePending: { session: EditorSession; start: number } | null = null
+const columnsEnd = ref(0)
+let columnRevealPending = false
+let columnContentObserver: MutationObserver | null = null
+
+function destroySession(session: EditorSession): void {
+  session.diagrams.dispose()
+  session.instance.destroy()
+}
+
+function sessionEvents(session: EditorSession, active: boolean): void {
+  if (session.suspended === !active) return
+  session.suspended = !active
+  for (const { target, event, listener, capture } of session.instance.eventCenter.events) {
+    if (active) target.addEventListener(event, listener, capture)
+    else target.removeEventListener(event, listener, capture)
+  }
+}
+
+function captureNativeCursor(): IPublicCursorInput | null {
+  const selection = muya?.editor.selection.getSelection()
+  if (!selection || selection.anchor.block.muya !== muya) return null
+  return {
+    anchorPath: [...selection.anchor.block.path], anchor: { offset: selection.anchor.offset },
+    focusPath: [...selection.focus.block.path], focus: { offset: selection.focus.offset }
+  }
+}
+
+function updateColumnPosition(): void {
+  const scroller = editorScrollRef.value
+  if (scroller && columnStride.value > 0) {
+    columnsPage.value = Math.min(columnsLastStart.value, Math.max(1, Math.round(scroller.scrollLeft / columnStride.value) + 1))
+  }
+}
+
+function updateColumnPages(): void {
+  const scroller = editorScrollRef.value
+  if (!scroller || !muya) return
+  columnLayoutDirty = false
+  const viewportWidth = scroller.clientWidth
+  columnsWide.value = viewportWidth >= 760
+  if (!columnsActive.value) { columnsPage.value = columnsPages.value = 1; columnStride.value = 0; return }
+  const owner = currentSession
+  const previousStride = columnStride.value
+  const restore = columnRestorePending?.session === owner ? columnRestorePending : null
+  const start = restore?.start ?? (previousStride > 0 ? Math.round(scroller.scrollLeft / previousStride) : 0)
+  const height = `${scroller.clientHeight - 76}px`
+  if (scroller.style.getPropertyValue('--column-content-height') !== height) {
+    scroller.style.setProperty('--column-content-height', height)
+  }
+  columnStride.value = (muya.domNode.clientWidth + 64) / 2
+  let last = muya.editor.scrollPage?.domNode?.lastElementChild
+  while (last && !last.getClientRects().length) last = last.previousElementSibling
+  const firstLeft = muya.domNode.getBoundingClientRect().left
+  const lastRight = last?.getBoundingClientRect().right ?? firstLeft
+  columnsPages.value = Math.max(1, Math.ceil((lastRight - firstLeft + 64 - 1) / columnStride.value))
+  columnsEnd.value = (columnsLastStart.value - 1) * columnStride.value + viewportWidth - 1
+  const page = Math.min(columnsLastStart.value - 1, Math.max(0, start))
+  columnsPage.value = page + 1
+  // Apply the new extent/snap markers before positioning a newly added page.
+  nextTick(() => {
+    if (!columnsActive.value || editorScrollRef.value !== scroller || currentSession !== owner) return
+    scroller.scrollLeft = (columnsPage.value - 1) * columnStride.value
+    if (columnRestorePending === restore) columnRestorePending = null
+  })
+}
+
+function observeColumnContent(): void {
+  columnContentObserver?.disconnect()
+  if (muya) columnContentObserver?.observe(muya.domNode, {
+    subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'open', 'width', 'height', 'src']
+  })
+  scheduleColumnLayout()
+}
+
+function revealColumnCaret(): void {
+  const scroller = editorScrollRef.value
+  const selection = document.getSelection()
+  if (!columnsActive.value || !scroller || !muya || !selection?.focusNode || !muya.domNode.contains(selection.focusNode)) return
+  const range = document.createRange()
+  range.setStart(selection.focusNode, selection.focusOffset)
+  range.collapse(true)
+  const caret = range.getBoundingClientRect()
+  const bounds = scroller.getBoundingClientRect()
+  if (caret.left >= bounds.left + 40 && caret.right <= bounds.right - 40) return
+  const relativeX = caret.left - muya.domNode.getBoundingClientRect().left
+  const caretPage = Math.floor(relativeX / columnStride.value)
+  // Crossing the right edge reveals the new page on the right, preserving
+  // the previous right page on the left: 1–2 becomes 2–3, including keyboard use.
+  const start = caretPage - (caret.left >= bounds.right - 40 ? 1 : 0)
+  const page = Math.max(0, Math.min(columnsLastStart.value - 1, start))
+  scroller.scrollLeft = page * columnStride.value
+  columnsPage.value = page + 1
+}
+
+function queueColumnFrame(): void {
+  if (columnsFrame != null) return
+  columnsFrame = requestAnimationFrame(() => {
+    columnsFrame = null
+    if (columnLayoutDirty) updateColumnPages()
+    else updateColumnPosition()
+    if (columnRevealPending) {
+      columnRevealPending = false
+      const owner = currentSession
+      nextTick(() => { if (currentSession === owner) revealColumnCaret() })
+    }
+  })
+}
+
+function scheduleColumnLayout(): void {
+  columnLayoutDirty = true
+  queueColumnFrame()
+}
+
+function onColumnScroll(): void {
+  if (columnsActive.value) queueColumnFrame()
+}
+
+function turnColumns(direction: number): void {
+  const scroller = editorScrollRef.value
+  if (!scroller || !columnsActive.value || !columnStride.value) return
+  // The scroll event can arrive next frame after a native or restored scroll.
+  // Always navigate from the actual visible page, rather than its delayed label.
+  const current = Math.round(scroller.scrollLeft / columnStride.value) + 1
+  const page = Math.max(1, Math.min(columnsLastStart.value, current + direction))
+  columnWheelDelta = 0
+  scroller.scrollLeft = (page - 1) * columnStride.value
+  columnsPage.value = page
+}
+
+function onColumnsWheel(event: WheelEvent): void {
+  if (!columnsActive.value || event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return
+  const scroller = editorScrollRef.value
+  if (!scroller) return
+  // Let genuinely overflowing code, tables and diagrams scroll internally.
+  // At their boundary the same wheel gesture continues through the document.
+  let target = event.target instanceof Element ? event.target : null
+  while (target && target !== scroller) {
+    if (target.matches('pre, .mu-code-block, .mu-diagram-preview, .mu-table')) {
+      const max = target.scrollHeight - target.clientHeight
+      if (max > 1 && (event.deltaY > 0 ? target.scrollTop < max - 1 : target.scrollTop > 0)) return
+    }
+    target = target.parentElement
+  }
+  event.preventDefault()
+  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1)
+  const now = performance.now()
+  if (now - columnWheelAt > 180 || Math.sign(columnWheelDelta) !== Math.sign(delta)) columnWheelDelta = 0
+  columnWheelAt = now
+  columnWheelDelta += delta
+  // One normal wheel notch advances one page; small touchpad packets accumulate.
+  // Large deltas still advance only one page, never skip a page.
+  if (Math.abs(columnWheelDelta) >= 48) turnColumns(Math.sign(columnWheelDelta))
+}
+
+watch(columnsActive, active => {
+  columnWheelDelta = 0
+  if (!active) columnRestorePending = null
+  const scroller = editorScrollRef.value
+  if (scroller) {
+    // A cancelable wheel listener forces even single-column scrolling to wait
+    // for the renderer. Install it only while horizontal column flow needs it.
+    scroller.removeEventListener('wheel', onColumnsWheel)
+    if (active) scroller.addEventListener('wheel', onColumnsWheel, { passive: false })
+    scroller.scrollLeft = 0
+  }
+  nextTick(scheduleColumnLayout)
+})
 
 const activeTab = computed(() => getActiveTab())
 const isSource = computed(() => state.viewMode === 'source')
-/** 分栏预览：左侧静态预览，右侧源码编辑。 */
+/** 源码预览：左侧源码编辑，右侧静态预览。 */
 const isSplit = computed(() => state.viewMode === 'split')
-/** 左侧预览容器。 */
+/** 右侧预览容器。 */
 const previewRef = ref<HTMLElement | null>(null)
-/** 分栏右侧源码的当前行号，用于页头信息。 */
+/** 源码预览左侧源码的当前行号，用于页头信息。 */
 const sourceLine = ref(1)
 const sourceLineStarts = computed(() => lineOffsets(state.sourceContent))
 const sourceLines = computed(() => sourceLineStarts.value.length)
 let previewStarts: number[] = []
 let caretFrame: number | null = null
 let sourceResizeObserver: ResizeObserver | null = null
+let sourceResizeFrame: number | null = null
 let previewFrame: number | null = null
 let previewTimer: number | null = null
 let previewDirtySince = 0
@@ -107,11 +310,21 @@ function cancelPreviewRefresh(): void {
  * textarea 自己出现滚动条时，源码和预览会各自维护一套滚动状态；
  * 这里把高度撑开，由外层容器统一滚动，光标定位也更稳定。
  */
-function resizeSourceEditor(): void {
+function resizeSourceEditorNow(): void {
   const ta = sourceRef.value
   if (!ta) return
   ta.style.height = 'auto'
-  ta.style.height = `${Math.max(ta.scrollHeight, 0)}px`
+  // Read and write once; every assignment to scrollHeight forces layout.
+  ta.style.height = `${ta.scrollHeight}px`
+}
+
+/** Coalesce resize requests into one layout pass per frame. */
+function resizeSourceEditor(): void {
+  if (sourceResizeFrame != null) return
+  sourceResizeFrame = requestAnimationFrame(() => {
+    sourceResizeFrame = null
+    resizeSourceEditorNow()
+  })
 }
 
 /** 刷新分栏预览区的内容。 */
@@ -142,7 +355,16 @@ function refreshPreview(): void {
   nextTick(() => syncPreviewToCursor())
 }
 
-/* ------------------------- 分栏：光标 ↔ 预览联动 ------------------------- */
+/** 切标签时先让标题与 textarea 完成首帧，再解析 Markdown。 */
+function queuePreviewRefresh(): void {
+  cancelPreviewRefresh()
+  previewFrame = requestAnimationFrame(() => {
+    previewFrame = null
+    refreshPreview()
+  })
+}
+
+/* ------------------------- 源码预览：光标 ↔ 预览联动 ------------------------- */
 
 /**
  * 把源码光标所在位置映射到预览里的对应元素。
@@ -302,32 +524,40 @@ watch(() => activeTab.value?.filePath, (path) => {
   if (isSplit.value) nextTick(refreshPreview)
 }, { immediate: true })
 
-/** 保存当前标签的视图状态，供切换标签时恢复。 */
-function stashViewState(): void {
-  const tab = activeTab.value
-  if (!tab) return
-  if (muya) {
-    const cursor = muya.getCursorOffset()
-    const scroller = getScroller()
-    viewState.set(tab.id, {
-      cursor: cursor ?? null,
-      scrollTop: scroller?.scrollTop ?? 0
-    })
+/** Flush the outgoing document before changing instances; cached tabs retain their tree and history. */
+function stashViewState(force = false): void {
+  const session = currentSession
+  if (!session || (!force && (isSource.value || isSplit.value))) return
+  session.instance.flush()
+  session.cursor = captureNativeCursor() ?? session.cursor
+  const scroller = editorScrollRef.value
+  session.scrollTop = scroller?.scrollTop ?? 0
+  session.scrollLeft = scroller?.scrollLeft ?? 0
+  if (columnsActive.value && columnStride.value > 0) {
+    // A quick switch can leave before the incoming restore frame has run.
+    // Preserve its intended page instead of replacing it with the old viewport.
+    session.columnStart = columnRestorePending?.session === session
+      ? columnRestorePending.start
+      : Math.round(session.scrollLeft / columnStride.value)
   }
 }
 
 function applyViewState(tab: Tab): void {
-  const saved = viewState.get(tab.id)
-  if (!saved || !muya) return
-  if (saved.cursor) {
-    try {
-      muya.setCursorByOffset(saved.cursor)
-    } catch {
-      /* 光标位置可能已失效，忽略 */
-    }
+  const session = currentSession
+  if (!muya || session?.id !== tab.id) return
+  if (session.cursor) {
+    try { muya.setCursor(session.cursor) } catch { session.cursor = null }
   }
-  const scroller = getScroller()
-  if (scroller) scroller.scrollTop = saved.scrollTop
+  const scroller = editorScrollRef.value
+  if (scroller) {
+    scroller.scrollTop = session.scrollTop
+    // The outgoing tab's snap targets must not clamp the incoming position.
+    // Restore the logical page only after its own extent and targets render.
+    if (columnsActive.value) columnRestorePending = { session, start: session.columnStart }
+    else scroller.scrollLeft = session.scrollLeft
+  }
+  columnRevealPending = false
+  scheduleColumnLayout()
 }
 
 function refreshOutline(): void {
@@ -349,8 +579,7 @@ function refreshOutline(): void {
 function getScroller(): HTMLElement | null {
   const fromMuya = muya?.domNode?.closest?.('.editor-scroll') as HTMLElement | null
   if (fromMuya) return fromMuya
-  const fromRef = containerRef.value?.closest('.editor-scroll') as HTMLElement | null
-  if (fromRef) return fromRef
+  if (editorScrollRef.value) return editorScrollRef.value
   return document.querySelector('.editor-scroll')
 }
 
@@ -385,71 +614,152 @@ function keepCursorCentered(): void {
 const typewriterDiag: Record<string, unknown> = { reason: 'not-called' }
 ;(window as unknown as Record<string, unknown>).__inkdownTypewriterDiag = typewriterDiag
 
-function mountEditor(): void {
-  const el = containerRef.value
-  if (!el) return
+function createEditorSession(tab: Tab | undefined): EditorSession | null {
+  const mount = editorScrollRef.value
+  if (!mount) return null
   registerMuyaPlugins()
-  const tab = activeTab.value
   setDocPathForImages(tab?.filePath ?? null)
-  muya = new Muya(el, buildMuyaOptions({ markdown: tab?.content ?? '' }))
-  muya.init()
+  const el = document.createElement('div')
+  el.className = 'muya-container'
+  mount.appendChild(el)
+  let diagrams: DeferredDiagrams
+  const instance = new Muya(el, {
+    ...buildMuyaOptions({ markdown: tab?.content ?? '' }),
+    scheduleDiagramRender: (target, render) => diagrams.schedule(target, render)
+  })
+  diagrams = new DeferredDiagrams(instance.domNode)
+  const session: EditorSession = { id: tab?.id ?? '', instance, diagrams, content: tab?.content ?? '', markdown: '', cursor: null, scrollTop: 0, scrollLeft: 0, columnStart: 0, suspended: false }
+  instance.init({ focus: false })
+  session.markdown = instance.getMarkdown()
+  sessionSettings.set(instance, settingsGeneration)
+  instance.on('json-change', () => {
+    if (suppress) return
+    const owner = state.tabs.find(tab => tab.id === session.id)
+    if (!owner) return
+    const markdown = instance.getMarkdown()
+    if (markdown === session.markdown) return
+    // A late paste/upload belongs to its original tab. Source edits that have
+    // superseded that tree remain authoritative rather than being overwritten.
+    if (owner.content !== session.content) return
+    session.markdown = markdown
+    session.content = markdown
+    owner.content = markdown
+    if (currentSession === session && !isSource.value && !isSplit.value) {
+      updateCounts(markdown)
+      refreshOutline()
+      scheduleColumnLayout()
+    }
+  })
+  instance.on('selection-change', () => {
+    if (currentSession !== session || suppress || isSource.value || isSplit.value) return
+    session.cursor = captureNativeCursor() ?? session.cursor
+    if (cursorTimer != null) window.clearTimeout(cursorTimer)
+    // Source-coordinate serialization is useful for the status bar, not on every mousemove.
+    cursorTimer = window.setTimeout(() => {
+      cursorTimer = null
+      if (currentSession !== session || isSource.value || isSplit.value) return
+      const owner = state.tabs.find(tab => tab.id === session.id)
+      const cursor = instance.getCursorOffset()
+      if (owner && cursor) owner.cursor = cursor
+    }, 100)
+    if (state.typewriterMode && !columnsActive.value) keepCursorCentered()
+    if (columnsActive.value) { columnRevealPending = true; queueColumnFrame() }
+  })
+  instance.on('search-refreshed', () => { if (currentSession === session) restoreSearchIfNeeded() })
+  if (session.id) editorSessions.set(session.id, session)
+  return session
+}
 
-  // 暴露实例供主进程端到端自检使用（INKDOWN_SELF_CHECK 时才有意义）
+function mountEditor(): void {
+  currentSession = createEditorSession(activeTab.value)
+  muya = currentSession?.instance ?? null
   ;(window as unknown as Record<string, unknown>).__inkdownMuya = muya
-
-  muya.on('json-change', () => {
-    if (suppress || isSource.value || isSplit.value) return
-    const t = activeTab.value
-    if (!t) return
-    t.content = muya!.getMarkdown()
-    updateCounts(t.content)
-    refreshOutline()
-  })
-
-  muya.on('selection-change', () => {
-    const t = activeTab.value
-    if (!t || !muya) return
-    const cursor = muya.getCursorOffset()
-    if (cursor) t.cursor = cursor
-    if (state.typewriterMode) keepCursorCentered()
-  })
-
-  // 切标签或重载内容后，内核会重置搜索状态，这里按 store 里记的关键词重搜一次
-  muya.on('search-refreshed', () => {
-    restoreSearchIfNeeded()
-  })
-
-  updateCounts(tab?.content ?? '')
+  updateCounts(activeTab.value?.content ?? '')
   refreshOutline()
-
-  // 应用级载入钩子：走与界面相同的路径（载入内容 + 刷新字数与大纲），
-  // 供主进程自检与截图使用，避免直接调用 muya.setContent 绕过 Vue 状态。
+  observeColumnContent()
   ;(window as unknown as Record<string, unknown>).__inkdownLoad = (markdown: string) => {
-    const t = activeTab.value
-    if (!t || !muya) return false
-    suppress = true
-    muya.setContent(markdown, false)
-    suppress = false
-    t.content = markdown
+    const tab = activeTab.value
+    if (!tab || !muya || !currentSession) return false
+    if (!isSource.value && !isSplit.value) {
+      suppress = true
+      muya.setContent(markdown, false)
+      suppress = false
+      currentSession.content = markdown
+      currentSession.markdown = muya.getMarkdown()
+      currentSession.cursor = null
+    }
+    tab.content = markdown
     updateCounts(markdown)
-    refreshOutline()
+    if (!isSource.value && !isSplit.value) refreshOutline()
+    scheduleColumnLayout()
     return true
+  }
+}
+
+function activateEditor(tab: Tab): void {
+  if (!editorScrollRef.value) return
+  if (cursorTimer != null) window.clearTimeout(cursorTimer)
+  cursorTimer = null
+  if (currentSession?.id === '' && !editorSessions.size) {
+    currentSession.id = tab.id
+    editorSessions.set(tab.id, currentSession)
+  }
+  let next = editorSessions.get(tab.id)
+  if (next !== currentSession) {
+    if (currentSession) {
+      currentSession.instance.hideAllFloatTools()
+      sessionEvents(currentSession, false)
+      currentSession.instance.domNode.remove()
+    }
+    next ??= createEditorSession(tab) ?? undefined
+    if (!next) return
+    editorScrollRef.value.appendChild(next.instance.domNode)
+    sessionEvents(next, true)
+    currentSession = next
+    muya = next.instance
+    ;(window as unknown as Record<string, unknown>).__inkdownMuya = muya
+  }
+  if (!next) return
+  if (!next.instance.domNode.isConnected) editorScrollRef.value.appendChild(next.instance.domNode)
+  sessionEvents(next, true)
+  next.instance.setFocusMode(state.focusMode)
+  observeColumnContent()
+  // Map order is an LRU; keep a bounded number of live trees.
+  editorSessions.delete(tab.id)
+  editorSessions.set(tab.id, next)
+  while (editorSessions.size > 3) {
+    const [id, expired] = editorSessions.entries().next().value!
+    destroySession(expired)
+    editorSessions.delete(id)
+  }
+  if (sessionSettings.get(next.instance) !== settingsGeneration) {
+    suppress = true
+    next.instance.setOptions(buildMuyaOptions(), true)
+    suppress = false
+    next.markdown = next.instance.getMarkdown()
+    sessionSettings.set(next.instance, settingsGeneration)
   }
 }
 
 /** 把某个标签的内容载入编辑器。 */
 function loadTab(tab: Tab): void {
   setDocPathForImages(tab.filePath)
-  // 源码与分栏模式都用 textarea 承载内容，不走 muya
+  // 源码预览与源码模式都用 textarea 承载内容，不走 muya。
   if (isSource.value || isSplit.value) {
-    state.sourceContent = tab.content
-    if (isSplit.value) nextTick(() => refreshPreview())
+    if (state.sourceContent !== tab.content) state.sourceContent = tab.content
+    if (isSplit.value) queuePreviewRefresh()
     return
   }
-  if (!muya) return
-  suppress = true
-  muya.setContent(tab.content, false)
-  suppress = false
+  activateEditor(tab)
+  if (!muya || !currentSession) return
+  if (currentSession.content !== tab.content) {
+    suppress = true
+    muya.setContent(tab.content, false)
+    suppress = false
+    currentSession.content = tab.content
+    currentSession.markdown = muya.getMarkdown()
+    currentSession.cursor = null
+  }
   updateCounts(tab.content)
   refreshOutline()
   // setContent 会清掉内核的搜索状态，切回来需要重新搜索
@@ -458,20 +768,29 @@ function loadTab(tab: Tab): void {
 
 watch(
   () => state.activeId,
-  (_newId, oldId) => {
-    if (oldId) stashViewState()
+  () => {
+    stashViewState()
     const tab = activeTab.value
-    if (!tab) return
-    // 源码与分栏都用 textarea 显示内容
+    if (!tab) {
+      if (currentSession) {
+        destroySession(currentSession)
+        editorSessions.delete(currentSession.id)
+        currentSession = null
+        muya = null
+        ;(window as unknown as Record<string, unknown>).__inkdownMuya = null
+      }
+      return
+    }
     if (isSource.value || isSplit.value) {
       state.sourceContent = tab.content
       sourceHistory()
-      if (isSplit.value) nextTick(() => refreshPreview())
+      if (isSplit.value) queuePreviewRefresh()
     } else {
       loadTab(tab)
       nextTick(() => applyViewState(tab))
     }
-  }
+  },
+  { flush: 'sync' }
 )
 
 watch(
@@ -492,6 +811,8 @@ watch(
     }
 
     if (mode === 'source' || mode === 'split') {
+      if (prev === 'wysiwyg') stashViewState(true)
+      if (currentSession) sessionEvents(currentSession, false)
       state.sourceContent = tab.content
       const history = sourceHistory()
       if (history && history.current.text !== tab.content) sourceHistories.delete(tab.id)
@@ -515,7 +836,7 @@ watch(
   }
 )
 
-// 源码 / 分栏模式下编辑内容实时同步到标签，并刷新分栏预览
+      // 源码预览模式下编辑内容实时同步到标签，并刷新预览。
 watch(
   () => state.sourceContent,
   (val) => {
@@ -534,7 +855,9 @@ watch(
 
 watch(() => state.tabs.map((tab) => tab.id), (ids) => {
   for (const id of sourceHistories.keys()) if (!ids.includes(id)) sourceHistories.delete(id)
-  for (const id of viewState.keys()) if (!ids.includes(id)) viewState.delete(id)
+  for (const [id, session] of editorSessions) {
+    if (!ids.includes(id) && session !== currentSession) { destroySession(session); editorSessions.delete(id) }
+  }
 })
 
 // 专注模式：给编辑器根节点加类，由 CSS 淡化非当前段落
@@ -1322,6 +1645,7 @@ function reportMatches(): void {
 function onFindClose(): void {
   muya?.hideAllFloatTools()
   if (isSource.value || isSplit.value) return
+  muya?.flush()
   const tab = activeTab.value
   if (tab) tab.content = muya?.getMarkdown() ?? tab.content
 }
@@ -1340,15 +1664,23 @@ function reloadFromTab(): void {
   suppress = true
   muya.setContent(tab.content, false)
   suppress = false
+  if (currentSession) { currentSession.content = tab.content; currentSession.markdown = muya.getMarkdown(); currentSession.cursor = null }
   updateCounts(tab.content)
   refreshOutline()
+  scheduleColumnLayout()
 }
 
 function onSettingsChanged(): void {
-  if (!muya) return
-  suppress = true
-  muya.setOptions(buildMuyaOptions(), true)
-  suppress = false
+  settingsGeneration++
+  if (muya && !isSource.value && !isSplit.value) {
+    setDocPathForImages(activeTab.value?.filePath ?? null)
+    suppress = true
+    muya.setOptions(buildMuyaOptions(), true)
+    sessionSettings.set(muya, settingsGeneration)
+    if (currentSession) currentSession.markdown = muya.getMarkdown()
+    suppress = false
+    scheduleColumnLayout()
+  }
   if (isSplit.value) nextTick(refreshPreview)
 }
 
@@ -1388,7 +1720,7 @@ function onDragOver(e: DragEvent): void {
 function onDragLeave(e: DragEvent): void {
   // 只在真正离开容器时隐藏提示层（子元素切换会连续触发）
   const related = e.relatedTarget as Node | null
-  if (related && containerRef.value?.contains(related)) return
+  if (related && hostRef.value?.contains(related)) return
   dragging.value = false
 }
 
@@ -1475,6 +1807,11 @@ function onGotoLine(e: Event): void {
 
 onMounted(() => {
   registerGlobalCommands()
+  columnContentObserver = new MutationObserver(records => {
+    if (!columnsActive.value) return
+    // Gutter positions are presentation-only; they cannot change pagination.
+    if (records.some(record => !(record.target instanceof Element ? record.target : record.target.parentElement)?.closest('.mu-line-numbers-rows'))) scheduleColumnLayout()
+  })
   mountEditor()
   registerEditorCommands()
   // 右键菜单用「捕获阶段」监听：
@@ -1520,12 +1857,16 @@ onMounted(() => {
     sourceResizeObserver.observe(sourceScroller)
   }
   nextTick(resizeSourceEditor)
+  columnsObserver = new ResizeObserver(scheduleColumnLayout)
+  if (editorScrollRef.value) columnsObserver.observe(editorScrollRef.value)
 })
 
 onBeforeUnmount(() => {
   previewDiagrams.dispose()
   cancelPreviewRefresh()
   if (caretFrame != null) cancelAnimationFrame(caretFrame)
+  if (sourceResizeFrame != null) cancelAnimationFrame(sourceResizeFrame)
+  sourceResizeFrame = null
   window.removeEventListener('contextmenu', onEditorContextMenu, true)
   window.removeEventListener('inkdown:find', onFind)
   window.removeEventListener('inkdown:find-close', onFindClose)
@@ -1534,7 +1875,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('inkdown:goto-line', onGotoLine as EventListener)
   sourceResizeObserver?.disconnect()
   sourceResizeObserver = null
-  muya?.destroy()
+  if (cursorTimer != null) window.clearTimeout(cursorTimer)
+  if (columnsFrame != null) cancelAnimationFrame(columnsFrame)
+  editorScrollRef.value?.removeEventListener('wheel', onColumnsWheel)
+  columnsObserver?.disconnect()
+  columnContentObserver?.disconnect()
+  for (const session of editorSessions.values()) destroySession(session)
+  if (currentSession && !editorSessions.has(currentSession.id)) destroySession(currentSession)
+  editorSessions.clear()
+  currentSession = null
   muya = null
 })
 
@@ -1545,7 +1894,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   <div
     ref="hostRef"
     class="editor-host"
-    :class="{ 'is-split': isSplit }"
+    :class="{ 'is-split': isSplit, 'is-paged': columnsActive }"
     :style="{
       '--editor-zoom': state.zoom,
       '--editor-font-size': `${settings.fontSize}px`,
@@ -1560,37 +1909,33 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
     <!--
       三种视图：
         所见即所得 —— 只显示 muya 编辑器
-        分栏预览   —— 左侧渲染效果、右侧源码
+        源码预览   —— 左侧源码、右侧渲染效果
         源码       —— 只显示源码编辑器
-      分栏与源码共用同一个 textarea，避免两份内容源不同步。
+      源码预览与源码共用同一个 textarea，避免两份内容源不同步。
     -->
-    <div v-show="!isSource && !isSplit" class="editor-scroll">
-      <div ref="containerRef" class="muya-container" />
+    <div v-if="columnsActive" class="columns-sheets" aria-hidden="true">
+      <span class="columns-sheet" />
+      <span v-if="columnsPages > 1" class="columns-sheet" />
     </div>
-    <!-- 分栏预览：左侧渲染当前 Markdown，右侧编辑源码 -->
-    <div v-if="isSplit" class="split-preview">
-      <div class="split-preview-head">
-        <div class="split-head-label">
-          <span class="split-eyebrow">{{ t('view.splitPreviewHead') }}</span>
-          <span class="split-live"><span class="split-live-dot" />LIVE</span>
-        </div>
-        <span class="split-preview-title">{{ activeTab?.title ?? '' }}</span>
-        <!-- 两个独立开关：虚线框标位置、视角跟随光标 -->
-        <label class="split-opt" :title="t('view.splitHighlightBlockHint')">
-          <input v-model="settings.splitHighlightBlock" type="checkbox" />
-          {{ t('view.splitHighlightBlock') }}
-        </label>
-        <label class="split-opt" :title="t('view.splitSyncScrollHint')">
-          <input v-model="settings.splitSyncScroll" type="checkbox" />
-          {{ t('view.splitSyncScroll') }}
-        </label>
-      </div>
-      <div ref="previewRef" class="split-preview-body markdown-body" @click="onPreviewClick" />
+    <div ref="editorScrollRef" v-show="!isSource && !isSplit" class="editor-scroll"
+      :class="{ 'is-columns': columnsActive }" @scroll.passive="onColumnScroll" @load.capture="scheduleColumnLayout">
+      <template v-if="columnsActive">
+        <span class="columns-end" :style="{ left: `${columnsEnd}px` }" aria-hidden="true" />
+        <span v-for="page in columnsLastStart" :key="page" class="columns-snap"
+          :style="{ left: `${44 + (page - 1) * columnStride}px` }" aria-hidden="true" />
+      </template>
     </div>
+    <nav v-if="columnsActive" class="columns-pager" :aria-label="t('view.continuousColumns')">
+      <span class="columns-flow">{{ t('view.continuousColumns') }}</span>
+      <button :disabled="columnsPage <= 1" :aria-label="t('view.previousSpread')" @click="turnColumns(-1)">‹</button>
+      <span>{{ t('view.columnPage', { range: columnsRange, pages: columnsPages }) }}</span>
+      <button :disabled="columnsPage >= columnsLastStart" :aria-label="t('view.nextSpread')" @click="turnColumns(1)">›</button>
+    </nav>
+    <!-- 源码预览：左侧编辑源码，右侧渲染当前 Markdown -->
     <div
       v-show="isSource || isSplit"
       class="source-scroll"
-      :class="{ 'split-right': isSplit }"
+      :class="{ 'split-left': isSplit }"
     >
       <div v-if="isSplit" class="source-head">
         <div class="split-head-label">
@@ -1616,7 +1961,26 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
         />
       </div>
     </div>
-    <!-- 悬浮球：分栏编辑与源码模式出现；拖动期间不展开 -->
+    <div v-if="isSplit" class="split-preview">
+      <div class="split-preview-head">
+        <div class="split-head-label">
+          <span class="split-eyebrow">{{ t('view.splitPreviewHead') }}</span>
+          <span class="split-live"><span class="split-live-dot" />LIVE</span>
+        </div>
+        <span class="split-preview-title">{{ activeTab?.title ?? '' }}</span>
+        <!-- 两个独立开关：虚线框标位置、视角跟随光标 -->
+        <label class="split-opt" :title="t('view.splitHighlightBlockHint')">
+          <input v-model="settings.splitHighlightBlock" type="checkbox" />
+          {{ t('view.splitHighlightBlock') }}
+        </label>
+        <label class="split-opt" :title="t('view.splitSyncScrollHint')">
+          <input v-model="settings.splitSyncScroll" type="checkbox" />
+          {{ t('view.splitSyncScroll') }}
+        </label>
+      </div>
+      <div ref="previewRef" class="split-preview-body markdown-body" @click="onPreviewClick" />
+    </div>
+    <!-- 悬浮球：源码预览与源码模式出现；拖动期间不展开 -->
     <BlockOrb v-if="(isSplit || isSource) && activeTab" @insert="onOrbInsert" />
     <div v-if="!activeTab" class="empty-state">
       <p class="empty-title">{{ t('app.name') }}</p>
@@ -1661,13 +2025,13 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* 分栏模式：左侧预览、右侧源码，各占一半 */
-.source-scroll.split-right {
+/* 源码预览：左侧源码、右侧预览，各占一半 */
+.source-scroll.split-left {
   flex: 1 1 50%;
   min-width: 0;
-  border-left: 1px solid var(--ty-border);
+  border-right: 1px solid var(--ty-border);
 }
-.source-scroll.split-right,
+.source-scroll.split-left,
 .split-preview {
   min-height: 0;
 }
@@ -1956,12 +2320,12 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   tab-size: var(--editor-tab-size);
   scrollbar-width: thin;
 }
-.source-scroll.split-right {
+.source-scroll.split-left {
   background:
-    radial-gradient(circle at 82% 0%, color-mix(in srgb, var(--ty-accent) 5%, transparent), transparent 260px),
+    radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--ty-accent) 5%, transparent), transparent 260px),
     var(--ty-bg);
 }
-.source-scroll:not(.split-right) .source-editor {
+.source-scroll:not(.split-left) .source-editor {
   max-width: 980px;
   margin: 0 auto;
   padding: 48px 56px 120px;
@@ -2037,4 +2401,25 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
   color: var(--ty-accent);
   font-size: 14px;
 }
+</style>
+
+<style scoped>
+.editor-host.is-paged { background: color-mix(in srgb, var(--ty-bg) 94%, var(--ty-text)); }
+.columns-sheets { position: absolute; inset: 18px 28px 34px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; pointer-events: none; }
+.columns-sheet { min-width: 0; border: 1px solid var(--ty-border); border-radius: 3px; background: var(--ty-bg); box-shadow: 0 2px 5px rgb(0 0 0 / 5%); }
+.editor-scroll.is-columns { position: relative; z-index: 1; padding: 30px 44px 46px; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scroll-padding-left: 44px; scrollbar-width: none; }
+.editor-scroll.is-columns::-webkit-scrollbar { height: 0; }
+.columns-snap { position: absolute; top: 0; width: 1px; height: 1px; scroll-snap-align: start; pointer-events: none; }
+.columns-end { position: absolute; top: 0; width: 1px; height: 1px; pointer-events: none; }
+/* Fixed paper sheets paint each page; the moving editor must not cover the gutter. */
+.is-columns :deep(.muya-container) { height: 100%; min-height: 0; width: 100%; background: transparent; }
+.is-columns :deep(.mu-container) { height: 100%; min-height: 0; max-width: none; margin: 0; padding: 0; column-count: 2; column-fill: auto; column-gap: 64px; container-type: normal; }
+.is-columns :deep(.mu-container > *) { break-inside: avoid-column; }
+.is-columns :deep(.mu-container h1), .is-columns :deep(.mu-container h2), .is-columns :deep(.mu-container h3) { break-after: avoid-column; }
+.is-columns :deep(.mu-table), .is-columns :deep(.mu-code-block), .is-columns :deep(.mu-diagram-block > .mu-diagram-preview), .is-columns :deep(.mu-diagram-block.mu-active > .mu-diagram-container) { max-width: 100%; max-height: var(--column-content-height); overflow: auto; }
+.columns-pager { position: absolute; z-index: 2; bottom: 5px; left: 50%; transform: translateX(-50%); white-space: nowrap; display: flex; align-items: center; gap: 10px; padding: 3px 8px; border: 1px solid var(--ty-border); border-radius: 7px; background: var(--ty-bg); color: var(--ty-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.columns-pager button { border: 0; border-radius: 4px; background: transparent; color: var(--ty-text); font-size: 19px; cursor: pointer; }
+.columns-pager button:hover { background: var(--ty-hover); }
+.columns-pager button:disabled { opacity: .3; cursor: default; }
+.columns-flow { margin-right: 4px; }
 </style>

@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { state } from '../store'
-import { executeCommand, listCommandIds } from '../composables/useCommands'
+import {
+  commandLabelKey,
+  executeCommand,
+  listCommandIds
+} from '../composables/useCommands'
 import { useI18n } from '../composables/useI18n'
 
 /**
@@ -25,61 +29,11 @@ interface PaletteItem {
   haystack: string
 }
 
-/** 命令 id → 词条 key 的映射规则。 */
-function labelFor(id: string): string {
-  const [group, action] = id.split(':')
-  const key = `menu.${group}.${action}`
-  const label = t(key)
-  // t() 在缺失时返回 key 本身，说明没有对应词条
-  return label === key ? id : label
-}
-
-/**
- * 没有 menu.* 词条的命令的显示名。
- *
- * 命令面板列出的是命令中心里的全部命令，其中一部分（命令面板自身、
- * 段落操作、换行符、分栏、全库搜索等）没有走菜单词条，
- * 若不额外映射就会把命令 id 原样显示出来，可读性很差。
- */
-const FALLBACK_LABELS: Record<string, string> = {
-  'app:commandPalette': 'palette.title',
-  'app:preferences': 'menu.file.preferences',
-  'app:quit': 'menu.file.quit',
-  'edit:findInFolder': 'search.folder',
-  'edit:duplicate': 'menu.edit.duplicate',
-  'edit:insertParagraph': 'menu.edit.insertParagraphBefore',
-  'edit:deleteParagraph': 'menu.edit.deleteParagraph',
-  'edit:lineEnding': 'menu.edit.lineEnding',
-  'edit:insertTime': 'menu.edit.insertTime',
-  'edit:copyMarkdown': 'menu.edit.copyMarkdown',
-  'edit:copyHtml': 'menu.edit.copyHtml',
-  'edit:pastePlain': 'menu.edit.pastePlain',
-  'view:toggleSplit': 'view.splitPreview',
-  'view:toggleTheme': 'menu.view.toggleTheme',
-  'view:zoomIn': 'menu.view.zoomIn',
-  'view:zoomOut': 'menu.view.zoomOut',
-  'view:zoomReset': 'menu.view.zoomReset',
-  'view:fullscreen': 'menu.view.fullscreen',
-  'view:devtools': 'menu.view.devtools',
-  'help:about': 'menu.help.about',
-  'help:shortcuts': 'menu.help.shortcuts',
-  'help:repo': 'menu.help.repo',
-  'help:feedback': 'menu.help.feedback',
-  'help:checkUpdate': 'menu.help.update',
-  'file:openRecent': 'menu.file.recent',
-  'file:clearRecent': 'menu.file.clearRecent',
-  'file:saveAll': 'menu.file.save'
-}
-
 /** 命令的显示名：优先菜单词条，其次回退映射，最后才是 id。 */
 function displayName(id: string): string {
-  const primary = labelFor(id)
-  if (primary !== id) return primary
-  const fb = FALLBACK_LABELS[id]
-  if (fb) {
-    const label = t(fb)
-    if (label !== fb) return label
-  }
+  const key = commandLabelKey(id)
+  const label = t(key)
+  if (label !== key) return label
   return id
 }
 

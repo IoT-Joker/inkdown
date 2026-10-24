@@ -44,32 +44,32 @@ const folderSearch: Record<LocaleCode, Dict> = {
   }
 }
 
-/* ------------------------------ 分栏预览 ------------------------------ */
+/* ------------------------------ 源码预览 ------------------------------ */
 
 const splitView: Record<LocaleCode, Dict> = {
   'zh-CN': {
-    'view.splitPreview': '分栏预览',
-    'view.splitHint': '左侧实时预览，右侧编辑源码',
-    'view.splitPreviewHead': '预览',
+    'view.splitPreview': '源码预览',
+    'view.splitHint': '左侧编辑 Markdown 源码，右侧实时预览',
+    'view.splitPreviewHead': '实时预览',
     'view.splitSourceHead': 'Markdown 源码',
     'view.splitSourceMeta': 'UTF-8 · {eol}',
     'view.splitSourcePosition': '第 {line} / {lines} 行 · {chars} 字符',
     'view.splitSyncScroll': '跟随光标',
-    'view.splitSyncScrollHint': '右侧光标移动时，左侧预览滚动到对应位置并居中',
+    'view.splitSyncScrollHint': '左侧光标移动时，右侧预览滚动到对应位置并居中',
     'view.splitHighlightBlock': '标出位置',
-    'view.splitHighlightBlockHint': '在左侧预览中用虚线框标出光标所在的块'
+    'view.splitHighlightBlockHint': '在右侧预览中突出显示光标所在的块'
   },
   en: {
-    'view.splitPreview': 'Split Preview',
-    'view.splitHint': 'Live preview on the left, source editor on the right',
-    'view.splitPreviewHead': 'Preview',
+    'view.splitPreview': 'Source Preview',
+    'view.splitHint': 'Edit Markdown on the left, preview live on the right',
+    'view.splitPreviewHead': 'Live Preview',
     'view.splitSourceHead': 'Markdown Source',
     'view.splitSourceMeta': 'UTF-8 · {eol}',
     'view.splitSourcePosition': 'Ln {line} / {lines} · {chars} chars',
     'view.splitSyncScroll': 'Follow cursor',
-    'view.splitSyncScrollHint': 'Scroll the left preview to keep the cursor block centered',
+    'view.splitSyncScrollHint': 'Scroll the preview on the right to keep the cursor block centered',
     'view.splitHighlightBlock': 'Mark block',
-    'view.splitHighlightBlockHint': 'Outline the cursor block in the left preview'
+    'view.splitHighlightBlockHint': 'Highlight the cursor block in the preview on the right'
   }
 }
 
@@ -197,7 +197,14 @@ const orbDict: Record<LocaleCode, Dict> = {
     'orb.timeGroup': '日期',
     'orb.time': '当前时间',
     'orb.date': '当前日期',
-    'orb.weekday': '星期'
+    'orb.weekday': '星期',
+    'orb.advanced': '快捷操作',
+    'orb.save': '保存文档',
+    'orb.exportPdf': '导出 PDF',
+    'orb.exportDocx': '导出 Word',
+    'orb.find': '查找替换',
+    'orb.theme': '切换主题',
+    'orb.sidebar': '侧边栏'
   },
   en: {
     'orb.title': 'Quick insert',
@@ -255,7 +262,14 @@ const orbDict: Record<LocaleCode, Dict> = {
     'orb.timeGroup': 'Date & Time',
     'orb.time': 'Current Time',
     'orb.date': 'Current Date',
-    'orb.weekday': 'Weekday'
+    'orb.weekday': 'Weekday',
+    'orb.advanced': 'Actions',
+    'orb.save': 'Save Document',
+    'orb.exportPdf': 'Export PDF',
+    'orb.exportDocx': 'Export Word',
+    'orb.find': 'Find & Replace',
+    'orb.theme': 'Switch Theme',
+    'orb.sidebar': 'Sidebar'
   }
 }
 
@@ -282,8 +296,28 @@ const fileSafety: Record<LocaleCode, Dict> = {
   }
 }
 
+const inlineUpdate: Record<LocaleCode, Dict> = {
+  'zh-CN': {
+    'update.inlineReady': '重启安装',
+    'update.installFailed': '安装失败，请重试',
+    'update.inlineCheckFailed': '检查失败，点击重试',
+    'update.inlineActionFailed': '操作失败，请重试。',
+    'update.devDownloadOnly': '开发版仅检查发布信息；请安装打包版后下载和安装更新。',
+    'update.feedMissing': '未配置 GitHub 更新源。'
+  },
+  en: {
+    'update.inlineReady': 'Restart to install',
+    'update.installFailed': 'Installation failed; please retry',
+    'update.inlineCheckFailed': 'Check failed, retry',
+    'update.inlineActionFailed': 'Action failed. Please retry.',
+    'update.devDownloadOnly': 'Development builds only check releases. Install a packaged build to download and install updates.',
+    'update.feedMissing': 'No GitHub update feed is configured.'
+  }
+}
+
 const EXTRA: Record<LocaleCode, Dict[]> = {
   'zh-CN': [
+    inlineUpdate['zh-CN'],
     folderSearch['zh-CN'],
     splitView['zh-CN'],
     drag['zh-CN'],
@@ -291,7 +325,7 @@ const EXTRA: Record<LocaleCode, Dict[]> = {
     contextMenu['zh-CN'],
     orbDict['zh-CN'], fileSafety['zh-CN']
   ],
-  en: [folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en, fileSafety.en]
+  en: [inlineUpdate.en, folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en, fileSafety.en]
 }
 
 let merged = false

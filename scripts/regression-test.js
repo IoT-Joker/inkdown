@@ -262,3 +262,59 @@ test('recovery keeps dirty named and untitled documents and removes saved drafts
   store.persistRecovery()
   assert.equal(store.loadRecovery().length, 0)
 })
+
+test('opening a background restored file never activates or rebuilds the current editor', async () => {
+  const h = fileHarness({ readFile: async () => ({ content: 'Background body', mtimeMs: 10 }) })
+  await h.files.openPath('E:/docs/background.md', { activate: false })
+  assert.equal(h.state.activeId, h.tab.id)
+  assert.equal(h.state.tabs.length, 2)
+  assert.equal(h.state.tabs[1].content, 'Background body')
+  h.state.activeId = h.state.tabs[1].id
+  await h.files.openPath(h.tab.filePath, { activate: false })
+  assert.equal(h.state.activeId, h.state.tabs[1].id)
+})
+
+test('session restore activates only its final visible file', async () => {
+  const h = fileHarness({ exists: async () => true, readFile: async p => ({ content: 'Body of ' + p, mtimeMs: 1 }) })
+  let active = h.state.activeId, activations = 0
+  Object.defineProperty(h.state, 'activeId', { get: () => active, set: value => { active = value; activations++ } })
+  await h.files.restoreSessionFiles({ files: ['E:/docs/b.md', 'E:/docs/c.md'], activeFile: 'E:/docs/c.md' })
+  assert.equal(activations, 1)
+  assert.equal(h.state.tabs.find(t => t.id === h.state.activeId).filePath, 'E:/docs/c.md')
+})
+
+test('a foreground open during a background read still activates the requested file', async () => {
+  let complete, reads = 0
+  const h = fileHarness({ readFile: () => { reads++; return new Promise(resolve => { complete = resolve }) } })
+  const background = h.files.openPath('E:/docs/b.md', { activate: false })
+  const foreground = h.files.openPath('E:/docs/b.md')
+  complete({ content: 'B', mtimeMs: 1 })
+  await Promise.all([background, foreground])
+  assert.equal(reads, 1)
+  assert.equal(h.state.tabs.find(t => t.id === h.state.activeId).filePath, 'E:/docs/b.md')
+})
+
+test('session restore does not steal focus after the user switches tabs', async () => {
+  let complete
+  const h = fileHarness({ exists: async () => true, readFile: () => new Promise(resolve => { complete = resolve }) })
+  const pending = h.files.restoreSessionFiles({ files: ['E:/docs/b.md'], activeFile: 'E:/docs/b.md' })
+  await new Promise(resolve => setImmediate(resolve))
+  h.state.activeId = 'user-selected-tab'
+  complete({ content: 'B', mtimeMs: 1 })
+  await pending
+  assert.equal(h.state.activeId, 'user-selected-tab')
+})
+
+test('closing a background tab while restoring cannot select a removed tab', async () => {
+  let finishExists
+  const h = fileHarness({
+    exists: p => p.endsWith('/c.md') ? new Promise(resolve => { finishExists = resolve }) : Promise.resolve(true),
+    readFile: async () => ({ content: 'B', mtimeMs: 1 })
+  })
+  const pending = h.files.restoreSessionFiles({ files: ['E:/docs/b.md', 'E:/docs/c.md'], activeFile: 'E:/docs/b.md' })
+  await new Promise(resolve => setImmediate(resolve))
+  h.state.tabs.splice(h.state.tabs.findIndex(t => t.filePath === 'E:/docs/b.md'), 1)
+  finishExists(false)
+  await pending
+  assert.equal(h.state.activeId, h.tab.id)
+})

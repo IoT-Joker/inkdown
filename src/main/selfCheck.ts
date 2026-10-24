@@ -665,7 +665,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log('[selfcheck] 源码模式 OK: 双向同步且不丢改动')
 
-  // 4b-5b. 分栏预览：左侧静态预览 + 右侧编辑源码，且内容随文档更新
+  // 4b-5b. 源码预览：左侧编辑源码 + 右侧静态预览，且内容随文档更新
   const splitCheck = await win.webContents.executeJavaScript(`
     (async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -697,13 +697,13 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const wysiwygHidden = !wysiwygEl || wysiwygEl.offsetParent === null
 
       // 布局：左半是预览、右半是源码
-      let leftIsPreview = false
-      let rightIsSource = false
+      let leftIsSource = false
+      let rightIsPreview = false
       if (textarea && body) {
         const taRect = textarea.getBoundingClientRect()
         const pvRect = body.getBoundingClientRect()
-        leftIsPreview = pvRect.left < taRect.left
-        rightIsSource = taRect.left >= pvRect.left
+        leftIsSource = taRect.left < pvRect.left
+        rightIsPreview = pvRect.left >= taRect.left
       }
 
       // 改内容，预览应跟着更新
@@ -736,8 +736,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         textareaVisible,
         textareaHasSource,
         wysiwygHidden,
-        leftIsPreview,
-        rightIsSource,
+        leftIsSource,
+        rightIsPreview,
         hasH1: /分栏标题/.test(html),
         hasStrong: /<strong>/.test(html),
         hasList: /<li>/.test(html),
@@ -768,8 +768,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 分栏下所见即所得编辑器应隐藏:', JSON.stringify(splitCheck))
     return false
   }
-  if (!splitCheck.leftIsPreview || !splitCheck.rightIsSource) {
-    console.error('[selfcheck] FAIL: 分栏布局应为左预览右源码:', JSON.stringify(splitCheck))
+  if (!splitCheck.leftIsSource || !splitCheck.rightIsPreview) {
+    console.error('[selfcheck] FAIL: 源码预览布局应为左源码右预览:', JSON.stringify(splitCheck))
     return false
   }
   if (!splitCheck.hasH1 || !splitCheck.hasStrong || !splitCheck.hasList) {
@@ -781,7 +781,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   if (splitCheck.headingId !== '分栏标题') {
-    console.error('[selfcheck] FAIL: 分栏预览标题缺少可跳转锚点:', JSON.stringify(splitCheck))
+    console.error('[selfcheck] FAIL: 源码预览标题缺少可跳转锚点:', JSON.stringify(splitCheck))
     return false
   }
   if (!splitCheck.updated) {
@@ -789,7 +789,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   if (!splitCheck.hasDiff) {
-    console.error('[selfcheck] FAIL: 分栏预览未渲染行内增删标记:', JSON.stringify(splitCheck))
+    console.error('[selfcheck] FAIL: 源码预览未渲染行内增删标记:', JSON.stringify(splitCheck))
     return false
   }
   if (splitCheck.modeAfterDiff !== 'wysiwyg') {
@@ -800,7 +800,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: 未能切回所见即所得:', JSON.stringify(splitCheck))
     return false
   }
-  console.log('[selfcheck] 分栏预览 OK: 左预览 + 右源码，标题/加粗/列表渲染正确且实时更新')
+  console.log('[selfcheck] 源码预览 OK: 左源码 + 右预览，标题/加粗/列表渲染正确且实时更新')
 
   // 4b-5c. 分栏的光标联动：虚线框标出对应块 + 视角跟随
   const splitSyncCheck = await win.webContents.executeJavaScript(`
@@ -1076,6 +1076,39 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   console.log(`[selfcheck] 多标签 OK: ${tabsCheck.tabCount} 个标签内容各自独立`)
+
+  // 4b-8b. 真实键盘事件只执行一次快捷键
+  //
+  // 原生菜单曾经也注册 accelerator，和渲染层 keydown 分发器叠加，
+  // 导致 Ctrl+N 一次建出两个标签。这里必须从 webContents 发送真实输入，
+  // 才能覆盖 Chromium 菜单快捷键路径，而不是只测命令中心。
+  const beforeShortcutTabs = await win.webContents.executeJavaScript(
+    `window.__inkdownApp.tabs().length`
+  )
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'N', modifiers: ['control'] })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'N', modifiers: ['control'] })
+  let afterShortcutTabs = beforeShortcutTabs
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    afterShortcutTabs = await win.webContents.executeJavaScript(
+      `window.__inkdownApp.tabs().length`
+    )
+    if (afterShortcutTabs !== beforeShortcutTabs) break
+  }
+  // 命令执行和 Vue 标签栏更新是异步的；等第一个新标签出现后再观察一小段，
+  // 若仍有第二个标签，说明快捷键发生了双分发。
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  const finalShortcutTabs = await win.webContents.executeJavaScript(
+    `window.__inkdownApp.tabs().length`
+  )
+  if (finalShortcutTabs !== beforeShortcutTabs + 1) {
+    console.error(
+      '[selfcheck] FAIL: Ctrl+N 快捷键执行次数异常:',
+      JSON.stringify({ before: beforeShortcutTabs, after: afterShortcutTabs, final: finalShortcutTabs })
+    )
+    return false
+  }
+  console.log('[selfcheck] 快捷键分发 OK: Ctrl+N 只新建 1 个标签')
 
   // 4b-9. 验证文件树：打开文件夹后能读到目录结构
   const treeCheck = await win.webContents.executeJavaScript(`
@@ -1772,14 +1805,18 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   )
 
   // 关掉面板，避免影响后续用例
-  await win.webContents.executeJavaScript(`
+  const shortcutsClosed = await win.webContents.executeJavaScript(`
     (async () => {
-      const b = [...document.querySelectorAll('.sc-head .ty-btn')][0]
+      const b = document.querySelector('.sc-done, .sc-close')
       b && b.click()
       await new Promise((r) => setTimeout(r, 200))
-      return true
+      return !document.querySelector('.sc-dialog')
     })()
   `)
+  if (!shortcutsClosed) {
+    console.error('[selfcheck] FAIL: 快捷键面板点击完成后未关闭')
+    return false
+  }
 
   // 5j. 全库搜索：在文件夹内递归搜索并展示分组结果
   const searchDir = join(process.cwd(), '.tmp-selfcheck-search')

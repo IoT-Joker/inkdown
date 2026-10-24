@@ -7,6 +7,7 @@ import type { IPreviewToolIcon } from './config';
 import { ScrollPage } from '../../block/scrollPage';
 import { BLOCK_DOM_PROPERTY } from '../../config';
 import { isMouseEvent, throttle } from '../../utils';
+import { isEditorHoverTarget } from '../../utils/dom';
 import { h, patch } from '../../utils/snabbdom';
 import BaseFloat from '../baseFloat';
 import { PREVIEW_BLOCK_NAMES, previewToolBarItems } from './config';
@@ -56,6 +57,10 @@ export class PreviewToolBar extends BaseFloat {
 
         const handler = throttle((event: Event) => {
             if (!isMouseEvent(event))
+                return;
+            if (!isEditorHoverTarget(this.muya.domNode, event.target, this.status ? this.floatBox : null))
+                return this.hide();
+            if (this.status && this.floatBox?.contains(event.target))
                 return;
 
             const { x, y } = event;
