@@ -89,8 +89,8 @@ graph LR
 
 ## 八、脚注与链接
 
-Inkdown 基于 marktext 的编辑器内核构建[^1]，并参考了 Typora 的交互设计。
+Inkdown 内置所见即所得编辑器内核[^1]，交互参考了主流 Markdown 编辑器的习惯。
 
-[^1]: muya（`@muyajs/core`）是 marktext 抽离出的独立 Markdown 编辑器内核。
+[^1]: 内核为 muya，以 workspace 包形式内联，随应用一起编译。
 
-更多信息参见 [marktext 仓库](https://github.com/marktext/marktext)。
+更多信息参见 [项目主页](https://github.com/IoT-Joker/inkdown)。

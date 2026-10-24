@@ -20,7 +20,12 @@ import {
   takePendingFile
 } from './fileAssociation'
 import { getMainWindow } from './window'
-import { initUpdater, humanizeUpdateErrorForTest } from './updater'
+import {
+  initUpdater,
+  humanizeUpdateErrorForTest,
+  configureUpdaterFeed,
+  autoUpdater
+} from './updater'
 import { markdownToDocx } from './exportDocx'
 import { runStabilityCheck } from './stabilityCheck'
 import { runExportCheck } from './exportCheck'
@@ -29,7 +34,7 @@ import { runRecoveryTest } from './recoveryTest'
 
 /**
  * Inkdown 主进程入口。
- * 参考 marktext 的 main 进程分层，但只保留 Typora 式编辑器所需的最小集合，
+ * 主进程只保留桌面编辑器所需的最小集合，
  * 避免 keytar / native-keymap / ripgrep 等原生依赖带来的构建负担。
  */
 
@@ -694,6 +699,161 @@ async function probeDocx(): Promise<boolean> {
   }
 }
 
+/**
+ * 验证自动更新链路：能否从 GitHub Releases 读到更新清单。
+ *
+ * 只看「有没有报错」不够 —— 要确认真的拿到了版本号，
+ * 且远端版本不低于当前版本（否则说明读到了旧清单）。
+ */
+async function probeUpdater(): Promise<boolean> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  configureUpdaterFeed()
+
+  try {
+    const result = await autoUpdater.checkForUpdates()
+    const info = result?.updateInfo
+    console.log('[update] 当前版本:', app.getVersion())
+    console.log('[update] 远端版本:', info?.version ?? '(未取到)')
+    console.log('[update] 远端发布日:', info?.releaseDate ?? '(无)')
+
+    if (!info?.version) {
+      console.error('[update] FAIL: 未取到远端版本号')
+      return false
+    }
+
+    // 比较版本：远端应 >= 当前
+    const cmp = (a: string, b: string): number => {
+      const pa = a.split('.').map(Number)
+      const pb = b.split('.').map(Number)
+      for (let i = 0; i < 3; i++) {
+        const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+        if (d !== 0) return d
+      }
+      return 0
+    }
+    if (cmp(info.version, app.getVersion()) < 0) {
+      console.error(
+        `[update] FAIL: 远端版本 ${info.version} 低于当前 ${app.getVersion()}，可能读到了旧清单`
+      )
+      return false
+    }
+
+    // 可选：真实下载一次，验证下载与校验环节
+    if (process.env['INKDOWN_UPDATE_DOWNLOAD_TEST'] === '1') {
+      const newer = cmp(info.version, app.getVersion()) > 0
+      if (!newer) {
+        console.log('[update] 远端与当前同版本，跳过下载验证')
+      } else {
+        console.log('[update] 开始下载新版本…')
+        let done = false
+        let lastPct = 0
+        autoUpdater.on('download-progress', (p) => {
+          const pct = Math.round(p.percent)
+          if (pct >= lastPct + 20) {
+            console.log(`[update] 下载进度 ${pct}%`)
+            lastPct = pct
+          }
+        })
+        autoUpdater.on('update-downloaded', () => {
+          done = true
+        })
+        await autoUpdater.downloadUpdate()
+        // 等事件派发
+        for (let i = 0; i < 100 && !done; i++) await wait(200)
+        if (!done) {
+          console.error('[update] FAIL: 下载未完成')
+          return false
+        }
+        console.log('[update] 下载完成，安装包已就绪')
+      }
+    }
+
+    console.log('[update] PASS: 更新清单可读，链路正常')
+    return true
+  } catch (err) {
+    console.error('[update] FAIL:', err instanceof Error ? err.message.split('\n')[0] : String(err))
+    return false
+  } finally {
+    await wait(100)
+  }
+}
+
+/**
+ * 验证「发现新版本并下载」完整链路。
+ *
+ * 通过环境变量 INKDOWN_FAKE_OLD_VERSION 让更新器认为当前是很旧的版本，
+ * 这样远端一定「更新」，可以观察 update-available 与下载是否真的发生。
+ *
+ * 实现上不能直接覆写 autoUpdater.currentVersion（它要求是 semver 实例，
+ * 内部还会做字符串运算，赋对象会报 Invalid version）。
+ * 改为让 electron-updater 使用一个较低版本进行比较：它读的是
+ * app.getVersion()，因此这里临时改写 app.getVersion 的返回值。
+ */
+async function probeUpdateFlow(): Promise<boolean> {
+  configureUpdaterFeed()
+
+  const fakeOld = process.env['INKDOWN_FAKE_OLD_VERSION'] || '0.0.1'
+  const original = app.getVersion.bind(app)
+  ;(app as unknown as { getVersion: () => string }).getVersion = () => fakeOld
+
+  let availableVersion: string | null = null
+  let downloaded = false
+  let errorMsg: string | null = null
+
+  autoUpdater.on('update-available', (info) => {
+    availableVersion = info.version
+  })
+  autoUpdater.on('update-downloaded', () => {
+    downloaded = true
+  })
+  autoUpdater.on('error', (e) => {
+    errorMsg = e?.message?.split('\n')[0] ?? String(e)
+  })
+
+  try {
+    console.log('[updateflow] 伪装当前版本:', fakeOld)
+    const result = await autoUpdater.checkForUpdates()
+    console.log('[updateflow] 远端版本:', result?.updateInfo?.version ?? '(未取到)')
+
+    if (!result?.updateInfo?.version) {
+      console.error('[updateflow] FAIL: 未取到远端版本')
+      return false
+    }
+    // update-available 是事件回调，checkForUpdates 返回时未必已派发，
+    // 这里等一小会再判断。
+    for (let i = 0; i < 50 && !availableVersion; i++) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    if (!availableVersion) {
+      console.error('[updateflow] FAIL: 没有触发 update-available 事件')
+      return false
+    }
+    console.log('[updateflow] 已触发 update-available:', availableVersion)
+
+    if (process.env['INKDOWN_UPDATE_FLOW_DOWNLOAD'] === '1') {
+      console.log('[updateflow] 开始下载（127MB，可能需要几分钟）…')
+      await autoUpdater.downloadUpdate()
+      if (downloaded) {
+        console.log('[updateflow] PASS: 发现新版本并成功下载，自动更新链路完整')
+        return true
+      }
+      console.error('[updateflow] FAIL: 下载未完成', errorMsg ?? '')
+      return false
+    }
+
+    console.log('[updateflow] PASS: 发现新版本（未下载，可用 INKDOWN_UPDATE_FLOW_DOWNLOAD=1 验证下载）')
+    return true
+  } catch (err) {
+    console.error(
+      '[updateflow] FAIL:',
+      err instanceof Error ? err.message.split('\n')[0] : String(err)
+    )
+    return false
+  } finally {
+    ;(app as unknown as { getVersion: () => string }).getVersion = original
+  }
+}
+
 app.whenReady().then(async () => {
   // 语言偏好需在创建菜单之前载入（菜单文案依赖它）
   await loadLocale()
@@ -786,6 +946,20 @@ app.whenReady().then(async () => {
   // INKDOWN_DOCX_TEST=1 时验证 Markdown → .docx 导出，然后退出
   if (process.env['INKDOWN_DOCX_TEST']) {
     const ok = await probeDocx()
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_UPDATE_FLOW_TEST=1 时验证「发现新版本并下载」完整链路，然后退出
+  if (process.env['INKDOWN_UPDATE_FLOW_TEST']) {
+    const ok = await probeUpdateFlow()
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_UPDATE_TEST=1 时验证自动更新能否连通 GitHub Releases，然后退出
+  if (process.env['INKDOWN_UPDATE_TEST']) {
+    const ok = await probeUpdater()
     app.exit(ok ? 0 : 1)
     return
   }

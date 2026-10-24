@@ -1,27 +1,24 @@
 # Inkdown
 
-一个模仿 [Typora](https://typora.io/) 的桌面 Markdown 编辑器，以 [marktext](https://github.com/marktext/marktext) 的编辑器内核 **muya**（`@muyajs/core`）为基础构建。
+一个专注写作的桌面 Markdown 编辑器：所见即所得，开箱可用。
 
 - **实时渲染（所见即所得）**：边写边渲染，光标所在段落显示 Markdown 源码，离开后立即呈现排版效果
 - **应用外壳**：文件树、多标签、大纲、状态栏、查找替换、偏好设置、多主题
-- **内核能力**：CommonMark + GFM、表格、任务列表、KaTeX 数学公式、Mermaid/PlantUML/Vega 图表、Prism 代码高亮、脚注、YAML 前言、上下标
+- **编辑能力**：CommonMark + GFM、表格、任务列表、KaTeX 数学公式、Mermaid/PlantUML/Vega 图表、Prism 代码高亮、脚注、YAML 前言、上下标
+- **导出**：HTML、PDF、Word（.docx）
+- **分栏预览**：左侧编辑源码、右侧实时渲染，光标所在块用虚线框标出并自动跟随
 
-## 与 marktext 的关系
+## 关于编辑器内核
 
-marktext 已重构为 monorepo：`packages/muya`（纯 JS/DOM 的编辑器内核）与 `packages/desktop`（Electron 外壳）。
+编辑器内核以 workspace 包的形式内联在 `packages/muya`，由 Vite 直接编译 TypeScript，
+无需额外构建步骤。选择内联源码而非 npm 依赖的原因：
 
-Inkdown 把 marktext 的 **muya 内核源码**（develop 分支）以 workspace 包的形式内联到 `packages/muya`，
-直接作为编辑器内核复用；外壳、交互与 Typora 式功能全部自行实现。这样做的原因：
+- npm 上发布的精简版只暴露 18 个方法，缺少 `updateParagraph`、`format`、`createTable`、
+  `insertImage`、`getCursorOffset`、`setFocusMode`、`revealElement` 等交互必需的 API；
+- 完整源码提供约 60 个公共方法，覆盖段落转换、行内格式、表格、光标换算、
+  专注模式、大纲跳转等全部能力。
 
-- npm 上发布的 `@muyajs/core@0.2.0` 是**精简快照**，只暴露 18 个方法，
-  缺少 `updateParagraph`、`format`、`createTable`、`insertImage`、`getCursorOffset`、
-  `setFocusMode`、`revealElement` 等 Typora 式交互必需的 API；
-- develop 分支的完整源码提供约 60 个公共方法，覆盖段落转换、行内格式、表格、
-  光标换算、专注模式、大纲跳转等全部能力；
-- 内联源码后由 Vite 直接编译 TypeScript，无需额外构建步骤。
-
-同时避开了 desktop 包中 `keytar` / `native-keymap` / `@vscode/ripgrep`
-等原生依赖带来的构建负担。
+这样也避开了 `keytar` / `native-keymap` / `@vscode/ripgrep` 等原生依赖带来的构建负担。
 
 ```
 src/
@@ -33,7 +30,7 @@ src/
     src/editor/       muya 内核封装与插件注册
     src/store/        全局响应式状态与设置持久化
     src/assets/styles 应用样式与主题变量
-packages/muya/       内联的 marktext 编辑器内核源码
+packages/muya/       编辑器内核（内联源码）
 examples/demo.md     功能演示文档
 ```
 
@@ -65,7 +62,7 @@ examples/demo.md     功能演示文档
 窗口顶部自绘菜单栏（文件 / 编辑 / 段落 / 格式 / 视图），与原生菜单共用同一套命令，
 行为一致。原生菜单栏已隐藏，但快捷键仍由系统级菜单提供。
 
-菜单包含一些 marktext 式的实用项：
+菜单还包含一些实用项：
 
 | 菜单项 | 说明 |
 | --- | --- |
@@ -138,7 +135,30 @@ Markdown 文件。结果按文件分组、显示行号与高亮命中，点击�
 | --- | --- |
 | 键盘快捷键 | 打开快捷键速查面板（按功能分组，41 条） |
 | 项目主页 / 反馈问题 | 在系统浏览器打开对应页面 |
+| 检查更新 | 手动检查新版本：有新版本会询问是否下载，已是最新会明确告知 |
 | 关于 Inkdown | 应用图标、版本、标语、构建来源、许可与运行时版本（Electron / Chromium / Node），可一键复制版本信息便于反馈 |
+
+### 自动更新
+
+应用支持自动更新，更新源为 GitHub Releases。
+
+| 方式 | 行为 |
+| --- | --- |
+| 启动时自动检查 | 默认开启，可在 **偏好设置 → 更新** 关闭。发现新版本会询问是否下载，不会擅自占用带宽 |
+| 帮助 → 检查更新 | 手动检查，一定会给出结果：发现新版本 / 已是最新 / 失败原因 |
+| 下载完成后 | 提示「立即重启」安装；若选「稍后」，退出应用时会自动安装 |
+
+几个实现上的取舍：
+
+- **先问再下**：`autoDownload` 关闭，避免在用户不知情时下载上百 MB 的安装包
+- **禁用清单缓存**：更新器默认会缓存 `latest.yml`，实测发布新版本后本机仍读到旧版本号
+  （要手动删 `%LOCALAPPDATA%/inkdown-updater` 才能刷新），因此请求时带上
+  `Cache-Control: no-cache`，保证能及时看到新版本
+- **错误信息归类**：不会把原始 HTTP 响应（含响应头与 cookie）抛给用户，
+  而是按 404 / 网络失败 / 认证失败归成一句可读的说明
+
+**已知限制**：未配置代码签名证书，Windows 安装新版时仍会弹 SmartScreen 警告，
+这是系统行为，自动更新无法绕过。
 
 ### 应用图标
 
@@ -336,4 +356,5 @@ node_modules\electron\dist\electron.exe .
 
 ## 许可
 
-MIT。编辑器内核 muya 来自 [marktext](https://github.com/marktext/marktext)（MIT）。
+MIT。编辑器内核 muya 源自 [marktext](https://github.com/marktext/marktext)（MIT），
+其许可证与版权声明见 `packages/muya/LICENSE`。

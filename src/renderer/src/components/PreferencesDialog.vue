@@ -190,6 +190,17 @@ function setTheme(theme: typeof state.theme): void {
         </section>
 
         <section class="group">
+          <h3>{{ t('pref.update') }}</h3>
+          <div class="row">
+            <label>{{ t('pref.autoCheckUpdate') }}</label>
+            <input v-model="draft.autoCheckUpdate" type="checkbox" />
+          </div>
+          <div class="row">
+            <span class="hint">{{ t('pref.autoCheckUpdateHint') }}</span>
+          </div>
+        </section>
+
+        <section class="group">
           <h3>{{ t('pref.view') }}</h3>
           <div class="row">
             <label>{{ t('pref.spellcheck') }}</label>

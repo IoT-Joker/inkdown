@@ -65,9 +65,18 @@ watch(
 )
 
 /** 首选项变化后实时应用到编辑器并持久化。 */
+watch(() => JSON.stringify(state.viewMode), () => editorRef.value?.focus())
+
+/**
+ * 「启动时自动检查更新」开关同步给主进程。
+ *
+ * 设置存在渲染层 localStorage，主进程启动时读不到，
+ * 因此立即推一次（让本次运行生效），之后随设置变化再推。
+ */
 watch(
-  () => JSON.stringify(state.viewMode),
-  () => editorRef.value?.focus()
+  () => settings.autoCheckUpdate,
+  (enabled) => void window.inkdown.setAutoCheckUpdate(!!enabled),
+  { immediate: true }
 )
 
 function onMenuCommand(id: string): void {

@@ -7,7 +7,7 @@ import { buildAppMenu } from './menu'
 import { getLocale, setLocale } from './locale'
 import { translate, type LocaleCode } from '../shared/i18n'
 import { takePendingFile } from './fileAssociation'
-import { checkForUpdatesManually } from './updater'
+import { checkForUpdatesManually, getUpdateStatus, setAutoCheckEnabled } from './updater'
 import { markdownToDocx } from './exportDocx'
 import { writeHtmlPdf } from './exportWindow'
 import { htmlToVisualDocx } from './exportVisualDocx'
@@ -386,6 +386,18 @@ export function registerIpc(): void {
 
   /** 手动检查更新（帮助菜单）。 */
   ipcMain.handle('app:checkForUpdates', () => checkForUpdatesManually())
+
+  /** 读取当前更新状态（阶段 / 当前版本 / 下载进度）。 */
+  ipcMain.handle('app:getUpdateStatus', () => getUpdateStatus())
+
+  /**
+   * 渲染层同步「启动时自动检查更新」开关。
+   * 设置存在渲染层 localStorage，主进程启动时读不到，
+   * 因此由渲染层就绪后推过来。
+   */
+  ipcMain.handle('app:setAutoCheckUpdate', (_e, enabled: boolean) => {
+    setAutoCheckEnabled(!!enabled)
+  })
 
   ipcMain.handle('app:quit', () => app.quit())
 }

@@ -199,7 +199,7 @@ export function registerGlobalCommands(): void {
       }
       state.notice = { text: t('notice.lineEndingChanged', { mode: mode.toUpperCase() }) }
     },
-    // 插入当前时间（marktext 的 Insert Current Time）
+    // 插入当前时间
     'edit:insertTime': () => {
       const now = new Date()
       const pad = (n: number) => String(n).padStart(2, '0')

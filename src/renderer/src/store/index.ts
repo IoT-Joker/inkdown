@@ -195,6 +195,8 @@ export const settings = reactive({
   hideQuickInsertHint: false,
   hideLinkPopup: false,
   autoCheck: true,
+  /** 启动时自动检查应用更新（与上面内核的 autoCheck 无关）。 */
+  autoCheckUpdate: true,
   spellcheckEnabled: false,
   spellcheckHideMarks: true,
   multilineBlockquote: true,

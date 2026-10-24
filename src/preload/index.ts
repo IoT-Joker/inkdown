@@ -87,6 +87,13 @@ const api = {
   /** 手动检查更新（帮助菜单）。 */
   checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
 
+  /** 读取当前更新状态（阶段 / 当前版本 / 下载进度）。 */
+  getUpdateStatus: () => ipcRenderer.invoke('app:getUpdateStatus'),
+
+  /** 同步「启动时自动检查更新」开关到主进程。 */
+  setAutoCheckUpdate: (enabled: boolean) =>
+    ipcRenderer.invoke('app:setAutoCheckUpdate', enabled),
+
   /**
    * 自动化测试标记：跳过启动时的会话恢复，保证测试初始状态干净。
    * 与下面「禁用会话记录」相互独立——会话恢复测试需要

@@ -5,7 +5,7 @@ import { executeCommand, listCommandIds } from '../composables/useCommands'
 import { useI18n } from '../composables/useI18n'
 
 /**
- * 命令面板（对齐 marktext 的 Command Palette）。
+ * 命令面板：模糊检索并执行所有已注册命令。
  *
  * 列出命令中心里已注册的全部命令，按名称模糊过滤后回车执行。
  * 命令的显示名复用 i18n 词条：命令 id 形如 'file:new'，

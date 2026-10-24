@@ -6,17 +6,26 @@ import { getLocale } from './locale'
 /**
  * 自动更新。
  *
- * 更新源为 GitHub Releases（electron-builder 生成的 latest.yml 作为清单）。
- * 因为 GitHub 的下载通道在某些网络下不通，这里做了两件事：
- *   1. 检查更新失败不打扰用户，只在手动检查时报告原因
- *   2. 支持通过环境变量覆盖更新源（便于换镜像或自建服务器）
+ * 更新源为 GitHub Releases（electron-builder 把 latest.yml 写在 Release 里）。
+ * 仓库已改为公开，因此可以匿名读取 —— 这是自动更新能工作的前提。
+ *
+ * 三种使用方式：
+ *   1. 启动后自动检查（可在偏好设置里关闭）；发现新版本时询问用户
+ *   2. 帮助 → 检查更新（手动），会明确告知「已是最新」或失败原因
+ *   3. 下载完成后提示重启，由 autoInstallOnAppQuit 兜底（退出时自动安装）
  *
  * 注意：未配置代码签名证书时，Windows 安装新版仍会弹 SmartScreen 警告，
  * 这是系统行为，自动更新无法绕过。
  */
 
-/** 是否正在检查/下载，避免重复触发。 */
-let busy = false
+/** 当前阶段：空闲 / 检查中 / 下载中 / 已就绪。 */
+type Phase = 'idle' | 'checking' | 'downloading' | 'ready'
+
+let phase: Phase = 'idle'
+/** 最近一次检查是否已有结果（用于手动检查时区分「已是最新」）。 */
+let lastCheckFoundUpdate = false
+/** 下载进度百分比，供状态栏/对话框展示。 */
+let downloadPercent = 0
 
 function t(key: string, params?: Record<string, string | number>): string {
   return translate(getLocale() as LocaleCode, key, params)
@@ -44,13 +53,23 @@ function humanizeUpdateError(err: unknown): string {
   return firstLine.length > 200 ? firstLine.slice(0, 200) + '…' : firstLine
 }
 
-/**
- * 供端到端测试调用：把一段原始错误转成人话，便于验证分类逻辑。
- * 只在测试模式下暴露。
- */
+/** 供端到端测试调用：把一段原始错误转成人话，便于验证分类逻辑。 */
 export function humanizeUpdateErrorForTest(raw: string): string {
   return humanizeUpdateError(new Error(raw))
 }
+
+/** 更新源：默认 GitHub Releases，可用环境变量覆盖。 */
+export function configureUpdaterFeed(): void {
+  configureFeed()
+  // 与 initUpdater 保持一致：自检也会走这条路径
+  autoUpdater.requestHeaders = {
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    Pragma: 'no-cache'
+  }
+}
+
+/** 供自检直接驱动更新器。 */
+export { autoUpdater }
 
 /** 更新源：默认 GitHub Releases，可用环境变量覆盖。 */
 function configureFeed(): void {
@@ -59,7 +78,60 @@ function configureFeed(): void {
     autoUpdater.setFeedURL({ provider: 'generic', url: custom })
     console.log('[updater] 使用自定义更新源:', custom)
   }
-  // 未设置则用 electron-builder 写入的 publish 配置（GitHub / generic）
+  // 未设置则用 electron-builder 写入的 publish 配置（GitHub）
+}
+
+/** 取当前主窗口（可能已全部关闭）。 */
+function mainWindow(): BrowserWindow | null {
+  return BrowserWindow.getAllWindows()[0] ?? null
+}
+
+/** 询问是否下载新版本。 */
+async function askDownload(version: string): Promise<void> {
+  const win = mainWindow()
+  if (!win) return
+  const r = await dialog.showMessageBox(win, {
+    type: 'info',
+    message: t('update.available'),
+    detail: t('update.availableDetail', { version, current: app.getVersion() }),
+    buttons: [t('update.download'), t('update.later')],
+    defaultId: 0,
+    cancelId: 1
+  })
+  if (r.response !== 0) return
+
+  phase = 'downloading'
+  downloadPercent = 0
+  try {
+    await autoUpdater.downloadUpdate()
+  } catch (err) {
+    phase = 'idle'
+    console.error('[updater] 下载失败:', err instanceof Error ? err.message : err)
+    const w = mainWindow()
+    if (w) {
+      await dialog.showMessageBox(w, {
+        type: 'warning',
+        message: t('update.downloadFailed'),
+        detail: humanizeUpdateError(err),
+        buttons: [t('update.ok')]
+      })
+    }
+  }
+}
+
+/** 询问是否重启安装。 */
+async function askInstall(version: string): Promise<void> {
+  const win = mainWindow()
+  if (!win) return
+  const r = await dialog.showMessageBox(win, {
+    type: 'info',
+    message: t('update.ready'),
+    detail: t('update.readyDetail', { version }),
+    buttons: [t('update.restart'), t('update.later')],
+    defaultId: 0,
+    cancelId: 1
+  })
+  if (r.response === 0) autoUpdater.quitAndInstall()
 }
 
 /** 初始化：仅在打包后启用（开发版没有 latest.yml，检查必然失败）。 */
@@ -74,77 +146,88 @@ export function initUpdater(): void {
   }
 
   configureFeed()
+  // 先问再下，避免在用户不知情时占用带宽
   autoUpdater.autoDownload = false
+  // 退出时若已下载完成则自动安装，作为「稍后」的兜底
   autoUpdater.autoInstallOnAppQuit = true
+  // 禁用更新清单的缓存：electron-updater 默认会缓存 latest.yml，
+  // 实测发布新版本后本机仍读到旧版本号（要手动清
+  // %LOCALAPPDATA%/inkdown-updater 才能更新），
+  // 这会让用户长期收不到更新提示。
+  autoUpdater.requestHeaders = {
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    Pragma: 'no-cache'
+  }
 
   autoUpdater.on('error', (err) => {
-    // 网络不通、无 Release 等都会走到这里；不弹窗，只记日志
+    phase = 'idle'
+    // 网络不通等情况不弹窗打扰，只记日志
     console.error('[updater] 更新出错:', err?.message ?? err)
   })
 
   autoUpdater.on('update-available', (info) => {
-    const win = BrowserWindow.getAllWindows()[0]
-    if (!win) return
-    void dialog
-      .showMessageBox(win, {
-        type: 'info',
-        message: t('update.available'),
-        detail: t('update.availableDetail', { version: info.version, current: app.getVersion() }),
-        buttons: [t('update.download'), t('update.later')],
-        defaultId: 0,
-        cancelId: 1
-      })
-      .then((r) => {
-        if (r.response === 0) {
-          busy = true
-          autoUpdater.downloadUpdate().catch((e) => {
-            busy = false
-            console.error('[updater] 下载失败:', e?.message ?? e)
-          })
-        }
-      })
+    lastCheckFoundUpdate = true
+    phase = 'idle'
+    void askDownload(info.version)
   })
 
   autoUpdater.on('update-not-available', () => {
+    lastCheckFoundUpdate = false
+    phase = 'idle'
     console.log('[updater] 已是最新版本')
   })
 
   autoUpdater.on('download-progress', (p) => {
-    console.log(`[updater] 下载中 ${Math.round(p.percent)}%`)
+    downloadPercent = Math.round(p.percent)
+    // 每 10% 记一次，避免刷屏
+    if (downloadPercent % 10 === 0) {
+      console.log(`[updater] 下载中 ${downloadPercent}%`)
+    }
   })
 
   autoUpdater.on('update-downloaded', (info) => {
-    busy = false
-    const win = BrowserWindow.getAllWindows()[0]
-    if (!win) return
-    void dialog
-      .showMessageBox(win, {
-        type: 'info',
-        message: t('update.ready'),
-        detail: t('update.readyDetail', { version: info.version }),
-        buttons: [t('update.restart'), t('update.later')],
-        defaultId: 0,
-        cancelId: 1
-      })
-      .then((r) => {
-        if (r.response === 0) autoUpdater.quitAndInstall()
-      })
+    phase = 'ready'
+    void askInstall(info.version)
   })
 
-  // 启动后稍等再检查，避免与窗口初始化抢资源
+  // 启动后稍等再检查，避免与窗口初始化抢资源。
+  // 用户可在偏好设置里关闭「启动时自动检查」。
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((e) => {
+    if (!shouldAutoCheck()) {
+      console.log('[updater] 用户已关闭启动自动检查')
+      return
+    }
+    void autoUpdater.checkForUpdates().catch((e) => {
       console.error('[updater] 检查更新失败:', e?.message ?? e)
     })
   }, 3000)
 }
 
 /**
+ * 是否允许启动时自动检查。
+ *
+ * 设置存在渲染层的 localStorage，主进程读不到；
+ * 因此由渲染层在设置变化时通过 IPC 同步过来。
+ */
+let autoCheckEnabled = true
+
+/** 渲染层同步「启动时自动检查」开关。 */
+export function setAutoCheckEnabled(enabled: boolean): void {
+  autoCheckEnabled = enabled
+}
+
+function shouldAutoCheck(): boolean {
+  return autoCheckEnabled
+}
+
+/**
  * 手动检查更新（帮助菜单）。
- * 与自动检查不同，这里会把失败原因告诉用户，避免"点了没反应"。
+ *
+ * 与启动自动检查不同：这里一定会给用户明确结果 ——
+ * 有新版本、已是最新、或失败原因，不会「点了没反应」。
  */
 export async function checkForUpdatesManually(): Promise<void> {
-  const win = BrowserWindow.getAllWindows()[0]
+  const win = mainWindow()
   if (!win) return
 
   if (!app.isPackaged) {
@@ -156,29 +239,42 @@ export async function checkForUpdatesManually(): Promise<void> {
     })
     return
   }
-  if (busy) {
+  if (phase === 'downloading' || phase === 'ready') {
     await dialog.showMessageBox(win, {
       type: 'info',
       message: t('update.busy'),
+      detail: t('update.busyDetail', { percent: downloadPercent }),
       buttons: [t('update.ok')]
     })
     return
   }
+  if (phase === 'checking') {
+    return
+  }
 
-  busy = true
+  phase = 'checking'
+  lastCheckFoundUpdate = false
   try {
     configureFeed()
     const result = await autoUpdater.checkForUpdates()
-    if (!result) {
+    // 注意：不能在这里用 finally 把 phase 复位。
+    // update-available 事件里会紧接着开始下载，
+    // 提前复位会让并发保护失效（下载中又能再点检查）。
+    if (result?.updateInfo && !lastCheckFoundUpdate) {
+      // 没有新版本：明确告知，避免用户以为没反应
+      phase = 'idle'
+      const current = app.getVersion()
       await dialog.showMessageBox(win, {
-        type: 'warning',
-        message: t('update.checkFailed'),
-        detail: t('update.checkFailedDetail'),
+        type: 'info',
+        message: t('update.upToDate'),
+        detail: t('update.upToDateDetail', { current }),
         buttons: [t('update.ok')]
       })
+      return
     }
-    // 有新版本时会触发 update-available 事件，由上面的处理器继续
+    // 有新版本时由 update-available 处理器继续（它负责询问与下载）
   } catch (err) {
+    phase = 'idle'
     console.error('[updater] 检查更新失败:', err)
     await dialog.showMessageBox(win, {
       type: 'warning',
@@ -187,7 +283,20 @@ export async function checkForUpdatesManually(): Promise<void> {
       detail: humanizeUpdateError(err),
       buttons: [t('update.ok')]
     })
-  } finally {
-    busy = false
+  }
+}
+
+/** 供端到端自检读取当前更新状态。 */
+export function getUpdateStatus(): {
+  phase: Phase
+  current: string
+  percent: number
+  autoCheck: boolean
+} {
+  return {
+    phase,
+    current: app.getVersion(),
+    percent: downloadPercent,
+    autoCheck: autoCheckEnabled
   }
 }

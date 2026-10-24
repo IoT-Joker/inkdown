@@ -553,7 +553,7 @@ function focus(): void {
 }
 
 /**
- * 段落与格式命令的取值直接对齐 marktext desktop 的菜单词汇表
+ * 段落与格式命令的取值直接对齐内核的块类型词汇表
  * （packages/desktop/src/main/menu/actions/*），确保内核能识别。
  */
 /** 正文右键菜单的状态与条目。 */
@@ -1067,7 +1067,7 @@ function registerEditorCommands(): void {
     'file:exportHtml': () => void exportHtml(),
     'file:exportPdf': () => void exportPdf(),
     'file:exportDocx': () => void exportDocxFile(),
-    // 段落操作（对齐 marktext 的 Edit 菜单）
+    // 段落操作
     'edit:duplicate': () => muya?.duplicate(),
     'edit:insertParagraph': () => muya?.insertParagraph('after'),
     'edit:deleteParagraph': () => muya?.deleteParagraph()
