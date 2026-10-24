@@ -69,8 +69,12 @@ function segments(hit: SearchHit): { before: string; match: string; after: strin
 }
 
 let timer: number | undefined
-watch([keyword, isCaseSensitive, isRegexp], () => {
+let searchVersion = 0
+watch([keyword, isCaseSensitive, isRegexp, () => state.workspace?.path], () => {
+  searchVersion++
   if (timer) window.clearTimeout(timer)
+  searching.value = false
+  result.value = null
   timer = window.setTimeout(() => void runSearch(), 300)
 })
 
@@ -83,6 +87,7 @@ watch(
 
 /** 执行搜索。 */
 async function runSearch(): Promise<void> {
+  const version = ++searchVersion
   const root = state.workspace?.path
   errorMsg.value = ''
   if (!root) {
@@ -102,12 +107,13 @@ async function runSearch(): Promise<void> {
       isWholeWord: false,
       maxResults: 500
     })) as SearchResult
-    result.value = res
+    if (version === searchVersion) result.value = res
   } catch (err) {
+    if (version !== searchVersion) return
     errorMsg.value = (err as Error).message
     result.value = null
   } finally {
-    searching.value = false
+    if (version === searchVersion) searching.value = false
   }
 }
 
@@ -126,6 +132,9 @@ async function openHit(hit: SearchHit): Promise<void> {
 }
 
 function close(): void {
+  searchVersion++
+  if (timer) window.clearTimeout(timer)
+  searching.value = false
   state.folderSearchVisible = false
 }
 

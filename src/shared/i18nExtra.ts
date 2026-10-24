@@ -259,6 +259,29 @@ const orbDict: Record<LocaleCode, Dict> = {
   }
 }
 
+const fileSafety: Record<LocaleCode, Dict> = {
+  'zh-CN': {
+    'notice.saveFailed': '未能保存「{name}」：{error}',
+    'notice.saveConflict': '文件已被其他程序修改，请先重新加载或另存为，避免覆盖外部改动。',
+    'notice.recoveredDrafts': '已恢复 {count} 份未保存草稿，请确认后保存。',
+    'notice.reloadDirty': '重新加载将放弃当前未保存的修改，是否继续？',
+    'recovery.title': '{name}（恢复草稿）',
+    'pref.orbOpacity': '圆盘不透明度',
+    'pref.orbFontSize': '圆盘字号',
+    'pref.orbAnimations': '圆盘展开动画'
+  },
+  en: {
+    'notice.saveFailed': 'Could not save "{name}": {error}',
+    'notice.saveConflict': 'The file changed outside Inkdown. Reload it or save a copy before overwriting external changes.',
+    'notice.recoveredDrafts': 'Recovered {count} unsaved drafts. Review and save them.',
+    'notice.reloadDirty': 'Reloading will discard unsaved changes. Continue?',
+    'recovery.title': '{name} (Recovered)',
+    'pref.orbOpacity': 'Palette opacity',
+    'pref.orbFontSize': 'Palette font size',
+    'pref.orbAnimations': 'Palette animation'
+  }
+}
+
 const EXTRA: Record<LocaleCode, Dict[]> = {
   'zh-CN': [
     folderSearch['zh-CN'],
@@ -266,9 +289,9 @@ const EXTRA: Record<LocaleCode, Dict[]> = {
     drag['zh-CN'],
     palette['zh-CN'],
     contextMenu['zh-CN'],
-    orbDict['zh-CN']
+    orbDict['zh-CN'], fileSafety['zh-CN']
   ],
-  en: [folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en]
+  en: [folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en, fileSafety.en]
 }
 
 let merged = false

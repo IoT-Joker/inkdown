@@ -87,6 +87,20 @@ function setTheme(theme: typeof state.theme): void {
             <label>{{ t('pref.wrapCode') }}</label>
             <input v-model="draft.wrapCodeBlocks" type="checkbox" />
           </div>
+          <div class="row">
+            <label>{{ t('pref.orbOpacity') }}</label>
+            <input v-model.number="draft.orbMenuOpacity" type="range" min="0.75" max="1" step="0.01" />
+            <span class="value">{{ Math.round(draft.orbMenuOpacity * 100) }}%</span>
+          </div>
+          <div class="row">
+            <label>{{ t('pref.orbFontSize') }}</label>
+            <input v-model.number="draft.orbFontSize" type="range" min="11" max="14" step="0.5" />
+            <span class="value">{{ draft.orbFontSize }} px</span>
+          </div>
+          <div class="row">
+            <label>{{ t('pref.orbAnimations') }}</label>
+            <input v-model="draft.orbAnimations" type="checkbox" />
+          </div>
         </section>
 
         <section class="group">

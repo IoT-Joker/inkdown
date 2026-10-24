@@ -11,6 +11,7 @@ function t(key: string, params?: Record<string, string | number>): string {
 type CommandHandler = (payload?: unknown) => void | Promise<void>
 
 const handlers = new Map<string, CommandHandler>()
+let quitInProgress = false
 
 /** 注册命令。后注册的覆盖先注册的，方便编辑器组件接管编辑类命令。 */
 export function registerCommand(id: string, handler: CommandHandler): void {
@@ -118,7 +119,7 @@ export function registerGlobalCommands(): void {
     'help:checkUpdate': () => {
       void window.inkdown.checkForUpdates()
     },
-    'app:quit': () => window.inkdown.quit(),
+    'app:quit': () => executeCommand('file:quit'),
     // 最近打开：由菜单传文件路径进来
     'file:openRecent': async (payload?: unknown) => {
       const filePath = typeof payload === 'string' ? payload : ''
@@ -163,11 +164,18 @@ export function registerGlobalCommands(): void {
     },
     // 退出前逐个确认未保存的标签，用户取消则整体中止
     'file:quit': async () => {
+      if (quitInProgress) return
+      quitInProgress = true
       const { confirmClose } = useFile()
-      for (const tab of state.tabs) {
-        if (!(await confirmClose(tab))) return
+      try {
+        for (const tab of state.tabs) {
+          if (!(await confirmClose(tab))) return
+        }
+        state.quitConfirmed = true
+        await window.inkdown.quit()
+      } finally {
+        quitInProgress = false
       }
-      window.inkdown.quit()
     },
     'edit:find': () => {
       state.findMode = 'find'

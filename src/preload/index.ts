@@ -3,8 +3,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 /** 暴露给渲染进程的桥接 API。渲染层只通过它访问文件系统与原生能力。 */
 const api = {
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
-  writeFile: (filePath: string, content: string) =>
-    ipcRenderer.invoke('fs:writeFile', filePath, content),
+  writeFile: (filePath: string, content: string, expectedContent?: string) =>
+    ipcRenderer.invoke('fs:writeFile', filePath, content, expectedContent),
   readDir: (dir: string, depth?: number) => ipcRenderer.invoke('fs:readDir', dir, depth),
   /** 全库搜索：在目录下递归搜索 Markdown 文件内容。 */
   searchInFolder: (rootDir: string, opts: unknown) =>

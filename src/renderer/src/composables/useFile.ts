@@ -1,5 +1,5 @@
 import { state, type Tab } from '../store'
-import { getActiveTab, isDirty, pushRecent, settings } from '../store'
+import { closeTab, getActiveTab, isDirty, pushRecent, settings } from '../store'
 import { translate } from '../../../shared/i18n'
 import { currentLocale } from './useI18n'
 
@@ -8,30 +8,47 @@ function t(key: string, params?: Record<string, string | number>): string {
   return translate(currentLocale.value, key, params)
 }
 
+const pendingSaves = new Map<Tab, Promise<boolean>>()
+const pendingMoves = new Map<Tab, Promise<void>>()
+const openingFiles = new Map<string, Promise<void>>()
+
+function pathKey(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/$/, '')
+  return /^[a-z]:/i.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+function belongsTo(path: string | null, parent: string): boolean {
+  return !!path && (pathKey(path) === pathKey(parent) || pathKey(path).startsWith(pathKey(parent) + '/'))
+}
+
 /** 文件读写与标签页管理。所有磁盘操作都经由 preload 桥接。 */
 export function useFile() {
   async function openPath(filePath: string): Promise<void> {
-    const existing = state.tabs.find((t) => t.filePath === filePath)
+    const existing = state.tabs.find((t) => t.filePath && pathKey(t.filePath) === pathKey(filePath))
     if (existing) {
       state.activeId = existing.id
       pushRecent(filePath)
       return
     }
-    const { content, mtimeMs } = await window.inkdown.readFile(filePath)
-    const tab = createTabFromFile(filePath, content, mtimeMs)
-    state.tabs.push(tab)
-    state.activeId = tab.id
-    void window.inkdown.watch(filePath)
-    pushRecent(filePath)
+    const key = pathKey(filePath)
+    if (openingFiles.has(key)) return openingFiles.get(key)
+    const opening = (async () => {
+      const { content, mtimeMs } = await window.inkdown.readFile(filePath)
+      const tab = createTabFromFile(filePath, content, mtimeMs)
+      state.tabs.push(tab)
+      state.activeId = tab.id
+      void window.inkdown.watch(filePath)
+      pushRecent(filePath)
+    })()
+    openingFiles.set(key, opening)
+    try { await opening } finally { openingFiles.delete(key) }
   }
 
   async function openDialog(): Promise<void> {
     const files = await window.inkdown.openFileDialog()
     for (const f of files) {
-      const existing = state.tabs.find((t) => t.filePath === f.filePath)
+      const existing = state.tabs.find((t) => t.filePath && pathKey(t.filePath) === pathKey(f.filePath))
       if (existing) {
-        existing.content = f.content
-        existing.savedContent = f.content
         state.activeId = existing.id
       } else {
         const tab = createTabFromFile(f.filePath, f.content, 0)
@@ -39,11 +56,29 @@ export function useFile() {
         state.activeId = tab.id
       }
       window.inkdown.watch(f.filePath)
+      pushRecent(f.filePath)
     }
   }
 
   async function saveTab(tab: Tab | undefined = getActiveTab(), forceDialog = false): Promise<boolean> {
     if (!tab) return false
+    const pending = Promise.all([pendingSaves.get(tab), pendingMoves.get(tab)])
+      .catch(() => false)
+      .then(() => writeTab(tab, forceDialog))
+    pendingSaves.set(tab, pending)
+    try {
+      return await pending
+    } catch (error) {
+      const conflict = String(error).includes(t('notice.saveConflict'))
+      state.notice = { text: t('notice.saveFailed', { name: tab.title, error: String(error) }),
+        ...(conflict && tab.filePath ? { action: 'reload', filePath: tab.filePath } : {}) }
+      return false
+    } finally {
+      if (pendingSaves.get(tab) === pending) pendingSaves.delete(tab)
+    }
+  }
+
+  async function writeTab(tab: Tab, forceDialog: boolean): Promise<boolean> {
     let target = tab.filePath
     if (!target || forceDialog) {
       const picked = await window.inkdown.saveAsDialog(tab.title.endsWith('.md') ? tab.title : `${tab.title}.md`)
@@ -54,12 +89,14 @@ export function useFile() {
     if (!target) return false
     const finalPath: string = target
     // 按设置的行尾符写盘（编辑器内部统一用 \n，仅在存盘时转换）
-    const content =
-      settings.lineEnding === 'crlf' ? tab.content.replace(/\r?\n/g, '\r\n') : tab.content
-    const { mtimeMs } = await window.inkdown.writeFile(finalPath, content)
+    const snapshot = tab.content
+    const content = settings.lineEnding === 'crlf'
+      ? snapshot.replace(/\r?\n/g, '\r\n') : snapshot.replace(/\r\n/g, '\n')
+    const expected = tab.filePath && pathKey(tab.filePath) === pathKey(finalPath) ? tab.savedContent : undefined
+    const { mtimeMs } = await window.inkdown.writeFile(finalPath, content, expected)
     tab.filePath = finalPath
     tab.title = baseName(finalPath)
-    tab.savedContent = tab.content
+    tab.savedContent = snapshot
     tab.mtimeMs = mtimeMs
     void window.inkdown.watch(finalPath)
     return true
@@ -84,7 +121,7 @@ export function useFile() {
       t('dialog.saveChangesDetail', { name: tab.title }),
       [t('dialog.save'), t('dialog.dontSave'), t('dialog.cancel')]
     )
-    if (answer === 0) return await saveTab(tab)
+    if (answer === 0) return (await saveTab(tab)) && !isDirty(tab)
     if (answer === 1) return true
     return false
   }
@@ -103,7 +140,36 @@ export function useFile() {
     state.workspace = await window.inkdown.readDir(state.workspace.path, 1)
   }
 
-  return { openPath, openDialog, saveTab, saveAll, confirmClose, openFolder, refreshWorkspace }
+  async function renamePath(oldPath: string, newPath: string): Promise<void> {
+    const affected = state.tabs.filter((tab) => belongsTo(tab.filePath, oldPath))
+    const previous = affected.flatMap((tab) => [pendingSaves.get(tab), pendingMoves.get(tab)])
+    const moving = (async () => {
+      await Promise.all(previous)
+      await window.inkdown.rename(oldPath, newPath)
+      for (const tab of affected) {
+        const oldFile = tab.filePath!
+        tab.filePath = newPath + oldFile.slice(oldPath.length)
+        tab.title = baseName(tab.filePath)
+        await window.inkdown.unwatch(oldFile)
+        await window.inkdown.watch(tab.filePath)
+      }
+    })()
+    for (const tab of affected) pendingMoves.set(tab, moving)
+    try { await moving } finally {
+      for (const tab of affected) if (pendingMoves.get(tab) === moving) pendingMoves.delete(tab)
+    }
+  }
+
+  async function removePath(target: string): Promise<boolean> {
+    const affected = state.tabs.filter((tab) => belongsTo(tab.filePath, target))
+    for (const tab of affected) if (!(await confirmClose(tab))) return false
+    await Promise.all(affected.map((tab) => pendingSaves.get(tab)))
+    await window.inkdown.remove(target)
+    for (const tab of affected) closeTab(tab.id)
+    return true
+  }
+
+  return { openPath, openDialog, saveTab, saveAll, confirmClose, openFolder, refreshWorkspace, renamePath, removePath }
 }
 
 export function baseName(p: string): string {
@@ -112,6 +178,7 @@ export function baseName(p: string): string {
 }
 
 function createTabFromFile(filePath: string, content: string, mtimeMs: number): Tab {
+  content = content.replace(/\r\n/g, '\n')
   return {
     id: `tab-${Math.random().toString(36).slice(2, 10)}`,
     filePath,

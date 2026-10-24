@@ -6,6 +6,9 @@ import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, l
 import { exportHtml, exportPdf, exportDocxFile, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
 import { useI18n } from '../composables/useI18n'
 import BlockOrb from './BlockOrb.vue'
+import { TextHistory, editSource, replaceRange, textMatches, replaceTextMatch, lineOffsets, offsetIndex, type TextSnapshot } from '../editor/sourceEditing'
+import { patchPreview, previewBlockOffsets } from '../editor/previewBlocks'
+import { resolveExportImageSrc } from '@muyajs/core/utils/fileUrl'
 
 // 供主进程端到端自检调用
 ;(window as unknown as Record<string, unknown>).__inkdownExport = { buildHtmlForCheck }
@@ -16,6 +19,34 @@ const containerRef = ref<HTMLElement | null>(null)
 /** 编辑器根节点，用于判断右键是否发生在编辑区内。 */
 const hostRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
+const sourceHistories = new Map<string, TextHistory>()
+
+function sourceSnapshot(): TextSnapshot {
+  const ta = sourceRef.value
+  return { text: state.sourceContent, start: ta?.selectionStart ?? 0, end: ta?.selectionEnd ?? 0 }
+}
+
+function sourceHistory(): TextHistory | undefined {
+  const tab = activeTab.value
+  if (!tab) return
+  if (!sourceHistories.has(tab.id)) sourceHistories.set(tab.id, new TextHistory({ text: tab.content, start: 0, end: 0 }))
+  return sourceHistories.get(tab.id)
+}
+
+function applySourceEdit(snapshot: TextSnapshot): void {
+  const ta = sourceRef.value
+  if (!ta) return
+  sourceHistory()?.record(sourceSnapshot())
+  sourceHistory()?.record(snapshot)
+  ta.value = snapshot.text
+  state.sourceContent = snapshot.text
+  nextTick(() => {
+    ta.focus()
+    ta.setSelectionRange(snapshot.start, snapshot.end)
+    onSourceCaretMove()
+    resizeSourceEditor()
+  })
+}
 const { t, locale } = useI18n()
 let muya: Muya | null = null
 let suppress = false
@@ -33,7 +64,10 @@ const isSplit = computed(() => state.viewMode === 'split')
 const previewRef = ref<HTMLElement | null>(null)
 /** 分栏右侧源码的当前行号，用于页头信息。 */
 const sourceLine = ref(1)
-const sourceLines = computed(() => state.sourceContent.split('\n').length)
+const sourceLineStarts = computed(() => lineOffsets(state.sourceContent))
+const sourceLines = computed(() => sourceLineStarts.value.length)
+let previewStarts: number[] = []
+let caretFrame: number | null = null
 let sourceResizeObserver: ResizeObserver | null = null
 let previewFrame: number | null = null
 let previewTimer: number | null = null
@@ -92,7 +126,13 @@ function refreshPreview(): void {
   // The split preview follows the textarea, not the delayed WYSIWYG tab
   // content. Reading tab.content here made the preview lag one update behind
   // while typing and forced an extra full Markdown conversion per keystroke.
-  el.innerHTML = renderPreviewHtml(state.sourceContent)
+  markedPreviewEl?.classList.remove('split-cursor-block')
+  markedPreviewEl = null
+  patchPreview(el, renderPreviewHtml(state.sourceContent), (root) => {
+    injectPreviewHeadingIds(root)
+    for (const image of root.querySelectorAll('img')) image.setAttribute('src', resolveExportImageSrc(image.getAttribute('src') ?? ''))
+  })
+  previewStarts = previewBlockOffsets(state.sourceContent, settings)
   injectPreviewHeadingIds(el)
   // 预览重建后高亮框会失效，重新定位一次
   nextTick(() => syncPreviewToCursor())
@@ -110,42 +150,10 @@ function refreshPreview(): void {
  * 这种按序对齐简单可靠，不需要在渲染器里埋标记。
  */
 
-/** 把 Markdown 按「块」切分，返回每块在文本中的起始偏移。 */
-function markdownBlockStarts(md: string): number[] {
-  const starts: number[] = []
-  const lines = md.split('\n')
-  let offset = 0
-  let inFence = false
-  let prevBlank = true
-
-  for (const line of lines) {
-    const isFence = /^\s*(```|~~~)/.test(line)
-    if (isFence) {
-      if (!inFence && prevBlank) starts.push(offset)
-      inFence = !inFence
-      prevBlank = false
-    } else if (inFence) {
-      // 代码块内部不切分
-    } else if (line.trim() === '') {
-      prevBlank = true
-    } else {
-      if (prevBlank) starts.push(offset)
-      prevBlank = false
-    }
-    offset += line.length + 1
-  }
-  return starts
-}
-
 /** 根据光标偏移算出它属于第几个块。 */
 function blockIndexAtOffset(starts: number[], offset: number): number {
   if (!starts.length) return -1
-  let idx = 0
-  for (let i = 0; i < starts.length; i++) {
-    if (starts[i] <= offset) idx = i
-    else break
-  }
-  return idx
+  return offsetIndex(starts, offset)
 }
 
 /** 源码 textarea 中光标的绝对偏移。 */
@@ -157,27 +165,36 @@ function sourceCursorOffset(): number {
 
 /** 光标移动（点击 / 按键 / 输入）时同步预览。 */
 function onSourceCaretMove(): void {
-  if (!isSplit.value) return
+  const snapshot = sourceSnapshot()
+  const history = sourceHistory()
+  if (history?.current.text === snapshot.text) history.record(snapshot)
   updateSourceLine()
-  syncPreviewToCursor()
+  if (!isSplit.value) return
+  if (caretFrame != null) return
+  caretFrame = requestAnimationFrame(() => { caretFrame = null; syncPreviewToCursor() })
+}
+
+function onSourceInput(): void {
+  sourceHistory()?.record(sourceSnapshot(), true)
+  onSourceCaretMove()
 }
 
 /** 由 textarea 的光标偏移计算当前行号。 */
 function updateSourceLine(): void {
   const ta = sourceRef.value
   if (!ta) return
-  const before = ta.value.slice(0, ta.selectionStart)
-  const beforeFocus = ta.value.slice(0, ta.selectionEnd)
-  sourceLine.value = before.split('\n').length
+  const offsets = sourceLineStarts.value
+  const toPos = (offset: number): { line: number; ch: number } => {
+    const line = offsetIndex(offsets, offset)
+    return { line, ch: offset - offsets[line] }
+  }
+  const anchor = toPos(ta.selectionStart)
+  sourceLine.value = anchor.line + 1
 
   // 状态栏也读取 tab.cursor；源码/分栏模式下同步它，避免行号停留在旧位置。
   const tab = activeTab.value
   if (!tab) return
-  const toPos = (text: string): { line: number; ch: number } => {
-    const lastBreak = text.lastIndexOf('\n')
-    return { line: text.split('\n').length - 1, ch: text.length - lastBreak - 1 }
-  }
-  tab.cursor = { anchor: toPos(before), focus: toPos(beforeFocus) }
+  tab.cursor = { anchor, focus: toPos(ta.selectionEnd) }
 }
 
 /** 预览容器里与源码块对应的顶层元素（跳过脚注等非正文节点）。 */
@@ -193,7 +210,7 @@ function previewBlocks(): HTMLElement[] {
 function activePreviewBlock(): HTMLElement | null {
   const md = state.sourceContent
   if (!md) return null
-  const starts = sourceBlockStarts.value
+  const starts = previewStarts
   const offset = sourceCursorOffset()
   if (offset < 0) return null
   const idx = blockIndexAtOffset(starts, offset)
@@ -204,7 +221,6 @@ function activePreviewBlock(): HTMLElement | null {
 
 /** 上一次标出的元素，便于清除样式。 */
 let markedPreviewEl: HTMLElement | null = null
-const sourceBlockStarts = computed(() => markdownBlockStarts(state.sourceContent))
 
 /** 标出光标所在块 + 按需滚动。两个行为分别受设置控制。 */
 function syncPreviewToCursor(): void {
@@ -248,10 +264,16 @@ watch(
   () => activeTab.value?.content,
   (content) => {
     if ((isSource.value || isSplit.value) && content != null && content !== state.sourceContent) {
+      sourceHistories.delete(activeTab.value!.id)
       state.sourceContent = content
     }
   }
 )
+
+watch(() => activeTab.value?.filePath, (path) => {
+  setDocPathForImages(path ?? null)
+  if (isSplit.value) nextTick(refreshPreview)
+}, { immediate: true })
 
 /** 保存当前标签的视图状态，供切换标签时恢复。 */
 function stashViewState(): void {
@@ -349,7 +371,7 @@ function mountEditor(): void {
   ;(window as unknown as Record<string, unknown>).__inkdownMuya = muya
 
   muya.on('json-change', () => {
-    if (suppress) return
+    if (suppress || isSource.value || isSplit.value) return
     const t = activeTab.value
     if (!t) return
     t.content = muya!.getMarkdown()
@@ -416,6 +438,7 @@ watch(
     // 源码与分栏都用 textarea 显示内容
     if (isSource.value || isSplit.value) {
       state.sourceContent = tab.content
+      sourceHistory()
       if (isSplit.value) nextTick(() => refreshPreview())
     } else {
       loadTab(tab)
@@ -442,6 +465,9 @@ watch(
 
     if (mode === 'source' || mode === 'split') {
       state.sourceContent = tab.content
+      const history = sourceHistory()
+      if (history && history.current.text !== tab.content) sourceHistories.delete(tab.id)
+      sourceHistory()
       nextTick(() => {
         if (mode === 'split') {
           refreshPreview()
@@ -468,13 +494,20 @@ watch(
     if (!isSource.value && !isSplit.value) return
     const tab = activeTab.value
     if (!tab) return
+    sourceHistory()?.record({ ...sourceSnapshot(), text: val })
     tab.content = val
     updateCounts(val)
     updateSourceLine()
     nextTick(resizeSourceEditor)
     if (isSplit.value) schedulePreviewRefresh()
+    if (state.findVisible && state.findKeyword) nextTick(restoreSearchIfNeeded)
   }
 )
+
+watch(() => state.tabs.map((tab) => tab.id), (ids) => {
+  for (const id of sourceHistories.keys()) if (!ids.includes(id)) sourceHistories.delete(id)
+  for (const id of viewState.keys()) if (!ids.includes(id)) viewState.delete(id)
+})
 
 // 专注模式：给编辑器根节点加类，由 CSS 淡化非当前段落
 watch(
@@ -665,7 +698,7 @@ function tableOfContentsMarkdown(): string {
 }
 
 /** 给静态分栏预览的标题补上与目录一致的 id，让目录链接可以跳转。 */
-function injectPreviewHeadingIds(container: HTMLElement): void {
+function injectPreviewHeadingIds(container: ParentNode): void {
   const headings = [...container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
   const seen = new Set<string>()
   for (const heading of headings) {
@@ -707,6 +740,7 @@ function snippetFor(id: string): Snippet | null {
     inlineDiffDel: { text: '{-删除内容-}', selectFrom: 2, selectTo: 6 },
     underline: { text: '<u>下划线</u>', selectFrom: 3, selectTo: 6 },
     kbd: { text: '<kbd>Ctrl</kbd>', selectFrom: 5, selectTo: 9 },
+    code: { text: '```\n\n```', selectFrom: 4, selectTo: 4, block: true },
     codeJs: { text: '```js\n\n```', selectFrom: 6, selectTo: 6, block: true },
     codePy: { text: '```python\n\n```', selectFrom: 10, selectTo: 10, block: true },
     mermaid: {
@@ -781,8 +815,10 @@ function insertSourceSnippet(snippet: Snippet): void {
         : '\n\n'
     : ''
   const text = `${prefix}${snippet.text}${suffix}`
-  ta.value = before + text + after
-  state.sourceContent = ta.value
+  const selectionBase = start + prefix.length
+  applySourceEdit({ text: before + text + after,
+    start: selectionBase + (snippet.selectFrom ?? snippet.text.length),
+    end: selectionBase + (snippet.selectTo ?? snippet.text.length) })
 
   // 插入点若在文档末尾，主动滚到选区，避免新增内容在视口下方。
   if (start === before.length && after === '') {
@@ -792,15 +828,6 @@ function insertSourceSnippet(snippet: Snippet): void {
     })
   }
 
-  const selectionBase = start + prefix.length
-  const from = selectionBase + (snippet.selectFrom ?? snippet.text.length)
-  const to = selectionBase + (snippet.selectTo ?? snippet.text.length)
-  nextTick(() => {
-    ta.focus()
-    ta.setSelectionRange(from, to)
-    updateSourceLine()
-    resizeSourceEditor()
-  })
 }
 
 /** 在当前行首插入标记（标题、列表）。 */
@@ -808,16 +835,9 @@ function insertSourceLinePrefix(prefix: string): void {
   const ta = sourceRef.value
   if (!ta) return
   const start = ta.selectionStart
-  const lineStart = ta.value.lastIndexOf('\n', Math.max(0, start - 1)) + 1
-  ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart)
-  state.sourceContent = ta.value
+  const lineStart = start === 0 ? 0 : ta.value.lastIndexOf('\n', start - 1) + 1
   const cursor = start + prefix.length
-  nextTick(() => {
-    ta.focus()
-    ta.setSelectionRange(cursor, cursor)
-    updateSourceLine()
-    resizeSourceEditor()
-  })
+  applySourceEdit({ text: ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart), start: cursor, end: cursor })
 }
 
 /** 所见即所得模式：把片段粘贴到当前光标处。 */
@@ -839,14 +859,18 @@ async function insertSnippetInEditor(snippet: Snippet): Promise<void> {
 
 /** 选择图片后复制到文档 assets 并插入相对路径。 */
 async function insertImageSnippet(): Promise<void> {
+  const tab = activeTab.value
+  if (!tab) return
   const src = await window.inkdown.openImageDialog()
-  if (!src) return
-  const docPath = activeTab.value?.filePath ?? null
+  if (!src || activeTab.value?.id !== tab.id) return
+  const docPath = tab.filePath
   const finalSrc = await window.inkdown.copyImage(docPath, src)
+  if (activeTab.value?.id !== tab.id) return
 
   if (isSource.value || isSplit.value) {
-    const alt = baseName(src).replace(/\.[^.]+$/, '')
-    insertSourceSnippet({ text: `![${alt}](${finalSrc})`, selectFrom: 2, selectTo: 2 + alt.length })
+    const alt = baseName(src).replace(/\.[^.]+$/, '').replace(/[\[\]\\]/g, '\\$&')
+    const destination = finalSrc.replace(/\\/g, '/').replace(/[<>]/g, (char: string) => encodeURIComponent(char))
+    insertSourceSnippet({ text: `![${alt}](<${destination}>)`, selectFrom: 2, selectTo: 2 + alt.length })
     return
   }
   muya?.insertImage({ src: finalSrc, alt: baseName(src) })
@@ -870,16 +894,9 @@ async function onOrbInsert(id: string): Promise<void> {
         state.notice = { text: t('orb.frontmatterExists') }
         return
       }
-      ta.value = `---\ntitle: 文档标题\ntags: []\n---\n\n${ta.value}`
-      state.sourceContent = ta.value
-      nextTick(() => {
-        ta.focus()
-        const titleStart = ta.value.indexOf('文档标题')
-        const start = titleStart >= 0 ? titleStart : 0
-        ta.setSelectionRange(start, start + (titleStart >= 0 ? 4 : 0))
-        updateSourceLine()
-        resizeSourceEditor()
-      })
+      const text = `---\ntitle: 文档标题\ntags: []\n---\n\n${ta.value}`
+      const start = text.indexOf('文档标题')
+      applySourceEdit({ text, start, end: start + 4 })
       return
     }
 
@@ -941,6 +958,43 @@ async function onOrbInsert(id: string): Promise<void> {
   if (snippet) await insertSnippetInEditor(snippet)
 }
 
+async function runSourceCommand(id: string): Promise<void> {
+  const ta = sourceRef.value
+  if (!ta || !activeTab.value) return
+  const snapshot = sourceSnapshot()
+  const history = sourceHistory()
+  history?.record(snapshot)
+  if (id === 'edit:undo' || id === 'edit:redo') {
+    const result = id === 'edit:undo' ? history?.undo() : history?.redo()
+    if (result) {
+      // Do not record undo itself as a new edit, which would discard redo.
+      ta.value = result.text
+      state.sourceContent = result.text
+      nextTick(() => { ta.focus(); ta.setSelectionRange(result.start, result.end); onSourceCaretMove() })
+    }
+    return
+  }
+  if (id === 'edit:copyMarkdown' || id === 'edit:copyHtml') {
+    const text = snapshot.text.slice(snapshot.start, snapshot.end) || snapshot.text
+    await window.inkdown.writeClipboardText(id === 'edit:copyHtml' ? renderPreviewHtml(text) : text)
+    return
+  }
+  if (id === 'edit:pastePlain') {
+    const tabId = activeTab.value.id
+    const text = await window.inkdown.readClipboardText()
+    if (activeTab.value?.id === tabId && (isSource.value || isSplit.value)) applySourceEdit(replaceRange(snapshot, text))
+    return
+  }
+  if (id === 'format:image') return insertImageSnippet()
+  const edited = editSource(snapshot, id)
+  if (edited) { applySourceEdit(edited); return }
+  const blocks: Record<string, string> = {
+    'paragraph:code': 'code', 'paragraph:math': 'math', 'paragraph:table': 'table-3x3',
+    'paragraph:hr': 'hr', 'paragraph:frontMatter': 'frontmatter'
+  }
+  if (blocks[id]) await onOrbInsert(blocks[id])
+}
+
 function registerEditorCommands(): void {
   const paragraphMap: Record<string, string> = {
     'paragraph:h1': 'heading 1',
@@ -975,7 +1029,7 @@ function registerEditorCommands(): void {
     'format:clear': 'clear'
   }
 
-  const commands: Record<string, () => void> = {
+  const commands: Record<string, () => void | Promise<void>> = {
     'edit:undo': () => muya?.undo(),
     'edit:redo': () => muya?.redo(),
     'edit:copyMarkdown': () => muya?.copyAsMarkdown(),
@@ -1002,19 +1056,20 @@ function registerEditorCommands(): void {
     }
     commands[id] = () => muya?.format(type)
   }
+  for (const [id, handler] of Object.entries(commands)) {
+    if (/^(edit|paragraph|format):/.test(id)) {
+      commands[id] = () => (isSource.value || isSplit.value) ? runSourceCommand(id) : handler()
+    }
+  }
   registerCommands(commands)
 }
 
 async function insertImage(): Promise<void> {
-  const files = await window.inkdown.openFileDialog()
-  const src = files[0]?.filePath
-  if (!src) return
-  const docPath = activeTab.value?.filePath ?? null
-  const finalSrc = await window.inkdown.copyImage(docPath, src)
-  muya?.insertImage({ src: finalSrc, alt: baseName(src) })
+  await insertImageSnippet()
 }
 
 function onSourceKeydown(e: KeyboardEvent): void {
+  if (e.isComposing) return
   // 源码模式支持 Tab 缩进，避免焦点跳走
   if (e.key === 'Tab') {
     e.preventDefault()
@@ -1023,13 +1078,56 @@ function onSourceKeydown(e: KeyboardEvent): void {
     const end = el.selectionEnd
     const value = el.value
     const indent = ' '.repeat(settings.tabSize)
-    el.value = value.slice(0, start) + indent + value.slice(end)
-    el.selectionStart = el.selectionEnd = start + indent.length
-    state.sourceContent = el.value
+    applySourceEdit(replaceRange({ text: value, start, end }, indent))
   }
 }
 
 /** 查找/替换：FindBar 通过自定义事件把参数送进来，这里调用 muya 的搜索 API。 */
+let sourceFind: { tabId: string; keyword: string; options: string; text: string; matches: RegExpExecArray[]; index: number } | null = null
+
+function findInSource(d: { action: string; keyword: string; replacement: string; isRegexp: boolean; isCaseSensitive: boolean; isWholeWord: boolean }): void {
+  const tab = activeTab.value
+  const ta = sourceRef.value
+  if (!tab || !ta) return
+  const options = JSON.stringify([d.isRegexp, d.isCaseSensitive, d.isWholeWord])
+  const text = state.sourceContent
+  if (!sourceFind || sourceFind.tabId !== tab.id || sourceFind.keyword !== d.keyword || sourceFind.options !== options || sourceFind.text !== text) {
+    sourceFind = { tabId: tab.id, keyword: d.keyword, options, text, matches: textMatches(text, d.keyword, d), index: 0 }
+  }
+  const count = sourceFind.matches.length
+  if (count && (d.action === 'next' || d.action === 'previous')) {
+    sourceFind.index = (sourceFind.index + (d.action === 'next' ? 1 : -1) + count) % count
+  }
+  if (count && (d.action === 'replace' || d.action === 'replaceAll')) {
+    const result = replaceTextMatch(text, d.keyword, d.replacement, d, d.action === 'replace' ? sourceFind.index : undefined)
+    const start = sourceFind.matches[sourceFind.index].index!
+    applySourceEdit({ text: result, start: Math.min(start, result.length), end: Math.min(start, result.length) })
+    sourceFind.text = result
+    sourceFind.matches = textMatches(result, d.keyword, d)
+    sourceFind.index = Math.min(sourceFind.index, Math.max(0, sourceFind.matches.length - 1))
+  }
+  const match = sourceFind.matches[sourceFind.index]
+  if (match && d.action !== 'search') {
+    nextTick(() => {
+      ta.setSelectionRange(match.index!, match.index! + match[0].length)
+      scrollSourceToOffset(match.index!)
+      restoreFindFocus()
+    })
+  }
+  window.dispatchEvent(new CustomEvent('inkdown:find-result', {
+    detail: { count: sourceFind.matches.length, index: sourceFind.matches.length ? sourceFind.index + 1 : 0 }
+  }))
+}
+
+function scrollSourceToOffset(offset: number): void {
+  const ta = sourceRef.value
+  const scroller = ta?.closest('.source-scroll') as HTMLElement | null
+  if (!ta || !scroller) return
+  const line = ta.value.slice(0, offset).split('\n').length - 1
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 24
+  scroller.scrollTo({ top: Math.max(0, ta.offsetTop + line * lineHeight - scroller.clientHeight / 2), behavior: 'auto' })
+}
+
 function onFind(e: Event): void {
   if (!muya) return
   const d = (e as CustomEvent).detail as {
@@ -1056,6 +1154,10 @@ function onFind(e: Event): void {
     isRegexp: d.isRegexp,
     isCaseSensitive: d.isCaseSensitive,
     isWholeWord: d.isWholeWord
+  }
+  if (isSource.value || isSplit.value) {
+    findInSource(d)
+    return
   }
   switch (d.action) {
     case 'search':
@@ -1138,10 +1240,14 @@ function restoreFindFocus(): void {
  */
 function restoreSearchIfNeeded(): void {
   if (!muya || !state.findVisible || !state.findKeyword) return
+  if (isSource.value || isSplit.value) {
+    findInSource({ action: 'search', keyword: state.findKeyword, replacement: '', ...state.findOptions })
+    return
+  }
   const { findKeyword, findOptions } = state
   requestAnimationFrame(() => {
     const m = muya
-    if (!m) return
+    if (!m || isSource.value || isSplit.value) return
     try {
       searchResult = m.search(findKeyword, { ...findOptions, selectHighlight: false })
       reportMatches()
@@ -1199,6 +1305,7 @@ function onSettingsChanged(): void {
   suppress = true
   muya.setOptions(buildMuyaOptions(), true)
   suppress = false
+  if (isSplit.value) nextTick(refreshPreview)
 }
 
 /**
@@ -1290,6 +1397,17 @@ async function openDroppedFiles(files: File[]): Promise<number> {
 function onGotoLine(e: Event): void {
   const d = (e as CustomEvent).detail as { filePath?: string; line?: number }
   if (!muya || !d?.line) return
+  if (d.filePath && activeTab.value?.filePath !== d.filePath) return
+  if (isSource.value || isSplit.value) {
+    const lines = state.sourceContent.split('\n')
+    const offset = lines.slice(0, Math.max(0, d.line - 1)).reduce((sum, line) => sum + line.length + 1, 0)
+    const ta = sourceRef.value
+    ta?.focus()
+    ta?.setSelectionRange(offset, offset)
+    scrollSourceToOffset(offset)
+    onSourceCaretMove()
+    return
+  }
   const line = Math.max(0, d.line - 1)
   requestAnimationFrame(() => {
     const m = muya
@@ -1357,6 +1475,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cancelPreviewRefresh()
+  if (caretFrame != null) cancelAnimationFrame(caretFrame)
   window.removeEventListener('contextmenu', onEditorContextMenu, true)
   window.removeEventListener('inkdown:find', onFind)
   window.removeEventListener('inkdown:find-close', onFindClose)
@@ -1443,7 +1562,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
           @keydown="onSourceKeydown"
           @click="onSourceCaretMove"
           @keyup="onSourceCaretMove"
-          @input="onSourceCaretMove"
+          @input="onSourceInput"
         />
       </div>
     </div>

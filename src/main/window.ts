@@ -47,6 +47,11 @@ export function createWindow(): BrowserWindow {
 
   mainWindow = win
   observeWindow(win)
+  win.webContents.on('will-prevent-unload', () => {
+    // The renderer vetoes the first close while dirty. Run the same save /
+    // discard / cancel flow used by File > Quit, then close after confirmation.
+    void win.webContents.executeJavaScript('window.__inkdownQuit?.()').catch(() => {})
+  })
 
   win.on('ready-to-show', () => win.show())
   win.on('closed', () => {

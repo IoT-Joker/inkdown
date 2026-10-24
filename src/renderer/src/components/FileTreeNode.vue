@@ -3,6 +3,7 @@ import { computed, nextTick, ref, reactive } from 'vue'
 import { state } from '../store'
 import { executeCommand } from '../composables/useCommands'
 import { useI18n } from '../composables/useI18n'
+import { useFile } from '../composables/useFile'
 
 interface Entry {
   name: string
@@ -98,10 +99,7 @@ async function onDrop(e: DragEvent): Promise<void> {
       window.alert(t('tree.errExists', { name: baseName }))
       return
     }
-    await window.inkdown.rename(source, targetPath)
-    // 同步已打开标签的路径，避免保存时写回旧位置
-    const tab = state.tabs.find((t) => t.filePath === source)
-    if (tab) tab.filePath = targetPath
+    await useFile().renamePath(source, targetPath)
     emit('refresh')
   } catch (err) {
     window.alert(t('tree.errMove', { msg: (err as Error).message }))
@@ -198,7 +196,11 @@ async function commitRename(): Promise<void> {
   const sep = props.entry.path.includes('\\') ? '\\' : '/'
   const target = `${parentDir()}${sep}${name}`
   try {
-    await window.inkdown.rename(props.entry.path, target)
+    if (await window.inkdown.exists(target)) {
+      window.alert(t('tree.errExists', { name }))
+      return
+    }
+    await useFile().renamePath(props.entry.path, target)
     emit('refresh')
   } catch (err) {
     window.alert(t('tree.errRename', { msg: (err as Error).message }))
@@ -209,7 +211,7 @@ async function removeEntry(): Promise<void> {
   const ok = window.confirm(t('tree.confirmDelete', { name: props.entry.name }))
   if (!ok) return
   try {
-    await window.inkdown.remove(props.entry.path)
+    if (!(await useFile().removePath(props.entry.path))) return
     emit('refresh')
   } catch (err) {
     window.alert(t('tree.errDelete', { msg: (err as Error).message }))

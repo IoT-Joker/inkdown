@@ -1,5 +1,5 @@
 import { app, dialog, ipcMain, shell, clipboard, BrowserWindow } from 'electron'
-import { promises as fsp } from 'node:fs'
+import { promises as fsp, constants } from 'node:fs'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { getMainWindow } from './window'
@@ -10,6 +10,7 @@ import { takePendingFile } from './fileAssociation'
 import { checkForUpdatesManually } from './updater'
 import { markdownToDocx } from './exportDocx'
 import { searchInFolder, type SearchOptions } from './folderSearch'
+import { randomUUID } from 'node:crypto'
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
 const watchers = new Map<string, FSWatcher>()
@@ -102,10 +103,35 @@ export function registerIpc(): void {
     return { filePath, content, mtimeMs: stat.mtimeMs }
   })
 
-  ipcMain.handle('fs:writeFile', async (_e, filePath: string, content: string) => {
+  ipcMain.handle('fs:writeFile', async (_e, filePath: string, content: string, expectedContent?: string) => {
+    if (expectedContent !== undefined) {
+      const disk = await fsp.readFile(filePath, 'utf8')
+      if (disk.replace(/\r\n/g, '\n') !== expectedContent.replace(/\r\n/g, '\n')) {
+        throw new Error(translate(getLocale(), 'notice.saveConflict'))
+      }
+    }
     // 先记录写入时刻，覆盖 fs.watch 事件早于写入完成到达的竞争窗口
     selfWrites.set(filePath, Date.now())
-    await fsp.writeFile(filePath, content, 'utf8')
+    // Replace only a completely written, flushed sibling file. An interrupted
+    // write must not truncate the user's current document.
+    const target = await fsp.realpath(filePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+      return resolve(filePath)
+    })
+    const temporary = join(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`)
+    const mode = await fsp.stat(target).then((stat) => stat.mode, () => undefined)
+    const handle = await fsp.open(temporary, 'wx', mode)
+    try {
+      try { await handle.writeFile(content, 'utf8'); await handle.sync() } finally { await handle.close() }
+      await fsp.rename(temporary, target)
+    } finally {
+      await fsp.unlink(temporary).catch(() => {})
+    }
+    if (watchers.has(filePath)) {
+      watchers.get(filePath)!.close()
+      watchers.delete(filePath)
+      watchDocument(filePath)
+    }
     const stat = await fsp.stat(filePath)
     return { filePath, mtimeMs: stat.mtimeMs }
   })
@@ -167,18 +193,8 @@ export function registerIpc(): void {
       await fsp.mkdir(assetsDir, { recursive: true })
       const ext = extname(fileName) || '.png'
       const stem = basename(fileName, ext) || 'image'
-      let target = join(assetsDir, `${stem}${ext}`)
-      let i = 1
-      while (true) {
-        try {
-          await fsp.access(target)
-          target = join(assetsDir, `${stem}-${i}${ext}`)
-          i += 1
-        } catch {
-          break
-        }
-      }
-      await fsp.writeFile(target, buffer)
+      const target = await writeUniqueImage(assetsDir, stem, ext, (target) =>
+        fsp.writeFile(target, buffer, { flag: 'wx' }))
       if (!docPath) return target
       return `assets/${basename(target)}`.split('\\').join('/')
     }
@@ -188,35 +204,19 @@ export function registerIpc(): void {
     if (!docPath || !IMAGE_EXT.has(extname(src).toLowerCase())) return src
     const assetsDir = join(dirname(docPath), 'assets')
     await fsp.mkdir(assetsDir, { recursive: true })
-    const target = join(assetsDir, basename(src))
-    if (resolve(src) !== resolve(target)) await fsp.copyFile(src, target)
+    if (resolve(dirname(src)) === resolve(assetsDir)) return `assets/${basename(src)}`
+    const ext = extname(src)
+    const target = await writeUniqueImage(assetsDir, basename(src, ext), ext, (target) =>
+      fsp.copyFile(src, target, constants.COPYFILE_EXCL))
     return `assets/${basename(target)}`.split('\\').join('/')
   })
 
-  ipcMain.handle('fs:watch', async (_e, filePath: string) => {
-    if (watchers.has(filePath)) return true
-    try {
-      const w = watch(filePath, { persistent: false }, async () => {
-        // 自写动作触发的变更不广播，避免误报成外部修改
-        if (isSelfWrite(filePath)) return
-        let mtimeMs = 0
-        try {
-          mtimeMs = (await fsp.stat(filePath)).mtimeMs
-        } catch {
-          return
-        }
-        getMainWindow()?.webContents.send('fs:fileChanged', filePath, mtimeMs)
-      })
-      watchers.set(filePath, w)
-      return true
-    } catch {
-      return false
-    }
-  })
+  ipcMain.handle('fs:watch', async (_e, filePath: string) => watchDocument(filePath))
 
   ipcMain.handle('fs:unwatch', async (_e, filePath: string) => {
     watchers.get(filePath)?.close()
     watchers.delete(filePath)
+    selfWrites.delete(filePath)
     return true
   })
 
@@ -403,6 +403,37 @@ export function registerIpc(): void {
   ipcMain.handle('app:checkForUpdates', () => checkForUpdatesManually())
 
   ipcMain.handle('app:quit', () => app.quit())
+}
+
+async function writeUniqueImage(dir: string, stem: string, ext: string, write: (path: string) => Promise<void>): Promise<string> {
+  for (let i = 0; ; i++) {
+    const target = join(dir, `${stem}${i ? `-${i}` : ''}${ext}`)
+    try {
+      await write(target)
+      return target
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+  }
+}
+
+function watchDocument(filePath: string): boolean {
+  if (watchers.has(filePath)) return true
+  try {
+    const watcher = watch(filePath, { persistent: false }, async () => {
+      if (isSelfWrite(filePath)) return
+      try {
+        const { mtimeMs } = await fsp.stat(filePath)
+        getMainWindow()?.webContents.send('fs:fileChanged', filePath, mtimeMs)
+      } catch { /* File may have been deleted or moved. */ }
+    })
+    watcher.on('error', () => {
+      watcher.close()
+      if (watchers.get(filePath) === watcher) watchers.delete(filePath)
+    })
+    watchers.set(filePath, watcher)
+    return true
+  } catch { return false }
 }
 
 export function closeAllWatchers(): void {

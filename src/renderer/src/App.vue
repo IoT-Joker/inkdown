@@ -14,7 +14,7 @@ import CommandPalette from './components/CommandPalette.vue'
 import { executeCommand, registerGlobalCommands } from './composables/useCommands'
 import { useFile } from './composables/useFile'
 import { useI18n, initLocale } from './composables/useI18n'
-import { loadSettings, loadRecent, loadSession, persistSession, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs, tabLabel } from './store'
+import { loadSettings, loadRecent, loadSession, persistSession, loadRecovery, persistRecovery, clearRecovery, settings, state, getActiveTab, isDirty, createTab, hasUnsavedTabs, tabLabel } from './store'
 
 const { openPath, refreshWorkspace, saveTab, saveAll, openFolder } = useFile()
 const editorRef = ref<InstanceType<typeof EditorHost> | null>(null)
@@ -22,18 +22,29 @@ const { t } = useI18n()
 
 /** 自动保存：仅对已有磁盘路径的标签生效，避免频繁弹保存对话框。 */
 let autoSaveTimer: number | undefined
+let recoveryTimer: number | undefined
 watch(
-  () => state.tabs.map((t) => `${t.id}:${t.content.length}:${t.content === t.savedContent}`).join('|'),
+  () => [settings.autoSave, settings.autoSaveDelay, ...state.tabs.flatMap((t) => [t.id, t.content, t.savedContent])],
   () => {
-    if (!settings.autoSave) return
     if (autoSaveTimer) window.clearTimeout(autoSaveTimer)
+    if (!settings.autoSave) return
     autoSaveTimer = window.setTimeout(async () => {
+      if (!settings.autoSave) return
       for (const tab of state.tabs) {
         if (isDirty(tab) && tab.filePath) await saveTab(tab)
       }
     }, settings.autoSaveDelay)
   }
 )
+
+watch(() => state.tabs.map((tab) => tab.filePath), (paths, previous = []) => {
+  for (const path of previous) if (path && !paths.includes(path)) void window.inkdown.unwatch(path)
+})
+
+onBeforeUnmount(() => {
+  if (autoSaveTimer) window.clearTimeout(autoSaveTimer)
+  if (recoveryTimer) window.clearTimeout(recoveryTimer)
+})
 
 const windowTitle = computed(() => {
   const tab = getActiveTab()
@@ -64,6 +75,11 @@ function onMenuCommand(id: string): void {
 }
 
 function onBeforeUnload(e: BeforeUnloadEvent): void {
+  if (state.quitConfirmed) {
+    if (!window.inkdown.skipSessionPersist) clearRecovery()
+    return
+  }
+  if (!window.inkdown.skipSessionPersist) persistRecovery()
   if (hasUnsavedTabs()) {
     e.preventDefault()
     e.returnValue = ''
@@ -97,6 +113,7 @@ onMounted(async () => {
     /** 当前视图模式（供测试判断三态切换结果）。 */
     viewMode: () => state.viewMode,
     persistSession,
+    persistRecovery,
     loadSession,
     clearNotice: () => {
       state.notice = null
@@ -151,6 +168,33 @@ onMounted(async () => {
     if (!state.tabs.length) createTab({ content: '' })
   }
 
+  if (!skipRestore) {
+    let recovered = 0
+    for (const draft of loadRecovery()) {
+      let tab = state.tabs.find((tab) => tab.filePath && tab.filePath === draft.filePath)
+      if (!tab && draft.filePath) {
+        try { await openPath(draft.filePath); tab = getActiveTab() } catch { /* Recover missing files as untitled. */ }
+      }
+      if (tab?.content === draft.content) continue
+      if (tab && tab.content.replace(/\r\n/g, '\n') === draft.savedContent.replace(/\r\n/g, '\n')) {
+        tab.content = draft.content
+        state.activeId = tab.id
+        editorRef.value?.reloadFromTab()
+      } else {
+        // Never overwrite a file changed on disk since the crash.
+        createTab({ title: t('recovery.title', { name: draft.title }), content: draft.content })
+      }
+      recovered++
+    }
+    if (recovered) state.notice = { text: t('notice.recoveredDrafts', { count: recovered }) }
+  }
+  if (!window.inkdown.skipSessionPersist) {
+    watch(() => state.tabs.flatMap((tab) => [tab.filePath, tab.content, tab.savedContent]), () => {
+      if (recoveryTimer) window.clearTimeout(recoveryTimer)
+      recoveryTimer = window.setTimeout(persistRecovery, 750)
+    }, { immediate: true })
+  }
+
   // 应用已在运行时用户又双击了文件：主进程转发过来，直接打开
   const offOpenFile = window.inkdown.onOpenFile((filePath) => {
     void openPath(filePath)
@@ -180,9 +224,13 @@ async function onNoticeAction(): Promise<void> {
   if (notice.action === 'reload' && notice.filePath) {
     const tab = state.tabs.find((t) => t.filePath === notice.filePath)
     if (tab) {
+      if (isDirty(tab)) {
+        const answer = await window.inkdown.messageBox(t('notice.reloadDirty'), tab.title, [t('notice.reload'), t('dialog.cancel')])
+        if (answer !== 0) return
+      }
       const { content, mtimeMs } = await window.inkdown.readFile(notice.filePath)
-      tab.content = content
-      tab.savedContent = content
+      tab.content = content.replace(/\r\n/g, '\n')
+      tab.savedContent = tab.content
       tab.mtimeMs = mtimeMs
       if (tab.id === state.activeId) editorRef.value?.reloadFromTab()
     }

@@ -81,7 +81,8 @@ export const state = reactive({
   statusMessage: '',
   /** 非阻塞提示条：用于外部改动等需要告知但不打断写作的情况 */
   notice: null as { text: string; action?: string; filePath?: string } | null,
-  sourceContent: ''
+  sourceContent: '',
+  quitConfirmed: false
 })
 
 export function getActiveTab(): Tab | undefined {
@@ -164,6 +165,9 @@ export const settings = reactive({
   autoSave: true,
   /** 自动保存防抖延迟（毫秒） */
   autoSaveDelay: 1500,
+  orbMenuOpacity: 0.96,
+  orbFontSize: 12,
+  orbAnimations: true,
   /** 存盘时使用的行尾符 */
   lineEnding: 'lf' as 'lf' | 'crlf',
   /** 分栏：左侧预览跟随右侧源码光标滚动，把对应位置移到预览窗口中心 */
@@ -304,4 +308,32 @@ export function clearSession(): void {
   } catch {
     /* ignore */
   }
+}
+
+const RECOVERY_KEY = 'inkdown-recovery-v1'
+export type RecoveryDraft = Pick<Tab, 'filePath' | 'title' | 'content' | 'savedContent'>
+
+export function persistRecovery(): void {
+  try {
+    const drafts = state.tabs.filter(isDirty).map(({ filePath, title, content, savedContent }) => ({ filePath, title, content, savedContent }))
+    if (drafts.length) localStorage.setItem(RECOVERY_KEY, JSON.stringify(drafts))
+    else localStorage.removeItem(RECOVERY_KEY)
+  } catch {
+    // A full/unavailable browser store must not interrupt editing; the last
+    // successfully written recovery snapshot remains available.
+  }
+}
+
+export function loadRecovery(): RecoveryDraft[] {
+  try {
+    const drafts: unknown = JSON.parse(localStorage.getItem(RECOVERY_KEY) ?? '[]')
+    if (!Array.isArray(drafts)) return []
+    return drafts.filter((draft): draft is RecoveryDraft => !!draft &&
+      (draft.filePath === null || typeof draft.filePath === 'string') &&
+      typeof draft.title === 'string' && typeof draft.content === 'string' && typeof draft.savedContent === 'string')
+  } catch { return [] }
+}
+
+export function clearRecovery(): void {
+  try { localStorage.removeItem(RECOVERY_KEY) } catch { /* Storage unavailable. */ }
 }

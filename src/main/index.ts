@@ -24,6 +24,7 @@ import { initUpdater, humanizeUpdateErrorForTest } from './updater'
 import { markdownToDocx } from './exportDocx'
 import { runStabilityCheck } from './stabilityCheck'
 import { installDiagnostics } from './diagnostics'
+import { runRecoveryTest } from './recoveryTest'
 
 /**
  * Inkdown 主进程入口。
@@ -46,6 +47,7 @@ import { installDiagnostics } from './diagnostics'
 const isTestRun = !!(
   process.env['INKDOWN_SELF_CHECK'] ||
   process.env['INKDOWN_STABILITY_CHECK'] ||
+  process.env['INKDOWN_RECOVERY_TEST'] ||
   process.env['INKDOWN_FILE_TEST'] ||
   process.env['INKDOWN_SESSION_TEST'] ||
   process.env['INKDOWN_SCREENSHOT'] ||
@@ -696,6 +698,12 @@ app.whenReady().then(async () => {
   registerIpc()
   buildAppMenu()
   const win = createWindow()
+
+  if (process.env['INKDOWN_RECOVERY_TEST']) {
+    const ok = await runRecoveryTest(win, process.env['INKDOWN_RECOVERY_TEST'], process.env['INKDOWN_RECOVERY_PHASE'] ?? 'restore')
+    app.exit(ok ? 0 : 1)
+    return
+  }
 
   if (process.env['INKDOWN_STABILITY_CHECK']) {
     const ok = await runStabilityCheck(win)

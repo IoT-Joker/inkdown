@@ -28,6 +28,8 @@ let currentDocPath: string | null = null
 
 export function setDocPathForImages(p: string | null): void {
   currentDocPath = p
+  const path = p?.replace(/\\/g, '/')
+  window.DIRNAME = path ? path.slice(0, path.lastIndexOf('/')) : undefined
 }
 
 /**
@@ -46,8 +48,7 @@ export function registerMuyaPlugins(): void {
   Muya.use(ImageResizeBar)
   Muya.use(ImageEditTool, {
     imagePathPicker: async () => {
-      const files = await window.inkdown.openFileDialog()
-      return files[0]?.filePath ?? ''
+      return (await window.inkdown.openImageDialog()) ?? ''
     },
     imageAction: async (state: { src: string; alt: string; title: string }) => {
       const docPath = currentDocPath

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '../composables/useI18n'
+import { settings } from '../store'
 
 /**
  * Markdown 调色盘。
@@ -259,7 +260,9 @@ function savePosition(): void {
 
 const wrapStyle = computed(() => ({
   left: `${pos.value.x}px`,
-  top: `${pos.value.y}px`
+  top: `${pos.value.y}px`,
+  '--orb-menu-opacity': Math.min(1, Math.max(0.75, settings.orbMenuOpacity)),
+  '--orb-label-size': `${Math.min(14, Math.max(11, settings.orbFontSize))}px`
 }))
 
 let closeTimer: number | null = null
@@ -563,6 +566,7 @@ onBeforeUnmount(() => {
   <div
     ref="wrapRef"
     class="orb-wrap"
+    :class="{ 'no-motion': !settings.orbAnimations }"
     :style="wrapStyle"
     :data-dragging="dragging"
     @mouseenter="onWrapEnter"
@@ -920,7 +924,7 @@ onBeforeUnmount(() => {
 .ring-label-text {
   margin-top: 3px;
   font-family: var(--ty-font-ui);
-  font-size: 12px;
+  font-size: var(--orb-label-size, 12px);
   font-weight: 600;
   line-height: 1.2;
   text-rendering: geometricPrecision;
@@ -930,7 +934,7 @@ onBeforeUnmount(() => {
 }
 
 .ring-labels-action .ring-label-text {
-  font-size: 11.5px;
+  font-size: calc(var(--orb-label-size, 12px) - 0.5px);
   font-weight: 600;
 }
 
@@ -969,7 +973,7 @@ onBeforeUnmount(() => {
 .ring-sector {
   fill: color-mix(in srgb, var(--ty-bg) 96%, var(--ty-accent));
   stroke: color-mix(in srgb, var(--ty-border) 84%, var(--ty-accent));
-  fill-opacity: 0.96;
+  fill-opacity: var(--orb-menu-opacity, 0.96);
   stroke-opacity: 0.72;
   stroke-width: 0.65;
   pointer-events: all;
@@ -1006,7 +1010,7 @@ onBeforeUnmount(() => {
 .action-sector {
   fill: color-mix(in srgb, var(--ty-bg) 97%, var(--ty-accent));
   stroke: color-mix(in srgb, var(--ty-border) 76%, var(--ty-accent));
-  fill-opacity: 0.96;
+  fill-opacity: var(--orb-menu-opacity, 0.96);
   stroke-opacity: 0.68;
 }
 
@@ -1061,6 +1065,11 @@ onBeforeUnmount(() => {
   to {
     transform: rotate(360deg);
   }
+}
+
+.orb-wrap.no-motion :deep(*) {
+  animation: none !important;
+  transition-duration: 0.01ms !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

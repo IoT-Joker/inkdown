@@ -4,6 +4,7 @@
  * 用 INKDOWN_FILE_TEST=1 触发，结果以退出码表示。
  */
 import type { BrowserWindow } from 'electron'
+import { dialog } from 'electron'
 import { promises as fsp } from 'node:fs'
 import { join } from 'node:path'
 
@@ -72,18 +73,22 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
   }
   console.log('[filetest] 编辑内容 OK')
 
-  // 3. 保存到新路径（模拟另存为）
-  const saveResult = await win.webContents.executeJavaScript(`
+  // 3. Exercise Save As rather than mutating the tab's disk identity.
+  const originalSaveDialog = dialog.showSaveDialog
+  dialog.showSaveDialog = async () => ({ canceled: false, filePath: saved })
+  let saveResult: { filePath: string; saved: string; ok: boolean }
+  try {
+    saveResult = await win.webContents.executeJavaScript(`
     (async () => {
       const app = window.__inkdownApp
       const tab = app.activeTab()
-      tab.filePath = ${JSON.stringify(saved)}
       tab.content = window.__inkdownMuya.getMarkdown()
-      await app.saveTab(tab)
-      return { filePath: app.activeTab().filePath, saved: app.activeTab().savedContent }
+      const ok = await app.saveTab(tab, true)
+      return { filePath: app.activeTab().filePath, saved: app.activeTab().savedContent, ok }
     })()
   `)
-  if (saveResult.filePath !== saved) {
+  } finally { dialog.showSaveDialog = originalSaveDialog }
+  if (!saveResult.ok || saveResult.filePath !== saved) {
     console.error('[filetest] FAIL: 保存失败:', JSON.stringify(saveResult))
     return false
   }
