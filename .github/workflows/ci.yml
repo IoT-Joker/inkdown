@@ -63,6 +63,15 @@ jobs:
           Write-Host "--- lockfile ---"
           Write-Host (Test-Path pnpm-lock.yaml)
 
+      # 关键：pnpm-lock.yaml 里 file-icons 指向 SSH 形式的 git 地址
+      # （git@github.com:file-icons/atom.git，来自 @marktext/file-icons 的依赖）。
+      # CI 上没有 SSH 密钥，直接拉取会失败；这里让 git 把 SSH 改写成 HTTPS，
+      # 公共仓库走匿名 HTTPS 即可克隆。本地因配过 SSH key 不会暴露这个问题。
+      - name: 允许匿名克隆 git 依赖
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
       # 先用不带 --frozen-lockfile 的方式安装：
       # 若 lockfile 与 package.json 不一致，--frozen-lockfile 会直接失败，
       # 而它的报错在 CI 上容易被吞掉；普通安装能看到完整的解析过程。
@@ -112,8 +121,15 @@ jobs:
           version: 11.28.5
           run_install: false
 
+      # 同 check job：锁定文件里的 git 依赖是 SSH 形式，CI 无密钥，
+      # 改写成 HTTPS 才能匿名克隆。
+      - name: 允许匿名克隆 git 依赖
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
       - name: 安装依赖
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --reporter=default
 
       # 构建失败往往说明打包配置或引用路径有问题，及早发现。
       - name: 构建应用
