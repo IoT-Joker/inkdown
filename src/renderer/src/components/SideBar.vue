@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { state } from '../store'
 import { executeCommand } from '../composables/useCommands'
 import { useI18n } from '../composables/useI18n'
@@ -41,6 +41,97 @@ function onOutlineClick(index: number): void {
 /** 大纲缩进：按标题层级左移，形成树状观感。 */
 function outlineIndent(level: number): string {
   return `${8 + (level - 1) * 14}px`
+}
+
+/* ------------------------------ 大纲折叠 ------------------------------ */
+
+/**
+ * 折叠状态按「标签 + 标题 slug」记录。
+ *
+ * 按标签分组的原因：不同文档可能有同名标题，
+ * 若只按 slug 存，切文档后会出现「上一份的折叠带到这里」。
+ */
+const collapsed = ref<Set<string>>(new Set())
+
+/** 折叠键：同一文档内唯一标识一个标题。 */
+function outlineKey(item: { slug: string; level: number }, index: number): string {
+  return `${state.activeId}::${index}::${item.slug}`
+}
+
+/** 换文档时清空折叠，避免串到别的文档。 */
+watch(
+  () => state.activeId,
+  () => collapsed.value.clear()
+)
+
+/**
+ * 每个大纲项是否有子标题。
+ *
+ * 判定方式：向后扫，直到遇到层级 <= 当前层级的标题；
+ * 中途若出现层级更深的，说明有子节点。
+ */
+const outlineHasChildren = computed<boolean[]>(() => {
+  const list = state.outline
+  const result: boolean[] = new Array(list.length).fill(false)
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      if (list[j].level <= list[i].level) break
+      result[i] = true
+      break
+    }
+  }
+  return result
+})
+
+/**
+ * 实际渲染的大纲项下标。
+ *
+ * 被折叠节点之后的、层级更深的项全部隐藏 —— 这正是「折叠」的含义。
+ */
+const visibleOutline = computed<number[]>(() => {
+  const list = state.outline
+  const visible: number[] = []
+  // 记录当前生效的折叠层级：一旦某个祖先被折叠，所有更深的都跳过
+  let hideDepth: number | null = null
+  for (let i = 0; i < list.length; i++) {
+    const level = list[i].level
+    // 遇到层级不深于折叠点的标题，说明已离开该折叠区间
+    if (hideDepth !== null && level <= hideDepth) hideDepth = null
+    if (hideDepth !== null) continue
+    visible.push(i)
+    if (outlineHasChildren.value[i] && collapsed.value.has(outlineKey(list[i], i))) {
+      hideDepth = level
+    }
+  }
+  return visible
+})
+
+/** 切换某个标题的折叠状态。 */
+function toggleOutline(index: number): void {
+  const item = state.outline[index]
+  if (!item) return
+  const key = outlineKey(item, index)
+  // Set 的变更不会被 Vue 追踪，必须换一个新 Set
+  const next = new Set(collapsed.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsed.value = next
+}
+
+/** 一键收起所有有子节点的标题。 */
+function collapseAll(): void {
+  const next = new Set<string>()
+  for (let i = 0; i < state.outline.length; i++) {
+    if (outlineHasChildren.value[i]) {
+      next.add(outlineKey(state.outline[i], i))
+    }
+  }
+  collapsed.value = next
+}
+
+/** 一键展开。 */
+function expandAll(): void {
+  collapsed.value = new Set()
 }
 </script>
 
@@ -95,19 +186,41 @@ function outlineIndent(level: number): string {
     </div>
 
     <div v-show="state.sidebarTab === 'outline'" class="sidebar-body">
+      <!-- 大纲工具条：一键折叠/展开，长文档时按层级收起更易浏览 -->
+      <div v-if="state.outline.length" class="outline-tools">
+        <button class="mini-btn" :title="t('sidebar.collapseAll')" @click="collapseAll">
+          {{ t('sidebar.collapseAllShort') }}
+        </button>
+        <button class="mini-btn" :title="t('sidebar.expandAll')" @click="expandAll">
+          {{ t('sidebar.expandAllShort') }}
+        </button>
+      </div>
       <div class="tree">
         <p v-if="!state.outline.length" class="sidebar-empty">{{ t('sidebar.noHeadings') }}</p>
         <div
-          v-for="(item, index) in state.outline"
-          :key="item.slug + index"
+          v-for="index in visibleOutline"
+          :key="state.outline[index].slug + index"
           class="outline-row"
-          :class="[`lvl-${item.level}`, { active: state.viewMode === 'wysiwyg' && state.readingHeadingIndex === index }]"
+          :class="[
+            `lvl-${state.outline[index].level}`,
+            { active: state.viewMode === 'wysiwyg' && state.readingHeadingIndex === index }
+          ]"
           :aria-current="state.viewMode === 'wysiwyg' && state.readingHeadingIndex === index ? 'location' : undefined"
-          :style="{ paddingLeft: outlineIndent(item.level) }"
-          :title="item.text"
+          :style="{ paddingLeft: outlineIndent(state.outline[index].level) }"
+          :title="state.outline[index].text"
           @click="onOutlineClick(index)"
         >
-          {{ item.text }}
+          <!-- 有子标题才画折叠箭头；叶子节点留出等宽占位以保持对齐 -->
+          <button
+            v-if="outlineHasChildren[index]"
+            class="outline-toggle"
+            :title="collapsed.has(outlineKey(state.outline[index], index)) ? t('sidebar.expand') : t('sidebar.collapse')"
+            @click.stop="toggleOutline(index)"
+          >
+            <span :class="{ collapsed: collapsed.has(outlineKey(state.outline[index], index)) }">▾</span>
+          </button>
+          <span v-else class="outline-toggle placeholder" />
+          <span class="outline-text">{{ state.outline[index].text }}</span>
         </div>
       </div>
     </div>
@@ -211,6 +324,9 @@ function outlineIndent(level: number): string {
   color: var(--ty-muted);
 }
 .outline-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   height: 24px;
   line-height: 24px;
   padding-right: 8px;
@@ -218,8 +334,49 @@ function outlineIndent(level: number): string {
   color: var(--ty-text);
   cursor: pointer;
   overflow: hidden;
+}
+/* 折叠箭头：有子标题时显示，叶子节点用占位保持对齐 */
+.outline-toggle {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ty-muted);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+}
+.outline-toggle:hover {
+  background: var(--ty-hover);
+  color: var(--ty-text);
+}
+.outline-toggle.placeholder {
+  visibility: hidden;
+  cursor: default;
+}
+.outline-toggle > span {
+  display: inline-block;
+  transition: transform 0.12s ease;
+}
+/* 折叠时箭头转向右 */
+.outline-toggle > span.collapsed {
+  transform: rotate(-90deg);
+}
+.outline-text {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 大纲工具条 */
+.outline-tools {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--ty-border);
 }
 .outline-row.active { background: var(--ty-active); color: var(--ty-accent); font-weight: 600; }
 .outline-row:hover {

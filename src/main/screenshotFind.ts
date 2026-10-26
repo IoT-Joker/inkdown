@@ -119,6 +119,32 @@ export async function captureFindScreenshot(win: BrowserWindow, outDir: string):
   await fsp.writeFile(join(outDir, '07-find-bar.png'), image.toPNG())
   console.log('[shot] 已写出 07-find-bar.png')
 
+  // 再截一张：搜索结果列表展开 + 大纲折叠效果
+  const listInfo = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const toggle = document.querySelector('.find-results-toggle')
+      if (toggle) { toggle.click(); await wait(400) }
+      const rows = [...document.querySelectorAll('.find-result-row')]
+      const outlineTab = [...document.querySelectorAll('.sidebar-tab')].find(b => /大纲|Outline/.test(b.textContent))
+      if (outlineTab) { outlineTab.click(); await wait(300) }
+      const before = document.querySelectorAll('.outline-row').length
+      const toggles = [...document.querySelectorAll('.outline-toggle:not(.placeholder)')]
+      if (toggles[0]) { toggles[0].click(); await wait(350) }
+      const after = document.querySelectorAll('.outline-row').length
+      return {
+        resultRows: rows.length,
+        lineLabels: rows.map(r => r.querySelector('.find-result-line')?.textContent?.trim()),
+        outlineBefore: before,
+        outlineAfter: after
+      }
+    })()
+  `)
+  console.log('[shot] 结果列表与大纲折叠:', JSON.stringify(listInfo))
+  const shot2 = await win.webContents.capturePage()
+  await fsp.writeFile(join(outDir, '17-find-results-outline.png'), shot2.toPNG())
+  console.log('[shot] 已写出 17-find-results-outline.png')
+
   // 顺带截「关于」与「快捷键」两个对话框
   const dialogs = [
     { cmd: 'help:about', selector: '.about', name: '08-about.png' },

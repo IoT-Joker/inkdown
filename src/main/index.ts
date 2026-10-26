@@ -854,6 +854,173 @@ async function probeUpdateFlow(): Promise<boolean> {
   }
 }
 
+/**
+ * 验证大纲折叠与搜索结果列表真的可用。
+ *
+ * 只断言元素存在没意义，这里检查实际效果：
+ *   - 折叠后子标题的数量真的减少
+ *   - 搜索面板列出的行号与点击后跳转的命中一致
+ */
+async function probeOutlineAndSearch(win: BrowserWindow): Promise<boolean> {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  for (let i = 0; i < 60; i++) {
+    const ok = await win.webContents
+      .executeJavaScript(`!!window.__inkdownMuya && !!window.__inkdownApp`)
+      .catch(() => false)
+    if (ok) break
+    await wait(250)
+  }
+
+  const result = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+
+      // 造一份多级标题文档，并加入可搜索的重复词
+      const md = [
+        '# 第一章', '', '上级内容 目标词。', '',
+        '## 1.1 小节', '', '目标词 在这里。', '',
+        '### 1.1.1 细目', '', '目标词 也在。', '',
+        '## 1.2 小节', '', '普通段落。', '',
+        '# 第二章', '', '目标词 最后一处。', ''
+      ].join('\\n')
+      // 等编辑器会话就绪：__inkdownLoad 依赖 currentSession，
+      // 仅 muya 存在不代表会话已建立（会返回 false）。
+      let loadOk = false
+      for (let i = 0; i < 60; i++) {
+        loadOk = window.__inkdownLoad(md)
+        if (loadOk) break
+        await wait(150)
+      }
+      await wait(1200)
+
+      // 诊断：文档是否真的载入、大纲是否有数据
+      const diag0 = {
+        loadOk,
+        markdown: (window.__inkdownMuya?.getMarkdown() || '').slice(0, 40),
+        outlineLen: app.outline ? app.outline().length : -1,
+        tabs: app.tabs().length,
+        viewMode: app.viewMode(),
+        hasMuya: !!window.__inkdownMuya,
+        hasLoad: typeof window.__inkdownLoad
+      }
+
+      // 切到大纲页签
+      const outlineTab = [...document.querySelectorAll('.sidebar-tab')].find(b => /大纲|Outline/.test(b.textContent))
+      outlineTab && outlineTab.click()
+      await wait(400)
+
+      const rowsBefore = document.querySelectorAll('.outline-row').length
+      const toggles = [...document.querySelectorAll('.outline-toggle:not(.placeholder)')]
+      const toggleCount = toggles.length
+
+      // 点第一个折叠按钮，子标题应被隐藏
+      if (toggles[0]) { toggles[0].click(); await wait(400) }
+      const rowsFolded = document.querySelectorAll('.outline-row').length
+
+      // 再点一次展开，应恢复
+      const toggles2 = [...document.querySelectorAll('.outline-toggle:not(.placeholder)')]
+      if (toggles2[0]) { toggles2[0].click(); await wait(400) }
+      const rowsExpanded = document.querySelectorAll('.outline-row').length
+
+      // ---- 搜索结果列表 ----
+      await c.execute('edit:find')
+      await wait(400)
+      const input = document.querySelector('.find-input')
+      if (!input) return { error: '查找框未出现' }
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, '目标词')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await wait(900)
+
+      const count = document.querySelector('.find-count')?.innerText || ''
+      // 展开结果列表
+      const toggle = document.querySelector('.find-results-toggle')
+      let rows = []
+      let lineLabels = []
+      let hasMark = 0
+      if (toggle) {
+        toggle.click()
+        await wait(400)
+        rows = [...document.querySelectorAll('.find-result-row')]
+        lineLabels = rows.map(r => r.querySelector('.find-result-line')?.textContent?.trim())
+        // 高亮标记要在收起列表之前统计
+        hasMark = document.querySelectorAll('.find-result-text mark').length
+      }
+
+      // 点击第 3 条，检查跳转后当前序号变成 3
+      let jumpedTo = ''
+      if (rows.length >= 3) {
+        rows[2].click()
+        await wait(700)
+        jumpedTo = document.querySelector('.find-count')?.innerText || ''
+      }
+
+      return {
+        diag0,
+        rowsBefore, toggleCount, rowsFolded, rowsExpanded,
+        count, resultRows: rows.length, lineLabels, jumpedTo,
+        hasMark,
+        sidebarVisible: !!document.querySelector('.sidebar'),
+        outlineTabFound: !!outlineTab
+      }
+    })()
+  `)
+
+  if (result.error) {
+    console.error('[feat] FAIL:', result.error)
+    return false
+  }
+
+  console.log('[feat] 大纲：折叠前', result.rowsBefore, '行 → 折叠后', result.rowsFolded, '行 → 展开后', result.rowsExpanded, '行')
+  console.log('[feat] 可折叠节点数:', result.toggleCount)
+  console.log('[feat] 诊断:', JSON.stringify(result.diag0), '| 侧栏:', result.sidebarVisible, '| 大纲页签:', result.outlineTabFound)
+  console.log('[feat] 搜索：计数', result.count, '| 列表行数', result.resultRows, '| 行号标签', JSON.stringify(result.lineLabels))
+  console.log('[feat] 点击第 3 条后计数:', result.jumpedTo, '| 高亮标记数:', result.hasMark)
+
+  let ok = true
+
+  // 折叠必须真的减少可见行
+  if (!(result.rowsFolded < result.rowsBefore)) {
+    console.error('[feat] FAIL: 折叠后可见行数没有减少')
+    ok = false
+  }
+  // 展开必须恢复
+  if (result.rowsExpanded !== result.rowsBefore) {
+    console.error('[feat] FAIL: 展开后行数未恢复')
+    ok = false
+  }
+  // 必须有可折叠节点（说明判定生效）
+  if (result.toggleCount < 1) {
+    console.error('[feat] FAIL: 没有可折叠节点')
+    ok = false
+  }
+  // 结果列表行数应与命中数一致
+  if (result.resultRows < 3) {
+    console.error('[feat] FAIL: 结果列表行数不足:', result.resultRows)
+    ok = false
+  }
+  // 行号标签应形如 "2:7"
+  if (!result.lineLabels.every((l: string) => /^\d+:\d+$/.test(l ?? ''))) {
+    console.error('[feat] FAIL: 行号标签格式不对:', JSON.stringify(result.lineLabels))
+    ok = false
+  }
+  // 点击第 3 条后序号应变成 3 / N
+  if (!/^3\s*\//.test(result.jumpedTo)) {
+    console.error('[feat] FAIL: 点击结果项未跳到第 3 处:', result.jumpedTo)
+    ok = false
+  }
+  if (!(result.hasMark > 0)) {
+    console.error('[feat] FAIL: 结果列表里命中未高亮')
+    ok = false
+  }
+
+  if (ok) console.log('[feat] PASS: 大纲折叠与搜索结果列表均按预期工作')
+  return ok
+}
+
 app.whenReady().then(async () => {
   // 语言偏好需在创建菜单之前载入（菜单文案依赖它）
   await loadLocale()
@@ -954,6 +1121,13 @@ app.whenReady().then(async () => {
   // INKDOWN_UPDATE_FLOW_TEST=1 时验证「发现新版本并下载」完整链路，然后退出
   if (process.env['INKDOWN_UPDATE_FLOW_TEST']) {
     const ok = await probeUpdateFlow()
+    app.exit(ok ? 0 : 1)
+    return
+  }
+
+  // INKDOWN_FEATURES_TEST=1 时验证大纲折叠与搜索结果列表，然后退出
+  if (process.env['INKDOWN_FEATURES_TEST']) {
+    const ok = await probeOutlineAndSearch(win)
     app.exit(ok ? 0 : 1)
     return
   }

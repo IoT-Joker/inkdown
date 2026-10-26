@@ -18,7 +18,10 @@ const isReplace = computed(() => state.findMode === 'replace')
  * 查找请求转发给编辑器：EditorHost 监听该事件并调用 muya.search。
  * 关键词同时写进 store，切标签后由 EditorHost 按它重搜。
  */
-function emitFind(action: 'search' | 'next' | 'previous' | 'replace' | 'replaceAll'): void {
+function emitFind(
+  action: 'search' | 'next' | 'previous' | 'replace' | 'replaceAll' | 'goto',
+  targetIndex?: number
+): void {
   state.findKeyword = keyword.value
   state.findOptions = {
     isRegexp: isRegexp.value,
@@ -29,6 +32,7 @@ function emitFind(action: 'search' | 'next' | 'previous' | 'replace' | 'replaceA
     new CustomEvent('inkdown:find', {
       detail: {
         action,
+        targetIndex,
         keyword: keyword.value,
         replacement: replacement.value,
         isRegexp: isRegexp.value,
@@ -41,6 +45,19 @@ function emitFind(action: 'search' | 'next' | 'previous' | 'replace' | 'replaceA
 
 /** 匹配数与当前序号（由 EditorHost 回传）。 */
 const matchIndex = ref(0)
+
+/** 结果列表项（行号 + 上下文），由 EditorHost 整理后回传。 */
+interface FindResultItem {
+  index: number
+  match: string
+  line: number
+  column: number
+  before: string
+  after: string
+}
+const results = ref<FindResultItem[]>([])
+/** 结果列表是否展开。 */
+const resultsOpen = ref(false)
 
 let timer: number | undefined
 watch([keyword, isRegexp, isCaseSensitive, isWholeWord], () => {
@@ -92,12 +109,21 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-// 由 EditorHost 回传匹配数量与当前序号
+// 由 EditorHost 回传匹配数量、当前序号与结果列表
 window.addEventListener('inkdown:find-result', ((e: Event) => {
   const d = (e as CustomEvent).detail ?? {}
   matchCount.value = d.count ?? 0
   matchIndex.value = d.index ?? 0
+  results.value = Array.isArray(d.items) ? d.items : []
+  // 关键词变了就重新收起列表，避免显示上一次的陈旧结果
+  if (!results.value.length) resultsOpen.value = false
 }) as EventListener)
+
+/** 点击结果项：跳到该命中。 */
+function gotoResult(item: FindResultItem): void {
+  resultsOpen.value = false
+  emitFind('goto', item.index)
+}
 </script>
 
 <template>
@@ -156,8 +182,38 @@ window.addEventListener('inkdown:find-result', ((e: Event) => {
       <button class="ty-btn" :title="`${t('find.next')} (Enter)`" @click="emitFind('next')">↓</button>
       <button v-if="isReplace" class="ty-btn" @click="emitFind('replace')">{{ t('find.replace') }}</button>
       <button v-if="isReplace" class="ty-btn" @click="emitFind('replaceAll')">{{ t('find.replaceAll') }}</button>
+      <!-- 结果列表开关：有命中时才出现 -->
+      <button
+        v-if="results.length"
+        class="ty-btn find-results-toggle"
+        :class="{ on: resultsOpen }"
+        :title="t('find.resultsHint')"
+        @click="resultsOpen = !resultsOpen"
+      >
+        {{ resultsOpen ? '▴' : '▾' }}
+      </button>
       <span class="find-count">{{ matchCount ? `${matchIndex} / ${matchCount}` : t('find.count', { n: 0 }) }}</span>
       <button class="ty-btn close" :title="`${t('find.close')} (Esc)`" @click="close">×</button>
+    </div>
+
+    <!--
+      结果列表：列出每处命中的行号与上下文，点击直接跳转。
+      比逐个「下一处」更适合通览，尤其是同一关键词跨很多段落时。
+    -->
+    <div v-if="resultsOpen && results.length" class="find-results">
+      <button
+        v-for="item in results"
+        :key="item.index"
+        class="find-result-row"
+        :class="{ active: item.index + 1 === matchIndex }"
+        @click="gotoResult(item)"
+      >
+        <span class="find-result-line">{{ item.line }}:{{ item.column }}</span>
+        <span class="find-result-text">
+          <span class="find-result-before">{{ item.before }}</span><mark>{{ item.match }}</mark
+          ><span class="find-result-after">{{ item.after }}</span>
+        </span>
+      </button>
     </div>
   </div>
 </template>
@@ -168,10 +224,65 @@ window.addEventListener('inkdown:find-result', ((e: Event) => {
   align-items: center;
   gap: 8px;
   flex: none;
+  /* 结果列表需要独占一行，因此允许换行 */
+  flex-wrap: wrap;
   padding: 6px 10px;
   border-top: 1px solid var(--ty-border);
   background: var(--ty-sidebar-bg);
   font-size: 12px;
+}
+/* 结果列表：独占一行，可滚动 */
+.find-results {
+  flex-basis: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 4px;
+  border-top: 1px solid var(--ty-border);
+  padding-top: 4px;
+}
+.find-result-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ty-text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.find-result-row:hover {
+  background: var(--ty-hover);
+}
+.find-result-row.active {
+  background: var(--ty-active);
+}
+.find-result-line {
+  flex: none;
+  min-width: 52px;
+  color: var(--ty-muted);
+  font-variant-numeric: tabular-nums;
+}
+.find-result-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.find-result-text mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: var(--ty-find-match);
+  color: inherit;
+}
+.find-result-before,
+.find-result-after {
+  color: var(--ty-muted);
+}
+.find-results-toggle.on {
+  background: var(--ty-active);
 }
 /* 放大镜图标：放在输入框左侧，表明这是查找框 */
 .find-icon {

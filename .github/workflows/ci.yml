@@ -1,0 +1,94 @@
+name: CI
+
+# 只在代码或配置变化时跑，避免改文档也触发全量测试。
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'screenshots/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'screenshots/**'
+  workflow_dispatch:
+
+# 同一分支的旧运行自动取消，省时间也省额度。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 类型检查与单元测试
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 类型检查分三块：主进程/预加载、渲染层、内联内核。
+      - name: 类型检查（主进程）
+        run: pnpm typecheck:node
+
+      - name: 类型检查（渲染层）
+        run: pnpm typecheck:web
+
+      - name: 类型检查（内核）
+        run: pnpm typecheck:muya
+
+      # 纯 Node 单元测试，不需要构建产物，也不需要 GUI。
+      - name: 单元测试
+        run: |
+          node --test scripts/regression-test.js
+          node --test scripts/edit-mode-toggle-test.js
+          node --test scripts/reading-mode-test.js
+          node --test scripts/outline-search-ci-test.js
+          node --test scripts/export-options-test.js
+          node --test scripts/muya-hover-perf-test.js
+
+  build:
+    name: 构建
+    runs-on: windows-latest
+    timeout-minutes: 25
+    needs: check
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 构建失败往往说明打包配置或引用路径有问题，及早发现。
+      - name: 构建应用
+        run: pnpm build

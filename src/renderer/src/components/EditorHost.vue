@@ -11,6 +11,7 @@ import { patchPreview, previewBlockOffsets } from '../editor/previewBlocks'
 import { PreviewDiagrams, preparePreviewDiagrams } from '../editor/previewDiagrams'
 import { DeferredDiagrams } from '../editor/deferredDiagrams'
 import { ReadingDocument, readingLinkTarget, readingRenderMarkdown, type ReadingPosition } from '../editor/reading'
+import { buildSearchResults } from '../editor/searchResults'
 import { resolveExportImageSrc } from '@muyajs/core/utils/fileUrl'
 
 // 供主进程端到端自检调用
@@ -1482,7 +1483,7 @@ function onSourceKeydown(e: KeyboardEvent): void {
 /** 查找/替换：FindBar 通过自定义事件把参数送进来，这里调用 muya 的搜索 API。 */
 let sourceFind: { tabId: string; keyword: string; options: string; text: string; matches: RegExpExecArray[]; index: number } | null = null
 
-function findInSource(d: { action: string; keyword: string; replacement: string; isRegexp: boolean; isCaseSensitive: boolean; isWholeWord: boolean }): void {
+function findInSource(d: { action: string; targetIndex?: number; keyword: string; replacement: string; isRegexp: boolean; isCaseSensitive: boolean; isWholeWord: boolean }): void {
   const tab = activeTab.value
   const ta = sourceRef.value
   if (!tab || !ta) return
@@ -1494,6 +1495,10 @@ function findInSource(d: { action: string; keyword: string; replacement: string;
   const count = sourceFind.matches.length
   if (count && (d.action === 'next' || d.action === 'previous')) {
     sourceFind.index = (sourceFind.index + (d.action === 'next' ? 1 : -1) + count) % count
+  }
+  // 从结果列表直接跳到第 n 个命中
+  if (count && d.action === 'goto' && typeof d.targetIndex === 'number') {
+    sourceFind.index = Math.max(0, Math.min(count - 1, d.targetIndex))
   }
   if (count && (d.action === 'replace' || d.action === 'replaceAll')) {
     const result = replaceTextMatch(text, d.keyword, d.replacement, d, d.action === 'replace' ? sourceFind.index : undefined)
@@ -1544,7 +1549,8 @@ function scrollSourceToOffset(offset: number): void {
 function onFind(e: Event): void {
   if (!muya) return
   const d = (e as CustomEvent).detail as {
-    action: 'search' | 'next' | 'previous' | 'replace' | 'replaceAll'
+    action: 'search' | 'next' | 'previous' | 'replace' | 'replaceAll' | 'goto'
+    targetIndex?: number
     keyword: string
     replacement: string
     isRegexp: boolean
@@ -1586,6 +1592,28 @@ function onFind(e: Event): void {
       scrollToActiveMatch()
       restoreFindFocus()
       break
+    case 'goto': {
+      // 内核只支持 next/previous，没有「直接跳到第 n 个」。
+      // 这里先重搜拿到当前序号，再朝目标方向逐步 find。
+      // 命中数通常不大（几十个），逐步跳转的代价可接受且不依赖内核私有状态。
+      const target = typeof d.targetIndex === 'number' ? d.targetIndex : 0
+      searchResult = muya.search(d.keyword, opts)
+      const total = searchResult?.matches.length ?? 0
+      if (total > 0) {
+        const safeTarget = Math.max(0, Math.min(total - 1, target))
+        let current = searchResult?.index ?? 0
+        // 计算最短方向，避免绕一整圈
+        let forward = (safeTarget - current + total) % total
+        if (forward > total / 2) forward -= total
+        const step = forward >= 0 ? 'next' : 'previous'
+        for (let i = 0; i < Math.abs(forward); i++) {
+          searchResult = muya.find(step)
+        }
+        scrollToActiveMatch()
+      }
+      restoreFindFocus()
+      break
+    }
     case 'replace':
       searchResult = muya.replace(d.replacement, { isSingle: true, isRegexp: d.isRegexp })
       scrollToActiveMatch()
@@ -1678,13 +1706,69 @@ function restoreSearchIfNeeded(): void {
  */
 let searchResult: { matches: unknown[]; index: number } | null = null
 
-/** 把匹配数量与当前序号回传给 FindBar 显示。 */
+/** 把匹配数量、当前序号与结果列表回传给 FindBar 显示。 */
 function reportMatches(): void {
-  const matches = searchResult?.matches ?? []
+  // 内核的 IMatch 结构；这里显式标注，避免 searchResult 为空数组时被推断成 unknown[]
+  type KernelMatch = { start: number; end: number; match: string; block?: unknown }
+  const matches = (searchResult?.matches ?? []) as KernelMatch[]
   const index = searchResult?.index ?? -1
+
+  // 文档全文（用于把「块内偏移」换算成「文档绝对偏移」）。
+  // 阅读态下用标签内容，其余情况用编辑器实际内容。
+  const docText = (isReading.value ? activeTab.value?.content : muya?.getMarkdown()) ?? ''
+
+  /** 取匹配所在块的纯文本。 */
+  const blockTextOf = (m: KernelMatch): string | undefined => {
+    try {
+      const block = m.block as { text?: unknown; domNode?: HTMLElement } | undefined
+      if (!block) return undefined
+      // 首选内核的 text（就是搜索比对用的那份文本，偏移天然自洽）
+      const t = block.text
+      if (typeof t === 'string' && t.length) return t
+      // 退路：从 DOM 取。注意 contenteditable 下的 .textContent 会带零宽字符，
+      // 这里清掉再返回，避免偏移错位。
+      const dom = block.domNode?.textContent
+      if (typeof dom === 'string') return dom.replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+      return undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * 把块内偏移换算成文档绝对偏移。
+   *
+   * 做法：用块文本在文档中查找（从上一个块之后开始找），
+   * 命中位置 + 块内偏移即为绝对偏移。
+   * 找不到时返回 undefined，调用方会退回块内行号。
+   */
+  let searchFrom = 0
+  const docOffsetOf = (m: KernelMatch): number | undefined => {
+    const text = blockTextOf(m)
+    if (!text || !docText) return undefined
+    const at = docText.indexOf(text, searchFrom)
+    if (at < 0) {
+      // 块文本可能在文档里出现多次或与源码形式有差异，退回从头找
+      const again = docText.indexOf(text)
+      if (again < 0) return undefined
+      return again + (m.start > 0 ? m.start : 0)
+    }
+    searchFrom = at + text.length
+    return at + (m.start > 0 ? m.start : 0)
+  }
+
+  // 结果列表需要「行号 + 上下文」；行号按文档绝对偏移算，才是用户看到的行。
+  // 注意：必须把原始 match 传进去（含 block），
+  // 否则 blockTextOf / docOffsetOf 拿不到块对象，行号只能退回块内第 1 行。
+  const items = buildSearchResults(
+    matches as unknown as Array<{ start: number; end: number; match: string }>,
+    (m) => blockTextOf(m as unknown as KernelMatch),
+    (m) => docOffsetOf(m as unknown as KernelMatch),
+    docText
+  )
   window.dispatchEvent(
     new CustomEvent('inkdown:find-result', {
-      detail: { count: matches.length, index: index >= 0 ? index + 1 : 0 }
+      detail: { count: matches.length, index: index >= 0 ? index + 1 : 0, items }
     })
   )
 }
