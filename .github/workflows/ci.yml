@@ -29,18 +29,24 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
+      # 必须先装 Node：pnpm 由 Node 执行。
+      # 顺序颠倒时 action-setup 的自安装脚本拿不到运行时，直接退出码 1
+      # —— 这正是上一次 CI 失败的原因。
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
+
+      # 用精确版本而不是 `11`：宽范围需要联网解析具体版本号，
+      # 解析失败时 self-installer 会退出码 1。
+      # run_install: false 避免它在装依赖前又跑一次 install。
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.28.5
+          run_install: false
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -62,7 +68,9 @@ jobs:
           node --test scripts/edit-mode-toggle-test.js
           node --test scripts/reading-mode-test.js
           node --test scripts/outline-search-ci-test.js
+          node --test scripts/search-results-test.js
           node --test scripts/export-options-test.js
+          node --test scripts/export-preview-state-test.js
           node --test scripts/muya-hover-perf-test.js
 
   build:
@@ -73,18 +81,18 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
+        uses: actions/checkout@v7
 
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.28.5
+          run_install: false
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
