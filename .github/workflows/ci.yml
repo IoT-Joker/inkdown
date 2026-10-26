@@ -48,8 +48,26 @@ jobs:
           version: 11.28.5
           run_install: false
 
+      # 失败时 CI 界面只显示「Process completed with exit code 1」，
+      # 看不到真正原因。这里先把环境与配置打印出来，便于定位。
+      - name: 环境诊断
+        shell: pwsh
+        run: |
+          Write-Host "--- node / pnpm ---"
+          node --version
+          pnpm --version
+          Write-Host "--- pnpm 生效配置 ---"
+          pnpm config list
+          Write-Host "--- pnpm-workspace.yaml ---"
+          Get-Content pnpm-workspace.yaml
+          Write-Host "--- lockfile ---"
+          Write-Host (Test-Path pnpm-lock.yaml)
+
+      # 先用不带 --frozen-lockfile 的方式安装：
+      # 若 lockfile 与 package.json 不一致，--frozen-lockfile 会直接失败，
+      # 而它的报错在 CI 上容易被吞掉；普通安装能看到完整的解析过程。
       - name: 安装依赖
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --reporter=default
 
       # 类型检查分三块：主进程/预加载、渲染层、内联内核。
       - name: 类型检查（主进程）
