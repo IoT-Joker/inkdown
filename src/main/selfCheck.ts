@@ -513,10 +513,16 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         await wait(100)
       }
       muya.setFocusMode(true)
-      // 等淡化生效（依赖活动块标记）
-      for (let i = 0; i < 30; i++) {
+      // 等淡化生效：既要有 mu-active 标记，也要 opacity 真的过渡完成。
+      // 只等类名不够——CSS transition 需要时间，打包版渲染更慢，
+      // 会出现「类已加上但 opacity 仍是 1」的中间态。
+      for (let i = 0; i < 60; i++) {
         const b = [...document.querySelectorAll('.mu-focus-mode .mu-container > *')]
-        if (b.some((el) => el.classList.contains('mu-active'))) break
+        const hasActive = b.some((el) => el.classList.contains('mu-active'))
+        const hasDimmed = b.some(
+          (el) => !el.classList.contains('mu-active') && Number(getComputedStyle(el).opacity) < 0.9
+        )
+        if (hasActive && hasDimmed) break
         await wait(100)
       }
       const blocks = [...document.querySelectorAll('.mu-focus-mode .mu-container > *')]
@@ -525,7 +531,12 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         opacity: Number(getComputedStyle(b).opacity)
       }))
       muya.setFocusMode(false)
-      await wait(300)
+      // 关闭后同样等恢复，不用固定等待
+      for (let i = 0; i < 30; i++) {
+        const first = document.querySelector('.mu-container > *')
+        if (first && Number(getComputedStyle(first).opacity) > 0.9) break
+        await wait(100)
+      }
       const afterOff = blocks.length
         ? Number(getComputedStyle(document.querySelector('.mu-container > *')).opacity)
         : -1
@@ -706,10 +717,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         rightIsPreview = pvRect.left >= taRect.left
       }
 
-      // 改内容，预览应跟着更新
+      // 改内容，预览应跟着更新。
+      // 用轮询而非固定等待：打包版渲染更慢，固定 900ms 偶发不够。
       window.__inkdownLoad('# 改后的标题\\n\\n新段落。\\n')
-      await wait(900)
-      const htmlAfter = document.querySelector('.split-preview-body')?.innerHTML || ''
+      let htmlAfter = ''
+      for (let i = 0; i < 40; i++) {
+        htmlAfter = document.querySelector('.split-preview-body')?.innerHTML || ''
+        if (/改后的标题/.test(htmlAfter)) break
+        await wait(200)
+      }
 
       // 切回所见即所得
       await c.execute('view:toggleSplit')
@@ -2067,12 +2083,18 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
         const btn = [...menu.querySelectorAll('.ctx-item')].find((b) => /代码块/.test(b.textContent))
         if (btn) {
           btn.click()
-          await wait(1000)
-          docAfter = window.__inkdownMuya?.getMarkdown() || ''
           // 代码块以三个反引号开头。这里用字符码拼出反引号，
           // 避免在模板字符串里直接写出反引号导致提前闭合。
           const fence = String.fromCharCode(96, 96, 96)
-          codeInserted = docAfter.indexOf(fence) !== -1
+          // 轮询等命令生效：打包版渲染更慢，固定 1000ms 偶发不够
+          for (let i = 0; i < 40; i++) {
+            docAfter = window.__inkdownMuya?.getMarkdown() || ''
+            if (docAfter.indexOf(fence) !== -1) {
+              codeInserted = true
+              break
+            }
+            await wait(150)
+          }
         }
       }
       const menuClosed = !document.querySelector('.editor-ctx')
@@ -2110,6 +2132,11 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const app = window.__inkdownApp
       const c = window.__inkdownCommands
+
+      // 清掉上次运行留下的悬浮球位置：
+      // 它会覆盖本用例期望的初始坐标，导致拖动位移判断失真
+      // （表现为 dragMoved=false，位置前后一样）。
+      localStorage.removeItem('inkdown-orb-position')
 
       // 悬浮球在分栏和源码模式出现；先切到分栏验证完整交互
       for (let i = 0; i < 4 && app.viewMode() !== 'split'; i++) {

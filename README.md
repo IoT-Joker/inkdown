@@ -243,7 +243,38 @@ pnpm package:dir    # 只出免安装目录，速度快
    任何非 JSON 的提示都会让它报 `No JSON content found in output`。
    已在 `.npmrc` 固定 store 目录并静音输出。
 
-打包产物体积：安装程序约 124 MB，免安装目录约 499 MB（Electron 运行时占大头）。
+打包产物体积：**安装程序约 80 MB，免安装目录约 281 MB**。
+
+### 体积优化
+
+Electron 应用天然偏大（运行时本身就有约 200 MB），但初始打包曾达到
+安装包 127 MB / 目录 522 MB，其中约 200 MB 是**纯冗余**：
+
+| 组成 | 优化前 | 优化后 | 做法 |
+| --- | --- | --- | --- |
+| `app.asar` 内 node_modules | 253.5 MB | 51.3 MB | 排除渲染层已 bundle 的依赖 |
+| Electron 语言包 | 40.3 MB（55 个） | 1.4 MB（3 个） | `electronLanguages` 只留中英 |
+| 安装包 | 127.2 MB | **80.2 MB** | |
+
+**关键原理**：渲染层的依赖（mermaid、vega、katex、prismjs、muui 等）已由 Vite
+**完整 bundle 进 `out/renderer`**，运行期不会再从 `node_modules` 读取。
+而主进程只有 `docx` 与 `electron-updater` 被 externalize（bundle 里是 `require('docx')`），
+这两个及其依赖才必须随包携带。删掉前者不损失任何功能——
+打包版自检里 Mermaid 图表依然正常渲染。
+
+**踩过的坑**：排除规则**绝不能用 `lodash*` 这类宽通配**。
+`electron-updater` 依赖 `lodash.isequal` / `lodash.escaperegexp`，
+被误删后打包版启动即崩（`Cannot find module 'lodash.isequal'`），
+而开发环境完全正常——这类问题只有跑打包版才暴露。
+
+为此新增两个校验（`pnpm verify:package`）：
+
+- `scripts/verify-package.js` —— 静态校验：解析 asar，从主进程 bundle 提取
+  externalize 的裸包，递归确认这些包及其依赖闭包都在，并抽查关键文件
+- `scripts/verify-packaged.js` —— 动态校验：直接运行打包产物并跑完整自检，
+  输出里出现 `Cannot find module` 会单独列出
+
+建议每次改动打包配置后都跑一次 `pnpm verify:package`。
 
 ### 文件树与拖入
 
