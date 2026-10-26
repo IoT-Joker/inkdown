@@ -12,6 +12,8 @@ export class DeferredDiagrams {
   private observer: IntersectionObserver | null = null
   private mutations: MutationObserver | null = null
   private cancelIdle: (() => void) | null = null
+  /** requestIdleCallback 的兜底定时器：空闲迟迟不来时强制渲染一次。 */
+  private idleFallbackTimer: number | null = null
   private running = false
   private disposed = false
   /**
@@ -101,6 +103,11 @@ export class DeferredDiagrams {
 
     const run = () => {
       this.cancelIdle = null
+      // 兜底定时器也一并清掉，避免它稍后再触发一次
+      if (this.idleFallbackTimer != null) {
+        window.clearTimeout(this.idleFallbackTimer)
+        this.idleFallbackTimer = null
+      }
       if (this.disposed || !this.root.isConnected) return
       const job = [...this.jobs.values()].find(job => job.visible && this.root.contains(job.target))
       if (!job) return
@@ -113,10 +120,22 @@ export class DeferredDiagrams {
       })
     }
     if (typeof window.requestIdleCallback === 'function') {
-      // 去掉 timeout 强制触发：空闲不足时宁可等下一帧，
-      // 也不要为了「按时渲染」把主线程卡住。
-      const id = window.requestIdleCallback(run)
+      // 用 requestIdleCallback 挑空闲时机，但**必须**配一个兜底超时。
+      //
+      // 只写 requestIdleCallback(run) 而不给 timeout 会死锁：
+      // 页面持续有动画/滚动时浏览器可能长时间不给空闲回调，
+      // 于是 cancelIdle 一直非空，arm() 每次都在开头 early-return，
+      // 图表永远停在「加载中...」（实测踩到过：打包版与开发版都渲不出 SVG）。
+      // 兜底超时只在空闲迟迟不来时强制渲染一次，正常情况仍走空闲。
+      const id = window.requestIdleCallback(run, { timeout: 800 })
       this.cancelIdle = () => window.cancelIdleCallback(id)
+      this.idleFallbackTimer = window.setTimeout(() => {
+        if (this.cancelIdle === null) return
+        window.cancelIdleCallback(id)
+        this.cancelIdle = null
+        this.idleFallbackTimer = null
+        run()
+      }, 1200)
     } else {
       const id = window.setTimeout(run, 0)
       this.cancelIdle = () => window.clearTimeout(id)
@@ -127,6 +146,10 @@ export class DeferredDiagrams {
     this.disposed = true
     this.cancelIdle?.()
     this.cancelIdle = null
+    if (this.idleFallbackTimer != null) {
+      window.clearTimeout(this.idleFallbackTimer)
+      this.idleFallbackTimer = null
+    }
     if (this.scrollQuietTimer != null) {
       window.clearTimeout(this.scrollQuietTimer)
       this.scrollQuietTimer = null
