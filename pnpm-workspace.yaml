@@ -2,9 +2,21 @@
 packages:
   - 'packages/*'
 
-onlyBuiltDependencies:
-  - electron
-  - esbuild
+# 允许运行安装脚本的依赖。
+#
+# 注意：pnpm 11 用的是 allowBuilds（键值对），不是旧版的
+# onlyBuiltDependencies / ignoredBuiltDependencies 数组 ——
+# 那两个写法在 11.28.5 里会被读取但**不生效**，
+# 表现为 install 仍以 exit 1 结束（ERR_PNPM_IGNORED_BUILDS）。
+# 这份配置由 `pnpm approve-builds --all` 生成，是权威格式。
+allowBuilds:
+  electron: true
+  esbuild: true
+  # electron-builder 的间接依赖，只在生成 Squirrel 安装包时用到
+  # （本项目用 NSIS，实际不需要），但它的 install 脚本会下载 7-Zip，
+  # 在这里允许运行即可避免 pnpm 因「构建脚本未批准」而失败。
+  electron-winstaller: true
+
 # @marktext/file-icons 的 file-icons 依赖指向 GitHub git 仓库，
 # 这里放开子依赖限制，让 git 依赖能正常安装
 blockExoticSubdeps: false
