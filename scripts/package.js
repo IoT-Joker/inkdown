@@ -119,6 +119,12 @@ const env = {
   ELECTRON_BUILDER_BINARIES_MIRROR:
     'https://registry.npmmirror.com/-/binary/electron-builder-binaries/'
 }
+// 本机固定 store 目录（C 盘与项目不在同一卷，pnpm 会因硬链接失败而告警，
+// 该告警会污染 electron-builder 解析的 `pnpm list --json` 输出）。
+// 用环境变量而非 .npmrc：后者随仓库共享，CI 上没有这个盘符。
+if (process.env.INKDOWN_PNPM_STORE) {
+  env.npm_config_store_dir = process.env.INKDOWN_PNPM_STORE
+}
 delete env.ELECTRON_RUN_AS_NODE
 delete env.INKDOWN_SELF_CHECK
 delete env.INKDOWN_FILE_TEST
