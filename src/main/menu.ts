@@ -243,6 +243,11 @@ export function buildAppMenu(): void {
           'view:toggleSource'
         ),
         { label: t('view.splitPreview'), click: cmd('view:toggleSplit') },
+        withAccelerator(
+          t('menu.view.toggleReading'),
+          shortcutFor('Ctrl+R', 'view:toggleReading'),
+          'view:toggleReading'
+        ),
         withAccelerator(t('menu.view.toggleFocus'), shortcutFor('F8', 'view:toggleFocus'), 'view:toggleFocus'),
         withAccelerator(
           t('menu.view.toggleTypewriter'),

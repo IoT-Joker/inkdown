@@ -1,0 +1,20 @@
+# Reading mode and export preview — 2026-10-26
+
+User-approved scope: replace rendered WYSIWYG editing with selectable, non-editable reading; retain single/adjacent dual pages; highlight active outline chapter and return from outline/internal-link jumps. Source and Source Preview remain editing paths. Add export preview with remembered paper, orientation, margins, font points and page-number settings; list broken images, failed diagrams and fallback rendering before save. No package/version/commit/push requested.
+
+Approach: reuse the existing Muya visual DOM and diagram scheduler, disable mutation paths in reading, retain native selection/copy. Use per-tab reading navigation and scheduled outline observation. Export renders a frozen document once and previews an actual PDF through the same normalized print options used for final files. Word retains editable text/bookmarks with visual complex blocks. HTML keeps selected typography/print settings; explain Word and HTML preview limits.
+
+1. Reading worker: meaningful tests for nonmutation, copy/links, active heading, single/dual jump/back and tab isolation; implement EditorHost/reading helper/SideBar/StatusBar/command guards and labels.
+2. Export backend worker: normalized shared options, actual PDF preview with broken-image preflight, PDF/Word options and footer pagination; preserve strict legacy failure behavior. Focused option tests and types.
+3. Parent: frozen export session lifecycle, issue collection and fallback reporting, accessible settings/preview modal with keyboard focus handling, configuration persistence. Tests must cover stale previews, cancel/reopen, preset normalization and continuation after warnings.
+4. Integrate; run type checks, unit regressions and isolated offline native reading/export flows; review generated PDF/Word options and bookmarks, preview UI screenshots in light/dark themes. Rebuild out for bat testing. No packaging.
+
+Defaults selected by implementer: A4 portrait, 15 mm margins, 12 pt body, page numbers off (preserve existing output by default). Presets Standard/Compact/Reading plus last-used custom settings. Changes save locally. Resource warnings remain visible and user explicitly continues to export with missing resources. Export failures retain the modal and error details.
+
+Ruling: main-window plugin enablement was rejected by automatic review. Render preview PDF pages in a dedicated sandboxed PDF window, returning page images for the settings dialog. Main-window plugin/CSP capability stays unchanged.
+
+Completed verification: Node/Web/Muya type checks PASS; final build PASS; 94 unit regression checks PASS; isolated native Reading 27/27 PASS; isolated native export preview 12/12 PASS. Actual PDF A5 dimensions, outline and printed page number checked with pypdf; actual DOCX A5 size, 14pt default, heading bookmarks and PAGE footer field checked in OOXML. Light/dark export preview and reading dual-page screenshots inspected. Final out updated for bat; no package/version/commit/push. Existing comprehensive-test.md path-only user edit preserved.
+
+
+Preview performance follow-up: baseline 16-page PDF generated in 343 ms, every page request created a fresh window and cost 939-1106 ms. Reused viewer plus bounded page cache: first unseen page 365-375 ms, repeated pages 1-2 ms, no new window; recent-layout UI switch 279 ms with no PDF generation. Renderer coalesces pending print jobs, bypasses obsolete work for cached layouts, ignores identical settings, commits font input on change/Enter, and keeps old image explicitly marked while updating. Current-layout imageReady gate blocks export after failed refresh; retry clears old errors. Modal/sender close and idle timeout release viewer and temporary PDF. Final Node/Web types and build PASS; 106 unit, 10 native performance and 12 native export checks PASS. Native log cancellation rejections occur only when closing a pending preview and are ignored by stale-result guards. Out updated, no package/version/commit/push.
+

@@ -1365,11 +1365,15 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     console.error('[selfcheck] FAIL: i18n 检查无法执行:', i18nCheck.error)
     return false
   }
-  if (i18nCheck.zh.sidebarFiles !== '文件' || !/专注/.test(i18nCheck.zh.statusbar)) {
+  if (
+    i18nCheck.zh.sidebarFiles !== '文件' ||
+    // 状态栏视图按钮在可编辑时显示「所见即所得」（进入阅读态才显示「阅读模式」）
+    !/所见即所得/.test(i18nCheck.zh.statusbar)
+  ) {
     console.error('[selfcheck] FAIL: 中文界面文案异常:', JSON.stringify(i18nCheck.zh))
     return false
   }
-  if (i18nCheck.en.sidebarFiles !== 'Files' || !/Focus/.test(i18nCheck.en.statusbar)) {
+  if (i18nCheck.en.sidebarFiles !== 'Files' || !/WYSIWYG/.test(i18nCheck.en.statusbar)) {
     console.error('[selfcheck] FAIL: 英文界面文案异常:', JSON.stringify(i18nCheck.en))
     return false
   }

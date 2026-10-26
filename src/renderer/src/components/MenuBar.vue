@@ -125,6 +125,7 @@ const menus = computed<MenuGroup[]>(() => [
       { labelKey: '', separator: true },
       { labelKey: 'menu.view.toggleSource', command: 'view:toggleSource' },
       { labelKey: 'view.splitPreview', command: 'view:toggleSplit' },
+      { labelKey: 'menu.view.toggleReading', command: 'view:toggleReading', accel: 'Ctrl+R' },
       { labelKey: 'menu.view.toggleFocus', command: 'view:toggleFocus' },
       { labelKey: 'menu.view.toggleTypewriter', command: 'view:toggleTypewriter' },
       { labelKey: '', separator: true },

@@ -6,6 +6,7 @@ import SideBar from './components/SideBar.vue'
 import TabBar from './components/TabBar.vue'
 import StatusBar from './components/StatusBar.vue'
 import FindBar from './components/FindBar.vue'
+import ExportPreviewDialog from './components/ExportPreviewDialog.vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 import AboutDialog from './components/AboutDialog.vue'
 import ShortcutsDialog from './components/ShortcutsDialog.vue'
@@ -130,6 +131,8 @@ onMounted(async () => {
     findVisible: () => state.findVisible,
     /** 当前视图模式（供测试判断三态切换结果）。 */
     viewMode: () => state.viewMode,
+    /** 当前是否处于只读阅读态（与 viewMode 独立）。 */
+    readingMode: () => state.readingMode,
     persistSession,
     persistRecovery,
     loadSession,
@@ -284,6 +287,7 @@ async function tryQuit(): Promise<void> {
       </div>
     </div>
     <FindBar />
+    <ExportPreviewDialog />
     <!-- 非阻塞提示条：告知外部改动等，不打断写作 -->
     <div v-if="state.notice" class="notice-bar">
       <span class="notice-text">{{ state.notice.text }}</span>

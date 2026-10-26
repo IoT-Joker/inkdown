@@ -2,7 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from 'vue'
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
 import { generateGithubSlug, type IPublicCursorInput } from '@muyajs/core'
-import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds } from '../composables/useCommands'
+import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds, dispatchReadingShortcut } from '../composables/useCommands'
 import { exportHtml, exportPdf, exportDocxFile, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
 import { useI18n } from '../composables/useI18n'
 import BlockOrb from './BlockOrb.vue'
@@ -10,6 +10,7 @@ import { TextHistory, editSource, replaceRange, textMatches, replaceTextMatch, l
 import { patchPreview, previewBlockOffsets } from '../editor/previewBlocks'
 import { PreviewDiagrams, preparePreviewDiagrams } from '../editor/previewDiagrams'
 import { DeferredDiagrams } from '../editor/deferredDiagrams'
+import { ReadingDocument, readingLinkTarget, readingRenderMarkdown, type ReadingPosition } from '../editor/reading'
 import { resolveExportImageSrc } from '@muyajs/core/utils/fileUrl'
 
 // 供主进程端到端自检调用
@@ -61,6 +62,7 @@ interface EditorSession {
   id: string
   instance: Muya
   diagrams: DeferredDiagrams
+  reading: ReadingDocument | null
   content: string
   markdown: string
   cursor: IPublicCursorInput | null
@@ -97,11 +99,14 @@ let columnRevealPending = false
 let columnContentObserver: MutationObserver | null = null
 
 function destroySession(session: EditorSession): void {
+  session.reading?.dispose()
   session.diagrams.dispose()
   session.instance.destroy()
 }
 
 function sessionEvents(session: EditorSession, active: boolean): void {
+  // This Muya tree is display-only; source and split editing use the textarea.
+  active = false
   if (session.suspended === !active) return
   session.suspended = !active
   for (const { target, event, listener, capture } of session.instance.eventCenter.events) {
@@ -261,6 +266,15 @@ watch(columnsActive, active => {
 })
 
 const activeTab = computed(() => getActiveTab())
+/**
+ * 是否处于只读阅读态。
+ *
+ * 注意：由独立的 state.readingMode 决定，**不再**等同于 viewMode === 'wysiwyg'。
+ * 早期实现把两者绑定，导致所见即所得永久只读、无法编辑。
+ */
+const isReading = computed(() => state.viewMode === 'wysiwyg' && state.readingMode)
+/** 所见即所得视图（可编辑或阅读，取决于 readingMode）。 */
+const isWysiwyg = computed(() => state.viewMode === 'wysiwyg')
 const isSource = computed(() => state.viewMode === 'source')
 /** 源码预览：左侧源码编辑，右侧静态预览。 */
 const isSplit = computed(() => state.viewMode === 'split')
@@ -545,7 +559,7 @@ function stashViewState(force = false): void {
 function applyViewState(tab: Tab): void {
   const session = currentSession
   if (!muya || session?.id !== tab.id) return
-  if (session.cursor) {
+  if (session.cursor && !isReading.value) {
     try { muya.setCursor(session.cursor) } catch { session.cursor = null }
   }
   const scroller = editorScrollRef.value
@@ -558,6 +572,7 @@ function applyViewState(tab: Tab): void {
   }
   columnRevealPending = false
   scheduleColumnLayout()
+  session.reading?.activate()
 }
 
 function refreshOutline(): void {
@@ -571,6 +586,7 @@ function refreshOutline(): void {
     slug: item.slug,
     githubSlug: item.githubSlug
   }))
+  currentSession?.reading?.invalidate()
 }
 
 /** 定位编辑器滚动容器。
@@ -624,12 +640,25 @@ function createEditorSession(tab: Tab | undefined): EditorSession | null {
   mount.appendChild(el)
   let diagrams: DeferredDiagrams
   const instance = new Muya(el, {
-    ...buildMuyaOptions({ markdown: tab?.content ?? '' }),
+    ...buildMuyaOptions({ markdown: readingRenderMarkdown(tab?.content ?? '') }),
     scheduleDiagramRender: (target, render) => diagrams.schedule(target, render)
   })
   diagrams = new DeferredDiagrams(instance.domNode)
-  const session: EditorSession = { id: tab?.id ?? '', instance, diagrams, content: tab?.content ?? '', markdown: '', cursor: null, scrollTop: 0, scrollLeft: 0, columnStart: 0, suspended: false }
+  const session: EditorSession = { id: tab?.id ?? '', instance, diagrams, reading: null, content: tab?.content ?? '', markdown: '', cursor: null, scrollTop: 0, scrollLeft: 0, columnStart: 0, suspended: false }
   instance.init({ focus: false })
+  sessionEvents(session, false)
+  instance.hideAllFloatTools()
+  const history = tab ? (tab.readingHistory ??= []) : []
+  session.reading = new ReadingDocument(instance.domNode, mount, {
+    active: () => currentSession === session && isReading.value,
+    headings: () => instance.getTOC().map(item => ({ slug: item.slug, githubSlug: item.githubSlug })),
+    pages: () => columnsActive.value && columnStride.value > 0 ? { step: columnStride.value, last: columnsLastStart.value } : null,
+    history,
+    changed: (heading, canBack) => { if (currentSession === session && isReading.value) { state.readingHeadingIndex = heading; state.readingCanGoBack = canBack } },
+    shortcut: dispatchReadingShortcut,
+    external: href => { void openReadingLink(session, href) },
+    restore: position => restoreReadingPosition(session, position)
+  })
   session.markdown = instance.getMarkdown()
   sessionSettings.set(instance, settingsGeneration)
   instance.on('json-change', () => {
@@ -651,7 +680,7 @@ function createEditorSession(tab: Tab | undefined): EditorSession | null {
     }
   })
   instance.on('selection-change', () => {
-    if (currentSession !== session || suppress || isSource.value || isSplit.value) return
+    if (currentSession !== session || suppress || isReading.value || isSource.value || isSplit.value) return
     session.cursor = captureNativeCursor() ?? session.cursor
     if (cursorTimer != null) window.clearTimeout(cursorTimer)
     // Source-coordinate serialization is useful for the status bar, not on every mousemove.
@@ -673,6 +702,7 @@ function createEditorSession(tab: Tab | undefined): EditorSession | null {
 function mountEditor(): void {
   currentSession = createEditorSession(activeTab.value)
   muya = currentSession?.instance ?? null
+  currentSession?.reading?.activate()
   ;(window as unknown as Record<string, unknown>).__inkdownMuya = muya
   updateCounts(activeTab.value?.content ?? '')
   refreshOutline()
@@ -682,11 +712,14 @@ function mountEditor(): void {
     if (!tab || !muya || !currentSession) return false
     if (!isSource.value && !isSplit.value) {
       suppress = true
-      muya.setContent(markdown, false)
+      muya.setContent(readingRenderMarkdown(markdown), false)
       suppress = false
       currentSession.content = markdown
       currentSession.markdown = muya.getMarkdown()
       currentSession.cursor = null
+      // setContent 会重建整棵内容树，新建的节点不带只读属性；
+      // 若当前处于阅读态，必须重新锁定，否则会变成可编辑。
+      if (isReading.value) currentSession.reading?.syncReadOnly(true)
     }
     tab.content = markdown
     updateCounts(markdown)
@@ -722,7 +755,10 @@ function activateEditor(tab: Tab): void {
   if (!next) return
   if (!next.instance.domNode.isConnected) editorScrollRef.value.appendChild(next.instance.domNode)
   sessionEvents(next, true)
-  next.instance.setFocusMode(state.focusMode)
+  next.instance.setFocusMode(false)
+  state.readingHeadingIndex = -1
+  state.readingCanGoBack = !!tab.readingHistory?.length
+  next.reading?.activate()
   observeColumnContent()
   // Map order is an LRU; keep a bounded number of live trees.
   editorSessions.delete(tab.id)
@@ -754,11 +790,13 @@ function loadTab(tab: Tab): void {
   if (!muya || !currentSession) return
   if (currentSession.content !== tab.content) {
     suppress = true
-    muya.setContent(tab.content, false)
+    muya.setContent(readingRenderMarkdown(tab.content), false)
     suppress = false
     currentSession.content = tab.content
     currentSession.markdown = muya.getMarkdown()
     currentSession.cursor = null
+    // 内容树被重建，阅读态下需要重新锁定
+    if (isReading.value) currentSession.reading?.syncReadOnly(true)
   }
   updateCounts(tab.content)
   refreshOutline()
@@ -831,6 +869,7 @@ watch(
     // 回到所见即所得：让 muya 渲染最新内容
     nextTick(() => {
       loadTab(tab)
+      currentSession?.reading?.activate()
       focus()
     })
   }
@@ -866,13 +905,13 @@ watch(
   () => {
     document.body.classList.toggle('focus-mode', state.focusMode)
     document.body.classList.toggle('typewriter-mode', state.typewriterMode)
-    if (muya) muya.setFocusMode(state.focusMode)
+    if (muya) muya.setFocusMode(false)
   }
 )
 
 function focus(): void {
   if (isSource.value || isSplit.value) sourceRef.value?.focus()
-  else muya?.focus()
+  else muya?.domNode.focus({ preventScroll: true })
 }
 
 /**
@@ -893,7 +932,11 @@ const editorMenu = reactive({
  * 增加一个更顺手的入口（和 Typora 一致的操作习惯）。
  */
 const editorMenuItems = computed<Array<{ label: string; command: string } | { separator: true }>>(
-  () => [
+  () => isReading.value ? [
+    { label: t('reading.copy'), command: 'edit:copy' },
+    { label: t('reading.selectAll'), command: 'edit:selectAll' },
+    { label: t('reading.back'), command: 'reading:back' }
+  ] : [
     { label: t('ctx.copyMarkdown'), command: 'edit:copyMarkdown' },
     { label: t('ctx.copyHtml'), command: 'edit:copyHtml' },
     { label: t('ctx.pastePlain'), command: 'edit:pastePlain' },
@@ -1381,10 +1424,13 @@ function registerEditorCommands(): void {
   }
 
   const commands: Record<string, () => void | Promise<void>> = {
+    'reading:back': () => { currentSession?.reading?.back() },
+    'edit:copy': () => { const text = currentSession?.reading?.selectedText() ?? ''; if (text) void window.inkdown.writeClipboardText(text) },
+    'edit:selectAll': () => { currentSession?.reading?.selectAll() },
     'edit:undo': () => muya?.undo(),
     'edit:redo': () => muya?.redo(),
-    'edit:copyMarkdown': () => muya?.copyAsMarkdown(),
-    'edit:copyHtml': () => muya?.copyAsHtml(),
+    'edit:copyMarkdown': () => isReading.value ? window.inkdown.writeClipboardText(currentSession?.reading?.copyMarkdown(activeTab.value?.content ?? '') ?? '') : muya?.copyAsMarkdown(),
+    'edit:copyHtml': () => isReading.value ? window.inkdown.writeClipboardText(currentSession?.reading?.copyHtml(() => renderPreviewHtml(activeTab.value?.content ?? '')) ?? '') : muya?.copyAsHtml(),
     'edit:pastePlain': () => void muya?.pasteAsPlainText(),
     'view:focusEditor': () => focus(),
     'file:exportHtml': () => void exportHtml(),
@@ -1408,7 +1454,7 @@ function registerEditorCommands(): void {
     commands[id] = () => muya?.format(type)
   }
   for (const [id, handler] of Object.entries(commands)) {
-    if (/^(edit|paragraph|format):/.test(id)) {
+    if (/^(edit|paragraph|format):/.test(id) && !['edit:copy','edit:selectAll'].includes(id)) {
       commands[id] = () => (isSource.value || isSplit.value) ? runSourceCommand(id) : handler()
     }
   }
@@ -1505,6 +1551,7 @@ function onFind(e: Event): void {
     isCaseSensitive: boolean
     isWholeWord: boolean
   }
+  if (isReading.value && (d.action === 'replace' || d.action === 'replaceAll')) { state.notice = { text: t('reading.notice') }; return }
   const opts = {
     isRegexp: d.isRegexp,
     isCaseSensitive: d.isCaseSensitive,
@@ -1644,7 +1691,7 @@ function reportMatches(): void {
 
 function onFindClose(): void {
   muya?.hideAllFloatTools()
-  if (isSource.value || isSplit.value) return
+  if (isReading.value || isSource.value || isSplit.value) return
   muya?.flush()
   const tab = activeTab.value
   if (tab) tab.content = muya?.getMarkdown() ?? tab.content
@@ -1662,9 +1709,11 @@ function reloadFromTab(): void {
   }
   if (!muya) return
   suppress = true
-  muya.setContent(tab.content, false)
+  muya.setContent(readingRenderMarkdown(tab.content), false)
   suppress = false
   if (currentSession) { currentSession.content = tab.content; currentSession.markdown = muya.getMarkdown(); currentSession.cursor = null }
+  // 内容树被重建，阅读态下需要重新锁定
+  if (isReading.value) currentSession?.reading?.syncReadOnly(true)
   updateCounts(tab.content)
   refreshOutline()
   scheduleColumnLayout()
@@ -1690,6 +1739,7 @@ function onSettingsChanged(): void {
  * 写入剪贴板 → 触发 pasteAsPlainText，光标处即出现该文本。
  */
 async function onInsertText(e: Event): Promise<void> {
+  if (isReading.value) { state.notice = { text: t('reading.notice') }; return }
   const text = (e as CustomEvent).detail?.text
   if (typeof text !== 'string' || !text) return
   if (isSource.value || isSplit.value) {
@@ -1711,6 +1761,7 @@ const dragging = ref(false)
 const MD_RE = /\.(md|markdown|mdown|mkd|mkdn|mdx|txt)$/i
 
 function onDragOver(e: DragEvent): void {
+  if (isReading.value) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'none'; return }
   // 必须 preventDefault 才允许投放
   e.preventDefault()
   dragging.value = true
@@ -1727,6 +1778,7 @@ function onDragLeave(e: DragEvent): void {
 async function onDrop(e: DragEvent): Promise<void> {
   e.preventDefault()
   dragging.value = false
+  if (isReading.value) return
   const files = e.dataTransfer?.files
   if (!files || !files.length) return
   await openDroppedFiles([...files])
@@ -1805,7 +1857,66 @@ function onGotoLine(e: Event): void {
   })
 }
 
+async function openReadingLink(session: EditorSession, href: string): Promise<void> {
+  if (currentSession !== session || !isReading.value) return
+  const owner = state.tabs.find(tab => tab.id === session.id)
+  const target = readingLinkTarget(href, owner?.filePath ?? null)
+  if (!target) return
+  if (target.kind === 'fragment') { session.reading?.fragment(target.href); return }
+  if (target.kind === 'external') { await window.inkdown.openExternal(target.href); return }
+  try {
+    const { useFile } = await import('../composables/useFile')
+    await useFile().openPath(target.path)
+    if (!target.fragment) return
+    const incoming = currentSession
+    scheduleColumnLayout()
+    requestAnimationFrame(() => { void nextTick(() => {
+      if (isReading.value && currentSession === incoming && activeTab.value?.filePath?.replace(/\\/g,'/').toLowerCase() === target.path.toLowerCase()) incoming?.reading?.fragment(target.fragment)
+    }) })
+  } catch { state.notice = { text: t('reading.linkUnavailable') } }
+}
+
+function restoreReadingPosition(session: EditorSession, position: ReadingPosition): void {
+  if (currentSession !== session || !isReading.value) return
+  const scroller = editorScrollRef.value
+  if (!scroller) return
+  scroller.scrollTop = position.top
+  if (columnsActive.value && position.column !== undefined) {
+    session.columnStart = position.column
+    columnRestorePending = { session, start: position.column }
+    scheduleColumnLayout()
+  } else scroller.scrollLeft = position.left
+}
+
+function onReadingHeading(event: Event): void {
+  const detail = (event as CustomEvent).detail
+  if (isReading.value && detail?.id === currentSession?.id) currentSession?.reading?.go(detail.index)
+}
+
+watch(isReading, reading => {
+  document.body.classList.toggle('is-reading-mode', reading)
+  // 关键：同步每个会话的只读状态。
+  // 进入阅读 → 锁 contenteditable；退出阅读 → 还原，
+  // 否则切回编辑后仍然打不了字。
+  for (const session of editorSessions.values()) session.reading?.syncReadOnly(reading)
+  if (reading) currentSession?.reading?.activate()
+}, { immediate: true })
+
+/**
+ * 离开所见即所得视图时自动退出阅读态。
+ *
+ * 源码 / 源码预览本身就是编辑视图，若保留 readingMode，
+ * 切回来会莫名其妙仍是只读。这里统一复位，避免状态混淆。
+ */
+watch(
+  () => state.viewMode,
+  (mode) => {
+    if (mode !== 'wysiwyg' && state.readingMode) state.readingMode = false
+  }
+)
+
 onMounted(() => {
+  window.addEventListener('inkdown:reading-heading', onReadingHeading)
   registerGlobalCommands()
   columnContentObserver = new MutationObserver(records => {
     if (!columnsActive.value) return
@@ -1862,6 +1973,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  document.body.classList.remove('is-reading-mode')
+  window.removeEventListener('inkdown:reading-heading', onReadingHeading)
   previewDiagrams.dispose()
   cancelPreviewRefresh()
   if (caretFrame != null) cancelAnimationFrame(caretFrame)
@@ -1887,7 +2000,7 @@ onBeforeUnmount(() => {
   muya = null
 })
 
-defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '' })
+defineExpose({ focus, reloadFromTab, getMarkdown: () => isReading.value ? activeTab.value?.content ?? '' : muya?.getMarkdown() ?? '' })
 </script>
 
 <template>
@@ -1917,7 +2030,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
       <span class="columns-sheet" />
       <span v-if="columnsPages > 1" class="columns-sheet" />
     </div>
-    <div ref="editorScrollRef" v-show="!isSource && !isSplit" class="editor-scroll"
+    <div ref="editorScrollRef" v-show="!isSource && !isSplit" class="editor-scroll reading-scroll"
       :class="{ 'is-columns': columnsActive }" @scroll.passive="onColumnScroll" @load.capture="scheduleColumnLayout">
       <template v-if="columnsActive">
         <span class="columns-end" :style="{ left: `${columnsEnd}px` }" aria-hidden="true" />
@@ -2422,4 +2535,11 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => muya?.getMarkdown() ?? '
 .columns-pager button:hover { background: var(--ty-hover); }
 .columns-pager button:disabled { opacity: .3; cursor: default; }
 .columns-flow { margin-right: 4px; }
+.reading-scroll :deep(.mu-hide.mu-remove) { display: none !important; }
+.reading-scroll :deep(.mu-container), .reading-scroll :deep(.mu-content) { cursor: text; user-select: text; }
+.reading-scroll :deep(.mu-copy-header-link), .reading-scroll :deep(.mu-fold-toggle), .reading-scroll :deep(.mu-code-copy), .reading-scroll :deep(.mu-language-input) { display: none !important; }
+.reading-scroll :deep(.muya-container:focus) { outline: none; }
+</style>
+<style>
+.is-reading-mode .mu-float-wrapper, .is-reading-mode .mu-front-button-wrapper, .is-reading-mode .mu-image-resize-bar { display: none !important; }
 </style>

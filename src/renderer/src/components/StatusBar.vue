@@ -26,13 +26,16 @@ const cursorLabel = computed(() => {
 const viewLabel = computed(() => {
   if (state.viewMode === 'source') return t('status.source')
   if (state.viewMode === 'split') return t('view.splitPreview')
-  return t('status.wysiwyg')
+  // 所见即所得下分两种状态：可编辑 / 只读阅读
+  return state.readingMode ? t('status.reading') : t('status.wysiwyg')
 })
 </script>
 
 <template>
   <footer class="status-bar">
     <div class="status-left">
+      <button v-if="state.viewMode === 'wysiwyg'" class="status-btn reading-back" :disabled="!state.readingCanGoBack"
+        :title="`${t('reading.back')} · Alt+←`" @click="executeCommand('reading:back')">← {{ t('reading.back') }}</button>
       <span class="status-item">{{ savedLabel }}</span>
       <span v-if="tab?.filePath" class="status-item path" :title="tab.filePath">
         {{ tab.filePath }}
@@ -40,8 +43,19 @@ const viewLabel = computed(() => {
     </div>
     <div class="status-right">
       <div class="view-switch" role="group" :aria-label="t('menu.view')">
+        <!--
+          所见即所得按钮：已在所见即所得时点击切换编辑 / 阅读，
+          在其它视图时点击先回到所见即所得。
+        -->
         <button class="status-btn" :class="{ on: state.viewMode === 'wysiwyg' }"
-          @click="state.viewMode = 'wysiwyg'">{{ t('status.wysiwyg') }}</button>
+          :title="state.viewMode === 'wysiwyg'
+            ? (state.readingMode ? t('view.readingToEditHint') : t('view.editToReadingHint'))
+            : undefined"
+          @click="state.viewMode === 'wysiwyg'
+            ? executeCommand('view:toggleReading')
+            : (state.viewMode = 'wysiwyg')">
+          {{ viewLabel }}
+        </button>
         <button class="status-btn source-preview-toggle" :class="{ on: state.viewMode === 'split' }"
           @click="state.viewMode = 'split'">{{ t('view.splitPreview') }}</button>
         <button class="status-btn" :class="{ on: state.viewMode === 'source' }"
@@ -56,10 +70,10 @@ const viewLabel = computed(() => {
         </svg>
         {{ t('view.continuousColumns') }}
       </button>
-      <button class="status-btn" :class="{ on: state.focusMode }" :title="`${t('menu.view.toggleFocus')} ${displayShortcutFor('view:toggleFocus')}`" @click="executeCommand('view:toggleFocus')">
+      <button v-if="state.viewMode !== 'wysiwyg'" class="status-btn" :class="{ on: state.focusMode }" :title="`${t('menu.view.toggleFocus')} ${displayShortcutFor('view:toggleFocus')}`" @click="executeCommand('view:toggleFocus')">
         {{ t('status.focus') }}
       </button>
-      <button
+      <button v-if="state.viewMode !== 'wysiwyg'"
         class="status-btn"
         :class="{ on: state.typewriterMode }"
         :title="`${t('menu.view.toggleTypewriter')} ${displayShortcutFor('view:toggleTypewriter')}`"
@@ -118,6 +132,7 @@ const viewLabel = computed(() => {
   padding: 2px 6px;
   cursor: pointer;
 }
+.status-btn:disabled { opacity: .4; cursor: default; }
 .status-btn:hover {
   background: var(--ty-hover);
   color: var(--ty-text);

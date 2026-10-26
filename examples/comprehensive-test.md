@@ -337,7 +337,7 @@ $$
 
 <img src="../build/icon.png" alt="宽度为 96 的本地图标" width="96" />
 
-文件路径显示样例：`E:\Desktop\JX\07-DSH\02-typra2\examples\comprehensive-test.md`。
+文件路径显示样例：`C:\Users\Public\Documents\notes\comprehensive-test.md`。
 
 ## HTML 与折叠内容
 

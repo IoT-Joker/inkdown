@@ -15,8 +15,9 @@ import {
   setAutoCheckEnabled
 } from './updater'
 import { markdownToDocx } from './exportDocx'
-import { writeHtmlPdf } from './exportWindow'
+import { previewHtmlPdf, previewPdfPage, releasePdfPreview, writeHtmlPdf } from './exportWindow'
 import { htmlToVisualDocx } from './exportVisualDocx'
+import type { ExportFileOptions } from '../shared/exportOptions'
 import { searchInFolder, type SearchOptions } from './folderSearch'
 import { randomUUID } from 'node:crypto'
 
@@ -300,7 +301,7 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'app:exportDocx',
-    async (_e, markdown: string, defaultName: string, title: string, html?: string) => {
+    async (_e, markdown: string, defaultName: string, title: string, html?: string, options?: ExportFileOptions) => {
       const win = getMainWindow()
       const result = await dialog.showSaveDialog(win!, {
         defaultPath: defaultName,
@@ -308,7 +309,7 @@ export function registerIpc(): void {
       })
       if (result.canceled || !result.filePath) return null
       try {
-        const buffer = html ? await htmlToVisualDocx(html, title) : await markdownToDocx(markdown, title)
+        const buffer = html ? await htmlToVisualDocx(html, title, options) : await markdownToDocx(markdown, title)
         await fsp.writeFile(result.filePath, buffer)
         return result.filePath
       } catch (err) {
@@ -332,7 +333,7 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('shell:openExternal', async (_e, url: string) => {
-    if (/^https?:\/\//.test(url)) await shell.openExternal(url)
+    if (typeof url === 'string' && /^(https?:\/\/|mailto:)/i.test(url)) await shell.openExternal(url)
   })
 
   ipcMain.handle('shell:showItemInFolder', async (_e, targetPath: string) => {
@@ -370,9 +371,9 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'app:exportPdf',
-    async (_e, filePath: string, html: string, options?: { landscape?: boolean }) => {
+    async (_e, filePath: string, html: string, options?: ExportFileOptions) => {
       try {
-        await writeHtmlPdf(filePath, html, options?.landscape)
+        await writeHtmlPdf(filePath, html, options)
         return true
       } catch (err) {
         console.error('[exportPdf] 失败:', err)
@@ -380,6 +381,36 @@ export function registerIpc(): void {
       }
     }
   )
+
+  /** Actual PDF bytes; errors reject, resource warnings accompany a usable preview. */
+  ipcMain.handle('app:previewExport', (_e, html: string, options: unknown) =>
+    previewHtmlPdf(html, options)
+  )
+
+  let previewOwner: Electron.WebContents | undefined
+  const watchedPreviewSenders = new WeakSet<Electron.WebContents>()
+  ipcMain.handle('app:previewExportPage', (_e, pdf: unknown, page: unknown) => {
+    const sender = _e?.sender
+    if (sender) {
+      if (sender.isDestroyed()) throw new Error('PDF preview sender was destroyed')
+      previewOwner = sender
+      if (!watchedPreviewSenders.has(sender)) {
+        watchedPreviewSenders.add(sender)
+        sender.once('destroyed', () => {
+          if (previewOwner !== sender) return
+          previewOwner = undefined
+          void releasePdfPreview().catch((error) => console.error('[releaseExportPreview]', error))
+        })
+      }
+    }
+    return previewPdfPage(pdf, page)
+  })
+
+  ipcMain.handle('app:releaseExportPreview', async (_e) => {
+    if (_e?.sender && previewOwner && _e.sender !== previewOwner) return
+    previewOwner = undefined
+    await releasePdfPreview()
+  })
 
   ipcMain.handle('app:getPath', (_e, name: 'home' | 'documents' | 'pictures' | 'userData') =>
     app.getPath(name)

@@ -1,5 +1,6 @@
-import { Document, HeadingLevel, ImageRun, Packer, Paragraph, TextRun, AlignmentType, Bookmark, InternalHyperlink, type ParagraphChild } from 'docx'
+import { Document, HeadingLevel, ImageRun, Packer, Paragraph, TextRun, AlignmentType, Bookmark, InternalHyperlink, Footer, PageNumber, PageOrientation, type ParagraphChild } from 'docx'
 import { withExportWindow } from './exportWindow'
+import { exportPageSizeMm, normalizeExportOptions, type ExportFileOptions } from '../shared/exportOptions'
 
 interface VisualBlock {
   index: number
@@ -14,9 +15,14 @@ interface VisualBlock {
 }
 
 /** Keep ordinary text editable; capture complex blocks using Chromium's real layout. */
-export async function htmlToVisualDocx(html: string, title: string): Promise<Buffer> {
+export async function htmlToVisualDocx(html: string, title: string, input?: ExportFileOptions): Promise<Buffer> {
+  const options = normalizeExportOptions(input)
+  const page = exportPageSizeMm(options)
+  const contentWidth = (page.width - options.marginMm.left - options.marginMm.right) * 96 / 25.4
+  const contentHeight = (page.height - options.marginMm.top - options.marginMm.bottom) * 96 / 25.4
+  const twips = (mm: number) => Math.round(mm * 1440 / 25.4)
   return withExportWindow(html, async (win) => {
-    await win.webContents.insertCSS('html, body { overflow: visible !important; } .markdown-body { box-sizing: border-box; width: 650px !important; max-width: 650px !important; padding-left: 0 !important; padding-right: 0 !important; margin-left: auto !important; margin-right: auto !important; } .katex-display, .katex-display > .katex { overflow: visible !important; } *::-webkit-scrollbar { display: none !important; }')
+    await win.webContents.insertCSS(`html, body { overflow: visible !important; } html body .markdown-body { box-sizing: border-box; width: ${contentWidth}px !important; max-width: ${contentWidth}px !important; padding-left: 0 !important; padding-right: 0 !important; margin-left: auto !important; margin-right: auto !important; } .katex-display, .katex-display > .katex { overflow: visible !important; } *::-webkit-scrollbar { display: none !important; }`, { cssOrigin: 'user' })
     const blocks = await win.webContents.executeJavaScript(`(() => {
       for (const details of document.querySelectorAll('details')) details.open = true;
       const root = document.querySelector('article.markdown-body') || document.body;
@@ -103,8 +109,9 @@ export async function htmlToVisualDocx(html: string, title: string): Promise<Buf
         return { width: Math.ceil(r.width), height: Math.ceil(r.height) };
       })()`) as { width: number; height: number }
       if (!dimensions.width || !dimensions.height) continue
-      const scale = Math.min(1, 650 / dimensions.width)
-      const chunkHeight = Math.min(1000, Math.floor(850 / scale))
+      const scale = Math.min(1, contentWidth / dimensions.width)
+      // Reserve room for the Word paragraph's line box/spacing around pictures.
+      const chunkHeight = Math.max(1, Math.min(1000, Math.floor(Math.max(1, contentHeight - 32) / scale)))
       for (let offset = 0; offset < dimensions.height; offset += chunkHeight) {
         const height = Math.min(chunkHeight, dimensions.height - offset)
         const rect = await win.webContents.executeJavaScript(`(() => {
@@ -124,9 +131,19 @@ export async function htmlToVisualDocx(html: string, title: string): Promise<Buf
         }))
       }
     }
+    // docx swaps the supplied portrait dimensions when orientation is landscape.
+    const portrait = exportPageSizeMm({ ...options, orientation: 'portrait' })
     const doc = new Document({ title, creator: 'Inkdown',
-      sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 850, bottom: 850, left: 1078, right: 1078 } } }, children: children.length ? children : [new Paragraph('')] }]
+      styles: { default: { document: { run: { size: options.fontSize * 2 } } } },
+      sections: [{
+        properties: { page: {
+          size: { width: twips(portrait.width), height: twips(portrait.height), orientation: options.orientation === 'landscape' ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT },
+          margin: { top: twips(options.marginMm.top), right: twips(options.marginMm.right), bottom: twips(options.marginMm.bottom), left: twips(options.marginMm.left), footer: twips(Math.min(7, options.marginMm.bottom / 2)) }
+        } },
+        footers: options.pageNumbers ? { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ children: [PageNumber.CURRENT], size: 18, color: '57606a' })] })] }) } : undefined,
+        children: children.length ? children : [new Paragraph('')]
+      }]
     })
     return Packer.toBuffer(doc)
-  })
+  }, { options, allowResourceFailures: input?.allowResourceFailures === true })
 }

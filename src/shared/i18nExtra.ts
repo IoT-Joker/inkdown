@@ -315,8 +315,14 @@ const inlineUpdate: Record<LocaleCode, Dict> = {
   }
 }
 
+const reading: Record<LocaleCode, Dict> = {
+  'zh-CN': { 'reading.linkUnavailable': '无法打开此文档链接。', 'reading.back': '返回', 'reading.copy': '复制选中文字', 'reading.selectAll': '全选正文', 'reading.notice': '阅读模式不可修改文档，请切换到源码或源码预览编辑。' },
+  en: { 'reading.linkUnavailable': 'This document link could not be opened.', 'reading.back': 'Back', 'reading.copy': 'Copy selected text', 'reading.selectAll': 'Select all text', 'reading.notice': 'Reading mode protects the document. Switch to Source or Split preview to edit.' }
+}
+
 const EXTRA: Record<LocaleCode, Dict[]> = {
   'zh-CN': [
+    reading['zh-CN'],
     inlineUpdate['zh-CN'],
     folderSearch['zh-CN'],
     splitView['zh-CN'],
@@ -325,7 +331,7 @@ const EXTRA: Record<LocaleCode, Dict[]> = {
     contextMenu['zh-CN'],
     orbDict['zh-CN'], fileSafety['zh-CN']
   ],
-  en: [inlineUpdate.en, folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en, fileSafety.en]
+  en: [reading.en, inlineUpdate.en, folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en, fileSafety.en]
 }
 
 let merged = false

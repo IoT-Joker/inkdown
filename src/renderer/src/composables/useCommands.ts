@@ -3,6 +3,7 @@ import { getActiveTab, state, persistView, createTab, closeTab, settings, persis
 import { useFile } from './useFile'
 import { translate } from '../../../shared/i18n'
 import { currentLocale } from './useI18n'
+import { readingCommandAllowed } from '../editor/reading'
 
 /** 取当前语言的文案（命令中心不在组件上下文里）。 */
 function t(key: string, params?: Record<string, string | number>): string {
@@ -33,6 +34,13 @@ export function registerCommands(map: Record<string, CommandHandler>): void {
 
 /** 执行命令；未注册时静默忽略，避免菜单点了没反应却报错。 */
 export async function executeCommand(id: string, payload?: unknown): Promise<void> {
+  // 只有「阅读态」才拦截改动类命令。
+  // 早期写法是 state.viewMode === 'wysiwyg'，等于把可编辑的所见即所得也当成只读，
+  // 导致复制段落、插入表格等在正常编辑时全部失效。
+  if (state.viewMode === 'wysiwyg' && state.readingMode && !readingCommandAllowed(id)) {
+    state.notice = { text: t('reading.notice') }
+    return
+  }
   const handler = handlers.get(id)
   if (handler) await handler(payload)
 }
@@ -130,6 +138,9 @@ const COMMAND_LABEL_KEYS: Record<string, string> = {
   'edit:copyMarkdown': 'menu.edit.copyMarkdown',
   'edit:copyHtml': 'menu.edit.copyHtml',
   'edit:pastePlain': 'menu.edit.pastePlain',
+  'reading:back': 'reading.back',
+  'edit:copy': 'reading.copy',
+  'edit:selectAll': 'reading.selectAll',
   'view:toggleSplit': 'view.splitPreview',
   'view:toggleColumns': 'view.continuousColumns',
   'view:toggleTheme': 'menu.view.toggleTheme',
@@ -275,9 +286,29 @@ export function captureShortcut(event: KeyboardEvent): CapturedShortcut | null {
   }
 }
 
+/** Reading roots stop Muya keyboard listeners while retaining application shortcuts. */
+export function dispatchReadingShortcut(event: KeyboardEvent): void {
+  if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'ArrowLeft') {
+    event.preventDefault(); void executeCommand('reading:back'); return
+  }
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'a') {
+    event.preventDefault(); void executeCommand('edit:selectAll'); return
+  }
+  // Ctrl+C keeps the browser's native selection/copy event, never Muya's Markdown copy.
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') return
+  const captured = captureShortcut(event)
+  const match = captured && DEFAULT_SHORTCUTS.find(item => shortcutFor(item.id) === captured.accelerator)
+  if (match) { event.preventDefault(); void executeCommand(match.id); return }
+  if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey || ['Backspace','Delete','Enter'].includes(event.key)) event.preventDefault()
+}
+
 /** 快捷键持久化后由 App 挂载一次全局键盘分发。 */
 export function installShortcutDispatcher(): () => void {
   const onKeydown = (event: KeyboardEvent): void => {
+    const form = (event.target as HTMLElement | null)?.closest?.('input,textarea,select,[contenteditable="true"]')
+    if (state.viewMode === 'wysiwyg' && !form && (event.altKey && event.key === 'ArrowLeft' || (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a')) {
+      dispatchReadingShortcut(event); return
+    }
     const captured = captureShortcut(event)
     if (!captured) return
     const target = event.target as HTMLElement | null
@@ -321,6 +352,20 @@ export function registerGlobalCommands(): void {
     },
     'view:toggleFocus': () => {
       state.focusMode = !state.focusMode
+    },
+    /**
+     * 在「编辑」与「阅读（只读）」之间切换。
+     *
+     * 只在所见即所得视图下有意义；源码/源码预览本身就是编辑视图，
+     * 切换时先回到所见即所得再进入阅读。
+     */
+    'view:toggleReading': () => {
+      if (state.viewMode !== 'wysiwyg') {
+        state.viewMode = 'wysiwyg'
+        state.readingMode = true
+        return
+      }
+      state.readingMode = !state.readingMode
     },
     'view:toggleTypewriter': () => {
       state.typewriterMode = !state.typewriterMode

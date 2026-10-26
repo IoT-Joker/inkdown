@@ -1,3 +1,8 @@
+import { reactive } from 'vue'
+import { DEFAULT_EXPORT_OPTIONS, normalizeExportOptions, applyExportOptionsToHtml, type ExportOptions, type ExportIssue, type ExportPreviewResult, type ExportPreviewPage } from '../../../shared/exportOptions'
+import { translate } from '../../../shared/i18n'
+import { currentLocale } from './useI18n'
+import '../../../shared/i18nExport'
 import { MarkdownToHtml, renderToStaticHTML } from '@muyajs/core'
 import { getActiveTab, settings, state } from '../store'
 import { baseName } from './useFile'
@@ -61,8 +66,7 @@ function exportName(ext: string): string {
  * 该路径依赖图表运行时，一旦失败就退回同步的 `renderToStaticHTML`，
  * 保证导出始终可用（此时图表会以普通代码块保留）。
  */
-async function buildHtml(): Promise<string> {
-  const tab = getActiveTab()
+async function buildHtml(issues: ExportIssue[] = [], tab = getActiveTab()): Promise<string> {
   if (!tab) return ''
   const muya = (window as unknown as { __inkdownMuya?: unknown }).__inkdownMuya
   if (muya) {
@@ -76,8 +80,10 @@ async function buildHtml(): Promise<string> {
       ])
       if (rendered) return rendered
       console.warn('[export] 图表渲染超时，回退到静态渲染')
+      issues.push({ kind: 'fallback', message: et('export.fallbackTimeout') })
     } catch (err) {
       console.warn('[export] 图表渲染导出失败，回退到静态渲染：', err)
+      issues.push({ kind: 'fallback', message: et('export.fallbackError'), source: err instanceof Error ? err.message : String(err) })
     } finally {
       if (timer) clearTimeout(timer)
     }
@@ -157,52 +163,223 @@ export function renderPreviewHtml(markdown: string): string {
 // 暴露给主进程自检使用
 ;(window as unknown as Record<string, unknown>).__inkdownExport = { buildHtmlForCheck }
 
-/** 导出为 HTML 文件。 */
-export async function exportHtml(): Promise<boolean> {
-  const tab = getActiveTab()
-  if (!tab) return false
-  const html = await buildHtml()
-  const saved = await window.inkdown.saveFileDialog(exportName('html'), html)
-  return !!saved
-}
 
-/**
- * 导出为 Word (.docx)。
- *
- * 普通正文和标题保留可编辑；复杂内容由主进程按实际渲染效果截图嵌入。
- */
-export async function exportDocxFile(): Promise<boolean> {
-  const tab = getActiveTab()
-  if (!tab) return false
-  const title = tab.filePath ? baseName(tab.filePath).replace(/\.[^.]+$/, '') : tab.title
-  try {
-    const html = await buildHtml()
-    const saved = await window.inkdown.exportDocx(tab.content, exportName('docx'), title || 'Inkdown', html)
-    return !!saved
-  } catch (error) {
-    state.notice = { text: `Word 导出失败：${error instanceof Error ? error.message : String(error)}` }
-    return false
+function et(key: string): string { return translate(currentLocale.value, key) }
+type ExportFormat = 'pdf' | 'docx' | 'html'
+const OPTIONS_KEY = 'inkdown-export-options-v1'
+export function loadExportOptions(): ExportOptions {
+  try { return normalizeExportOptions(JSON.parse(localStorage.getItem(OPTIONS_KEY) || 'null')) }
+  catch { return normalizeExportOptions(DEFAULT_EXPORT_OPTIONS) }
+}
+export const exportPreview = reactive({
+  visible: false, format: 'pdf' as ExportFormat, title: '', name: '', markdown: '', html: '',
+  options: loadExportOptions(), issues: [] as ExportIssue[],
+  phase: 'building' as 'building' | 'previewing' | 'ready' | 'saving', error: '', pdfUrl: '',
+  pdfBytes: new Uint8Array(), pageImage: '', imageReady: false, page: 1, pageCount: 1, pageBusy: false
+})
+let requestId = 0
+let pageRequestId = 0
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+let resolveExport: ((saved: boolean) => void) | undefined
+let renderIssues: ExportIssue[] = []
+interface PreviewLayout { result: ExportPreviewResult; pages: Map<number, ExportPreviewPage> }
+const layouts = new Map<string, PreviewLayout>()
+let activeLayout: PreviewLayout | undefined
+let documentEpoch = 0
+let pdfRunning = false
+let queuedPreview: { id: number; epoch: number; key: string; html: string; options: ExportOptions } | null = null
+const layoutKey = (options: ExportOptions): string => JSON.stringify(normalizeExportOptions(options))
+function trimLayouts(): void {
+  const cost = (): number => [...layouts.values()].reduce((total, entry) => total + entry.result.pdf.byteLength + [...entry.pages.values()].reduce((bytes, page) => bytes + page.image.length * 2, 0), 0)
+  while (layouts.size > 1 && (layouts.size > 3 || cost() > 24 * 1024 * 1024)) {
+    const oldest = [...layouts].find(([, entry]) => entry !== activeLayout)?.[0]
+    if (!oldest) break
+    layouts.delete(oldest)
   }
 }
 
-/**
- * 导出为 PDF。
- * 文档 HTML 交给主进程在独立的隐藏窗口里渲染并打印，
- * 避免把侧边栏/标签栏/状态栏一起打进 PDF。
- */
-export async function exportPdf(): Promise<boolean> {
-  const tab = getActiveTab()
-  if (!tab) return false
-  const target = await window.inkdown.saveAsDialog(exportName('pdf'))
-  if (!target) return false
+function releasePdf(clearImage = true): void {
+  if (exportPreview.pdfUrl) URL.revokeObjectURL(exportPreview.pdfUrl)
+  exportPreview.pdfUrl = ''
+  exportPreview.pdfBytes = new Uint8Array()
+  exportPreview.imageReady = false
+  if (clearImage) exportPreview.pageImage = ''
+  activeLayout = undefined
+  pageRequestId++
+}
 
+export function closeExportPreview(saved = false): void {
+  if (exportPreview.phase === 'saving' && !saved) return
+  requestId++
+  documentEpoch++
+  queuedPreview = null
+  layouts.clear()
+  const release = window.inkdown.releaseExportPreview
+  if (release) void release().catch(() => {})
+  if (previewTimer) clearTimeout(previewTimer)
+  previewTimer = undefined
+  exportPreview.visible = false
+  releasePdf()
+  resolveExport?.(saved)
+  resolveExport = undefined
+}
+
+async function displayLayout(entry: PreviewLayout): Promise<void> {
+  releasePdf(false)
+  activeLayout = entry
+  exportPreview.pdfBytes = new Uint8Array(entry.result.pdf)
+  exportPreview.pdfUrl = URL.createObjectURL(new Blob([new Uint8Array(entry.result.pdf)], { type: 'application/pdf' }))
+  exportPreview.issues = [...renderIssues, ...entry.result.issues]
+  await showExportPage(1)
+}
+
+/** Serialize expensive PDF jobs, retaining only the newest pending settings. */
+async function generatePreview(id: number): Promise<void> {
+  if (id !== requestId || !exportPreview.visible) return
+  const options = normalizeExportOptions(exportPreview.options)
+  const cached = layouts.get(layoutKey(options))
+  if (cached) {
+    queuedPreview = null
+    layouts.delete(layoutKey(options))
+    layouts.set(layoutKey(options), cached)
+    await displayLayout(cached)
+    return
+  }
+  queuedPreview = { id, epoch: documentEpoch, key: layoutKey(options), html: exportPreview.html, options }
+  if (pdfRunning) return
+  pdfRunning = true
   try {
-    const html = await buildHtml()
-    const saved = await window.inkdown.exportPdf(target, html)
-    if (!saved) state.notice = { text: 'PDF 导出失败，请检查图片路径和网络后重试。' }
-    return saved
+    while (queuedPreview) {
+      const work = queuedPreview
+      queuedPreview = null
+      if (work.id !== requestId || work.epoch !== documentEpoch || !exportPreview.visible) continue
+      try {
+        let entry = layouts.get(work.key)
+        if (!entry) {
+          const result = await window.inkdown.previewExport(work.html, work.options)
+          if (work.epoch !== documentEpoch || !exportPreview.visible) continue
+          entry = { result: { pdf: new Uint8Array(result.pdf), issues: result.issues }, pages: new Map() }
+        }
+        layouts.delete(work.key)
+        layouts.set(work.key, entry)
+        trimLayouts()
+        if (work.id !== requestId || work.epoch !== documentEpoch || !exportPreview.visible) continue
+        await displayLayout(entry)
+      } catch (error) {
+        if (work.id !== requestId || work.epoch !== documentEpoch || !exportPreview.visible) continue
+        exportPreview.error = error instanceof Error ? error.message : String(error)
+        exportPreview.phase = 'ready'
+      }
+    }
+  } finally { pdfRunning = false }
+}
+
+export async function showExportPage(page: number): Promise<void> {
+  if (!exportPreview.visible || !exportPreview.pdfBytes.length || !activeLayout) return
+  const id = ++pageRequestId, documentId = requestId, epoch = documentEpoch, entry = activeLayout
+  exportPreview.pageBusy = true
+  try {
+    let result = entry.pages.get(page)
+    if (!result) {
+      result = await window.inkdown.previewExportPage(new Uint8Array(exportPreview.pdfBytes), page)
+      if (epoch !== documentEpoch) return
+      entry.pages.set(result.page, result)
+      while (entry.pages.size > 1 && (entry.pages.size > 10 || [...entry.pages.values()].reduce((sum, page) => sum + page.image.length * 2, 0) > 8 * 1024 * 1024)) entry.pages.delete(entry.pages.keys().next().value!)
+      trimLayouts()
+    }
+    if (id !== pageRequestId || documentId !== requestId || !exportPreview.visible) return
+    exportPreview.error = ''
+    exportPreview.imageReady = true
+    exportPreview.pageImage = result.image
+    exportPreview.page = result.page
+    exportPreview.pageCount = result.pageCount
+    exportPreview.phase = 'ready'
   } catch (error) {
-    state.notice = { text: `PDF 导出失败：${error instanceof Error ? error.message : String(error)}` }
-    return false
+    if (id !== pageRequestId || documentId !== requestId || !exportPreview.visible) return
+    exportPreview.error = error instanceof Error ? error.message : String(error)
+    exportPreview.phase = 'ready'
+  } finally {
+    if (id === pageRequestId) exportPreview.pageBusy = false
   }
 }
+
+export async function retryExportPreview(): Promise<void> {
+  if (!exportPreview.visible || exportPreview.phase !== 'ready' || exportPreview.pageBusy) return
+  exportPreview.error = ''
+  exportPreview.phase = 'previewing'
+  if (exportPreview.pdfBytes.length && activeLayout) await showExportPage(1)
+  else await generatePreview(++requestId)
+}
+
+export function updateExportOptions(options: ExportOptions): void {
+  const normalized = normalizeExportOptions(options)
+  if (layoutKey(normalized) === layoutKey(exportPreview.options)) return
+  exportPreview.options = normalized
+  try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(exportPreview.options)) } catch { /* Storage may be unavailable. */ }
+  if (!exportPreview.visible || !exportPreview.html || exportPreview.phase === 'saving') return
+  const id = ++requestId
+  exportPreview.phase = 'previewing'
+  exportPreview.error = ''
+  releasePdf(false)
+  if (previewTimer) clearTimeout(previewTimer)
+  previewTimer = setTimeout(() => { previewTimer = undefined; void generatePreview(id) }, 250)
+}
+
+async function openExportPreview(format: ExportFormat): Promise<boolean> {
+  if (exportPreview.phase === 'saving') return false
+  const tab = getActiveTab()
+  if (!tab) return false
+  const snapshot = { ...tab }
+  closeExportPreview()
+  const id = ++requestId
+  Object.assign(exportPreview, { visible: true, format, title: snapshot.title, name: exportName(format), markdown: snapshot.content,
+    html: '', issues: [], phase: 'building', error: '', page: 1, pageCount: 1, pageBusy: false, options: loadExportOptions() })
+  renderIssues = []
+  const finished = new Promise<boolean>(resolve => { resolveExport = resolve })
+  const collected: ExportIssue[] = []
+  try {
+    const html = await buildHtml(collected, snapshot)
+    if (id !== requestId || !exportPreview.visible) return finished
+    exportPreview.html = html
+    renderIssues = collected
+    exportPreview.issues = [...renderIssues]
+    exportPreview.phase = 'previewing'
+    void generatePreview(id)
+  } catch (error) {
+    if (id === requestId && exportPreview.visible) {
+      exportPreview.error = error instanceof Error ? error.message : String(error)
+      exportPreview.phase = 'ready'
+    }
+  }
+  return finished
+}
+
+export async function saveExportPreview(): Promise<void> {
+  if (exportPreview.phase !== 'ready' || !exportPreview.imageReady || !exportPreview.pageImage || exportPreview.pageBusy || !exportPreview.pdfUrl) return
+  exportPreview.phase = 'saving'
+  exportPreview.error = ''
+  try {
+    const options = { ...normalizeExportOptions(exportPreview.options), allowResourceFailures: true }
+    let saved = false
+    if (exportPreview.format === 'pdf') {
+      const target = await window.inkdown.saveAsDialog(exportPreview.name)
+      if (target) {
+        saved = await window.inkdown.exportPdf(target, exportPreview.html, options)
+        if (!saved) throw new Error(et('export.saveError'))
+      }
+    } else if (exportPreview.format === 'docx') {
+      saved = !!await window.inkdown.exportDocx(exportPreview.markdown, exportPreview.name, exportPreview.title, exportPreview.html, options)
+    } else {
+      saved = !!await window.inkdown.saveFileDialog(exportPreview.name, applyExportOptionsToHtml(exportPreview.html, options))
+    }
+    if (saved) closeExportPreview(true)
+  } catch (error) {
+    exportPreview.error = error instanceof Error ? error.message : String(error)
+  } finally {
+    exportPreview.phase = 'ready'
+  }
+}
+
+export async function exportHtml(): Promise<boolean> { return openExportPreview('html') }
+export async function exportDocxFile(): Promise<boolean> { return openExportPreview('docx') }
+export async function exportPdf(): Promise<boolean> { return openExportPreview('pdf') }

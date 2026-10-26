@@ -26,6 +26,10 @@ const filteredChildren = computed(() => {
 /** 点击大纲跳转到对应标题。muya 的标题块没有 slug 属性，
  *  因此按标题块在文档中的出现顺序定位，再交给编辑器滚动显示。 */
 function onOutlineClick(index: number): void {
+  if (state.viewMode === 'wysiwyg') {
+    window.dispatchEvent(new CustomEvent('inkdown:reading-heading', { detail: { id: state.activeId, index } }))
+    return
+  }
   const headings = document.querySelectorAll('.muya-container .mu-atx-heading, .muya-container .mu-setext-heading')
   const el = headings[index] as HTMLElement | undefined
   if (!el) return
@@ -97,7 +101,8 @@ function outlineIndent(level: number): string {
           v-for="(item, index) in state.outline"
           :key="item.slug + index"
           class="outline-row"
-          :class="`lvl-${item.level}`"
+          :class="[`lvl-${item.level}`, { active: state.viewMode === 'wysiwyg' && state.readingHeadingIndex === index }]"
+          :aria-current="state.viewMode === 'wysiwyg' && state.readingHeadingIndex === index ? 'location' : undefined"
           :style="{ paddingLeft: outlineIndent(item.level) }"
           :title="item.text"
           @click="onOutlineClick(index)"
@@ -216,6 +221,7 @@ function outlineIndent(level: number): string {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.outline-row.active { background: var(--ty-active); color: var(--ty-accent); font-weight: 600; }
 .outline-row:hover {
   background: var(--ty-hover);
 }

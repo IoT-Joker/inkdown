@@ -211,6 +211,7 @@ function createTabFromFile(filePath: string, content: string, mtimeMs: number): 
     savedContent: content,
     mtimeMs,
     cursor: null,
-    scrollTop: 0
+    scrollTop: 0,
+    readingHistory: []
   }
 }

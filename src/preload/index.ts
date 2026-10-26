@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { ExportFileOptions, ExportOptions, ExportPreviewResult, ExportPreviewPage } from '../shared/exportOptions'
 
 /** 暴露给渲染进程的桥接 API。渲染层只通过它访问文件系统与原生能力。 */
 const api = {
@@ -49,12 +50,21 @@ const api = {
   isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
   toggleDevTools: () => ipcRenderer.invoke('window:toggleDevTools'),
 
-  exportPdf: (filePath: string, html: string, options?: { landscape?: boolean }) =>
+  previewExport: (html: string, options: ExportOptions): Promise<ExportPreviewResult> =>
+    ipcRenderer.invoke('app:previewExport', html, options),
+
+  previewExportPage: (pdf: Uint8Array, page: number): Promise<ExportPreviewPage> =>
+    ipcRenderer.invoke('app:previewExportPage', pdf, page),
+
+  releaseExportPreview: (): Promise<void> =>
+    ipcRenderer.invoke('app:releaseExportPreview'),
+
+  exportPdf: (filePath: string, html: string, options?: ExportFileOptions): Promise<boolean> =>
     ipcRenderer.invoke('app:exportPdf', filePath, html, options),
 
   /** Export rendered HTML when supplied; Markdown is the legacy fallback. */
-  exportDocx: (markdown: string, defaultName: string, title: string, html?: string) =>
-    ipcRenderer.invoke('app:exportDocx', markdown, defaultName, title, html),
+  exportDocx: (markdown: string, defaultName: string, title: string, html?: string, options?: ExportFileOptions): Promise<string | null> =>
+    ipcRenderer.invoke('app:exportDocx', markdown, defaultName, title, html, options),
   getPath: (name: 'home' | 'documents' | 'pictures' | 'userData') =>
     ipcRenderer.invoke('app:getPath', name),
   /** 关于对话框用：应用与运行时版本。 */

@@ -2,6 +2,8 @@ import { reactive, ref } from 'vue'
 import { translate } from '../../../shared/i18n'
 import { currentLocale } from '../composables/useI18n'
 
+import type { ReadingPosition } from '../editor/reading'
+
 export type ViewMode = 'wysiwyg' | 'source' | 'split'
 
 /** 源码模式坐标：行号与列号（与 muya 的 setCursorByOffset 一致）。 */
@@ -45,6 +47,7 @@ export interface Tab {
   /** 光标位置（源码模式行列坐标），切标签时用于恢复 */
   cursor: EditorCursor | null
   scrollTop: number
+  readingHistory: ReadingPosition[]
 }
 
 let tabSeq = 0
@@ -73,9 +76,19 @@ export const state = reactive({
   sidebarVisible: true,
   sidebarTab: 'files' as 'files' | 'outline',
   outline: [] as OutlineItem[],
+  readingHeadingIndex: -1,
+  readingCanGoBack: false,
   workspace: null as { path: string; name: string; children: any[] } | null,
   viewMode: 'wysiwyg' as ViewMode,
   wysiwygColumns: false,
+  /**
+   * 所见即所得下是否处于「阅读（只读）」状态。
+   *
+   * 默认 false —— 打开就能编辑。切成 true 后正文变为可选中、可复制、
+   * 不响应输入；再切回即可继续编辑。与 viewMode 相互独立：
+   * viewMode 决定用哪种视图，readingMode 决定当前视图能否编辑。
+   */
+  readingMode: false,
   focusMode: false,
   typewriterMode: false,
   theme: 'light' as 'light' | 'dark' | 'github' | 'newsprint' | 'night',
@@ -131,6 +144,7 @@ export function createTab(partial: Partial<Tab> = {}): Tab {  const tab: Tab = {
     mtimeMs: 0,
     cursor: null,
     scrollTop: 0,
+    readingHistory: [],
     ...partial
   }
   state.tabs.push(tab)
