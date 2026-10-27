@@ -82,23 +82,26 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
-          pnpm install --no-frozen-lockfile --reporter=default 2>&1 |
+          # 关掉进度条，否则错误信息会被回车刷屏覆盖（之前就是这样丢的）。
+          $env:CI = 'true'
+          pnpm install --no-frozen-lockfile --reporter=append-only --config.progress=false 2>&1 |
             Tee-Object -FilePath install.log
           $code = $LASTEXITCODE
           Write-Host "pnpm install 退出码: $code"
           if ($code -ne 0) {
-            # 用 ::error:: 把真实错误写进 annotations。
-            # step summary 与 artifact 都需要人工去页面翻，
-            # 而 annotations 可以通过 REST API 直接读，
-            # 这样排查时不必再猜。
-            $errLines = Get-Content install.log -Tail 40
+            # 只挑真正有用的行，避免被进度条噪声淹没
+            $keys = 'ERR_|error|Error|ERROR|failed|FATAL|EACCES|ENOENT|ETIMEDOUT|ECONNREFUSED|Cannot find|not found|404|403|401|exit code'
+            $errLines = Get-Content install.log |
+              Where-Object { $_ -match $keys } |
+              Select-Object -Last 25
+            if (-not $errLines) { $errLines = Get-Content install.log -Tail 15 }
             foreach ($line in $errLines) {
               $escaped = ($line -replace '%', '%25') -replace "`r", '' -replace "`n", '%0A'
               if ($escaped.Trim()) { Write-Host "::error::$escaped" }
             }
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## pnpm install 失败（退出码 $code）" -Encoding utf8
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
-            Get-Content install.log -Tail 150 | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
+            foreach ($line in $errLines) { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line -Encoding utf8 }
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### 环境" -Encoding utf8
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
@@ -111,7 +114,7 @@ jobs:
 
       - name: 上传安装日志
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: install-log
           path: install.log
