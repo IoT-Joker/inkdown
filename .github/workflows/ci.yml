@@ -63,34 +63,31 @@ jobs:
           Write-Host "--- lockfile ---"
           Write-Host (Test-Path pnpm-lock.yaml)
 
-      # 关键：pnpm-lock.yaml 里 file-icons 指向 SSH 形式的 git 地址
-      # （git@github.com:file-icons/atom.git，来自 @marktext/file-icons 的依赖）。
-      # CI 上没有 SSH 密钥，直接拉取会失败；这里让 git 把 SSH 改写成 HTTPS，
-      # 公共仓库走匿名 HTTPS 即可克隆。本地因配过 SSH key 不会暴露这个问题。
-      - name: 允许匿名克隆 git 依赖
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com:"
-          git config --global --get-regexp "url\..*\.insteadof"
-
-      # 先用不带 --frozen-lockfile 的方式安装。
+      # 这里不再配 git 的 insteadOf 改写。
+      # 早前试过让 git 把 SSH 改写成 HTTPS，但 pnpm 拉 git 依赖时用的是
+      # 自己拼的 URL，不经过 git 的 url 重写规则，那一步实际没起作用。
+      # 正确做法是锁定文件本身就用 HTTPS（见 pnpm-lock.yaml 的 file-icons）。
       #
-      # 输出同时落到 step summary 与 artifact：GitHub 的 annotations 只显示
+      # 用 --frozen-lockfile：CI 上必须保证 lockfile 与 package.json 一致，
+      # 否则本地改了依赖却忘记提交 lockfile，会一直用旧版本装出奇怪的组合。
+      #
+      # 输出同时落到 step summary 与 artifact，失败时还会逐条输出为
+      # ::error:: 注解 —— GitHub 默认的 annotations 只有一句
       # 「Process completed with exit code 1」，job logs 接口又要更高权限的
-      # token 才读得到，因此把真实输出写进公开可读的 summary。
+      # token 才读得到，靠它排查只能猜。这套输出是真正定位到本次 CI 失败的
+      # 关键（错误行被 pnpm 的进度条回车刷屏盖掉了，所以还要关掉 progress）。
       - name: 安装依赖
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
-          # 关掉进度条，否则错误信息会被回车刷屏覆盖（之前就是这样丢的）。
           $env:CI = 'true'
-          pnpm install --no-frozen-lockfile --reporter=append-only --config.progress=false 2>&1 |
+          pnpm install --frozen-lockfile --reporter=append-only --config.progress=false 2>&1 |
             Tee-Object -FilePath install.log
           $code = $LASTEXITCODE
           Write-Host "pnpm install 退出码: $code"
           if ($code -ne 0) {
             # 只挑真正有用的行，避免被进度条噪声淹没
-            $keys = 'ERR_|error|Error|ERROR|failed|FATAL|EACCES|ENOENT|ETIMEDOUT|ECONNREFUSED|Cannot find|not found|404|403|401|exit code'
+            $keys = 'ERR_|error|Error|ERROR|failed|FATAL|EACCES|ENOENT|ETIMEDOUT|ECONNREFUSED|Cannot find|not found|404|403|401|exit code|outdated|lockfile'
             $errLines = Get-Content install.log |
               Where-Object { $_ -match $keys } |
               Select-Object -Last 25
@@ -163,15 +160,12 @@ jobs:
           version: 11.28.5
           run_install: false
 
-      # 同 check job：锁定文件里的 git 依赖是 SSH 形式，CI 无密钥，
-      # 改写成 HTTPS 才能匿名克隆。
-      - name: 允许匿名克隆 git 依赖
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-
+      # 注意：这里不再配 git 的 insteadOf 改写。
+      # 早前试过让 git 把 SSH 改写成 HTTPS，但 pnpm 拉 git 依赖时用的是
+      # 自己拼的 URL，不经过 git 的 url 重写规则，那一步实际没起作用。
+      # 正确做法是锁定文件本身就用 HTTPS（见 pnpm-lock.yaml 的 file-icons）。
       - name: 安装依赖
-        run: pnpm install --no-frozen-lockfile --reporter=default
+        run: pnpm install --frozen-lockfile
 
       # 构建失败往往说明打包配置或引用路径有问题，及早发现。
       - name: 构建应用
