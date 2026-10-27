@@ -70,13 +70,43 @@ jobs:
       - name: 允许匿名克隆 git 依赖
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com:"
+          git config --global --get-regexp "url\..*\.insteadof"
 
-      # 先用不带 --frozen-lockfile 的方式安装：
-      # 若 lockfile 与 package.json 不一致，--frozen-lockfile 会直接失败，
-      # 而它的报错在 CI 上容易被吞掉；普通安装能看到完整的解析过程。
+      # 先用不带 --frozen-lockfile 的方式安装。
+      #
+      # 输出同时落到 step summary 与 artifact：GitHub 的 annotations 只显示
+      # 「Process completed with exit code 1」，job logs 接口又要更高权限的
+      # token 才读得到，因此把真实输出写进公开可读的 summary。
       - name: 安装依赖
-        run: pnpm install --no-frozen-lockfile --reporter=default
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          pnpm install --no-frozen-lockfile --reporter=default 2>&1 |
+            Tee-Object -FilePath install.log
+          $code = $LASTEXITCODE
+          Write-Host "pnpm install 退出码: $code"
+          if ($code -ne 0) {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## pnpm install 失败（退出码 $code）" -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
+            Get-Content install.log -Tail 150 | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### 环境" -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "node: $(node --version)" -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "pnpm: $(pnpm --version)" -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "cwd: $(Get-Location)" -Encoding utf8
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
+          }
+          exit $code
+
+      - name: 上传安装日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log
+          path: install.log
+          if-no-files-found: ignore
 
       # 类型检查分三块：主进程/预加载、渲染层、内联内核。
       - name: 类型检查（主进程）
