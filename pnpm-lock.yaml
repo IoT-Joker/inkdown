@@ -1496,8 +1496,8 @@ packages:
       picomatch:
         optional: true
 
-  file-icons@git+ssh://git@github.com/file-icons/atom.git#fa78a1b05fa4b5741d5141f33abdc272aba954bf:
-    resolution: {commit: fa78a1b05fa4b5741d5141f33abdc272aba954bf, repo: git@github.com:file-icons/atom.git, type: git}
+  file-icons@git+https://github.com/file-icons/atom.git#fa78a1b05fa4b5741d5141f33abdc272aba954bf:
+    resolution: {commit: fa78a1b05fa4b5741d5141f33abdc272aba954bf, repo: https://github.com/file-icons/atom.git, type: git}
     version: 2.1.47
     engines: {atom: '>=1.25.0'}
 
@@ -2984,7 +2984,7 @@ snapshots:
 
   '@marktext/file-icons@1.0.6':
     dependencies:
-      file-icons: git+ssh://git@github.com/file-icons/atom.git#fa78a1b05fa4b5741d5141f33abdc272aba954bf
+      file-icons: git+https://github.com/file-icons/atom.git#fa78a1b05fa4b5741d5141f33abdc272aba954bf
 
   '@mermaid-js/parser@2.0.1':
     dependencies:
@@ -4116,7 +4116,7 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
-  file-icons@git+ssh://git@github.com/file-icons/atom.git#fa78a1b05fa4b5741d5141f33abdc272aba954bf:
+  file-icons@git+https://github.com/file-icons/atom.git#fa78a1b05fa4b5741d5141f33abdc272aba954bf:
     dependencies:
       atom-fs: 0.2.1
       lru-cache: 5.1.1

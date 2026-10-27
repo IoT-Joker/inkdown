@@ -17,3 +17,4 @@ screenshots/
 # 本地工具数据：含任务记录与本机绝对路径，不应进入版本库
 .dsh-project-memory/
 .dsh/
+.git-commit-msg.tmp
