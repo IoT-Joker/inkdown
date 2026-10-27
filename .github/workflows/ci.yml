@@ -87,6 +87,15 @@ jobs:
           $code = $LASTEXITCODE
           Write-Host "pnpm install 退出码: $code"
           if ($code -ne 0) {
+            # 用 ::error:: 把真实错误写进 annotations。
+            # step summary 与 artifact 都需要人工去页面翻，
+            # 而 annotations 可以通过 REST API 直接读，
+            # 这样排查时不必再猜。
+            $errLines = Get-Content install.log -Tail 40
+            foreach ($line in $errLines) {
+              $escaped = ($line -replace '%', '%25') -replace "`r", '' -replace "`n", '%0A'
+              if ($escaped.Trim()) { Write-Host "::error::$escaped" }
+            }
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## pnpm install 失败（退出码 $code）" -Encoding utf8
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```' -Encoding utf8
             Get-Content install.log -Tail 150 | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
