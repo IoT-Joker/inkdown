@@ -88,7 +88,10 @@ child.stderr.on('data', (d) => onChunk(d.toString()))
 // 打包版冷启动 + 全套用例，给足 8 分钟
 const timer = setTimeout(() => report(false, 'FAILED - 打包版自检超时（未出现结论）'), 480000)
 
-child.on('exit', (code) => {
+// 用 close 而不是 exit：Node 的 exit 事件在 stdio 流关闭**之前**就会触发，
+// 此时 out 可能还没读完，于是读不到 PASS 结论，误判成「进程退出但未见结论」。
+// 实测同一个 exe 直接运行时 exit=0 且输出完整，就是栽在这里。
+child.on('close', (code) => {
   clearTimeout(timer)
   const all = out
   if (/\[selfcheck\] PASS:/.test(all)) {

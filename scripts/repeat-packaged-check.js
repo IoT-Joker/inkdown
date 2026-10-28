@@ -44,13 +44,17 @@ function runOnce() {
     let err = ''
     child.stdout.on('data', (d) => (out += d.toString()))
     child.stderr.on('data', (d) => (err += d.toString()))
+    // 用 close 而不是 exit：Node 的 exit 事件在 stdio 流关闭前触发，
+    // 此时 out 可能还没读完，会把「跑完了」误判成「输出不全」。
+    // 超时也放宽到 480s：打包版冷启动 + 多个轮询用例累加可能好几分钟，
+    // 与 verify-packaged.js 保持一致。
     const timer = setTimeout(() => {
       try {
         child.kill('SIGKILL')
       } catch {}
       resolve({ code: 'timeout', out, err })
-    }, 120000)
-    child.on('exit', (code) => {
+    }, 480000)
+    child.on('close', (code) => {
       clearTimeout(timer)
       resolve({ code, out, err })
     })
