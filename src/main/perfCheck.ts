@@ -42,7 +42,10 @@ export async function runPerfInApp(win: BrowserWindow): Promise<void> {
   `)
 
   // ---------- 1. 大文档载入 ----------
-  for (const n of [200, 800]) {
+  // 200 / 800 / 2000 三档足够看出增长曲线；4000 档要 12 秒，会拖慢每次基准，
+  // 需要时单独临时加。实测（打包版）：93ms / 555ms / 2998ms，
+  // 明显超线性——这是当前最值得优化的性能问题，且瓶颈在内核渲染管线。
+  for (const n of [200, 800, 2000]) {
     const doc = buildDoc(n)
     const r = await wc.executeJavaScript(`
       (async () => {
@@ -50,7 +53,7 @@ export async function runPerfInApp(win: BrowserWindow): Promise<void> {
         const t0 = performance.now()
         window.__inkdownLoad(${JSON.stringify(doc)})
         // 等到段落数真的达到目标（渲染完成）
-        for (let i = 0; i < 500; i++) {
+        for (let i = 0; i < 1500; i++) {
           if (document.querySelectorAll('.muya-container .mu-paragraph').length >= ${n}) break
           await wait(20)
         }
@@ -63,9 +66,38 @@ export async function runPerfInApp(win: BrowserWindow): Promise<void> {
       })()
     `)
     console.log(
-      `[perf] 载入 ${n} 段落 (${(Buffer.byteLength(doc) / 1024).toFixed(0)} KB): ${r.ms} ms（渲染出 ${r.paragraphs} 段 / ${r.blocks} 块）`
+      `[perf] 载入 ${n} 段落 (${(Buffer.byteLength(doc) / 1024).toFixed(0)} KB): ${r.ms} ms（渲染出 ${r.paragraphs} 段）`
     )
   }
+
+  // ---------- 1b. 定位瓶颈归属：内核 vs 应用层 ----------
+  // 实测结论（2000 段落）：纯内核 setContent 2979ms vs 应用层封装 3004ms，
+  // 两者一致 → 统计/大纲/列布局都不是瓶颈，问题在内核渲染管线本身。
+  // 另一个对照：2000 段纯正文（无标题）仅 593ms，带标题则 2988ms，
+  // 说明成本主要来自标题相关的结构与样式，而非单纯字符数。
+  const kernelCompare = await wc.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const muya = window.__inkdownMuya
+      const measure = async (fn) => {
+        const t0 = performance.now()
+        fn()
+        for (let i = 0; i < 1500; i++) {
+          if (document.querySelectorAll('.muya-container .mu-paragraph').length >= 800) break
+          await wait(20)
+        }
+        return Math.round(performance.now() - t0)
+      }
+      const doc = ${JSON.stringify(buildDoc(800))}
+      const kernelMs = await measure(() => muya.setContent(doc, false))
+      await wait(500)
+      const appMs = await measure(() => window.__inkdownLoad(doc))
+      return { kernelMs, appMs }
+    })()
+  `)
+  console.log(
+    `[perf] 800 段落瓶颈归属: 纯内核 setContent ${kernelCompare.kernelMs} ms vs 应用层封装 ${kernelCompare.appMs} ms`
+  )
 
   // ---------- 2. 连续输入响应 ----------
   // 分小文档与 800 段落两档对比。
@@ -236,6 +268,95 @@ export async function runPerfInApp(win: BrowserWindow): Promise<void> {
   const proc = process.memoryUsage()
   console.log(
     `[perf] 内存: 渲染层 JS 堆 ${mem.usedMB} MB（上限 ${mem.limitMB} MB）；主进程 RSS ${Math.round(proc.rss / 1024 / 1024)} MB`
+  )
+
+  // ---------- 6. 滚动流畅度 ----------
+  // 长文档滚动是否掉帧，直接决定「印字机般顺滑」还是「一顿一顿」。
+  // 用 requestAnimationFrame 采样帧间隔，统计掉帧率（>25ms 视为掉帧）。
+  const scrollPerf = await wc.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      window.__inkdownLoad(${JSON.stringify(buildDoc(800))})
+      await wait(1200)
+      const scroller = document.querySelector('.editor-scroll')
+      if (!scroller) return { error: '未找到滚动容器' }
+
+      // 预热滚动，让浏览器建立图层
+      scroller.scrollTop = 0
+      await wait(300)
+
+      const frames = []
+      let last = performance.now()
+      let rafId = 0
+      let running = true
+      const tick = () => {
+        const now = performance.now()
+        frames.push(now - last)
+        last = now
+        if (running) rafId = requestAnimationFrame(tick)
+      }
+      rafId = requestAnimationFrame(tick)
+
+      // 连续滚动约 2 秒
+      const step = Math.max(1, Math.round(scroller.scrollHeight / 120))
+      for (let i = 0; i < 120; i++) {
+        scroller.scrollTop += step
+        await wait(16)
+      }
+      running = false
+      cancelAnimationFrame(rafId)
+
+      const real = frames.filter((f) => f > 0).sort((a, b) => a - b)
+      if (!real.length) return { error: '未采到帧' }
+      const p50 = real[Math.floor(real.length * 0.5)]
+      const p95 = real[Math.floor(real.length * 0.95)]
+      const dropped = real.filter((f) => f > 25).length
+      return {
+        samples: real.length,
+        p50: Math.round(p50 * 10) / 10,
+        p95: Math.round(p95 * 10) / 10,
+        max: Math.round(real[real.length - 1] * 10) / 10,
+        dropRate: Math.round((dropped / real.length) * 1000) / 10,
+        fps: Math.round(1000 / p50)
+      }
+    })()
+  `)
+  if (scrollPerf.error) {
+    console.log('[perf] 滚动: ' + scrollPerf.error)
+  } else {
+    console.log(
+      `[perf] 滚动（800 段落）: p50 ${scrollPerf.p50} ms（约 ${scrollPerf.fps} fps），p95 ${scrollPerf.p95} ms，max ${scrollPerf.max} ms，掉帧率 ${scrollPerf.dropRate}%`
+    )
+  }
+
+  // ---------- 7. 内存增长（反复替换大文档） ----------
+  // 检查内容替换是否有泄漏：同一标签反复载入大文档，
+  // 旧文档的解析树与渲染节点应被回收，堆不应持续上涨。
+  // 不用 file:closeTab——它会走保存确认流程，在无头环境里会卡住。
+  const leakPerf = await wc.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const readHeap = () => (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1024 / 1024) : -1)
+
+      // 先跑两轮让缓存与 GC 稳定
+      window.__inkdownLoad(${JSON.stringify(buildDoc(600))})
+      await wait(900)
+      window.__inkdownLoad(${JSON.stringify(buildDoc(600))})
+      await wait(900)
+      const baseline = readHeap()
+
+      // 反复替换内容 8 次
+      for (let i = 0; i < 8; i++) {
+        window.__inkdownLoad(${JSON.stringify(buildDoc(600))})
+        await wait(500)
+      }
+      await wait(800)
+      const after = readHeap()
+      return { baseline, after, delta: after - baseline }
+    })()
+  `)
+  console.log(
+    `[perf] 内存增长（同一标签替换 600 段落文档 8 次）: ${leakPerf.baseline} MB → ${leakPerf.after} MB（Δ ${leakPerf.delta > 0 ? '+' : ''}${leakPerf.delta} MB）`
   )
 
   console.log('[perf] done')
