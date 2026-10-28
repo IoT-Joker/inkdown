@@ -15,7 +15,13 @@ import {
   setAutoCheckEnabled
 } from './updater'
 import { markdownToDocx } from './exportDocx'
-import { previewHtmlPdf, previewPdfPage, releasePdfPreview, writeHtmlPdf } from './exportWindow'
+import {
+  previewHtmlPdf,
+  previewPdfPage,
+  releasePdfPreview,
+  writeHtmlPdf,
+  printHtml
+} from './exportWindow'
 import { htmlToVisualDocx } from './exportVisualDocx'
 import type { ExportFileOptions } from '../shared/exportOptions'
 import { searchInFolder, type SearchOptions } from './folderSearch'
@@ -378,6 +384,28 @@ export function registerIpc(): void {
       } catch (err) {
         console.error('[exportPdf] 失败:', err)
         return false
+      }
+    }
+  )
+
+  /**
+   * 打印：弹系统打印对话框，由用户选择打印机。
+   * 与 PDF 导出共用 exportWindow，保证打印效果与导出结果一致。
+   * 用户取消时不视为失败，返回 printed=false 并由渲染层静默处理。
+   */
+  ipcMain.handle(
+    'app:print',
+    async (_e, html: string, options?: ExportFileOptions) => {
+      try {
+        const result = await printHtml(html, options)
+        // 取消打印不算异常，只记录原因便于排查
+        if (!result.printed && result.reason && result.reason !== 'cancelled') {
+          console.error('[print] 失败:', result.reason)
+        }
+        return result
+      } catch (err) {
+        console.error('[print] 异常:', err)
+        return { printed: false, reason: (err as Error).message }
       }
     }
   )

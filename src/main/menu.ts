@@ -97,6 +97,12 @@ export function buildAppMenu(): void {
         { label: t('menu.file.exportPdf'), click: cmd('file:exportPdf') },
         { label: t('menu.file.exportDocx'), click: cmd('file:exportDocx') },
         { type: 'separator' },
+        {
+          label: t('menu.file.print'),
+          accelerator: 'CmdOrCtrl+P',
+          click: cmd('file:print')
+        },
+        { type: 'separator' },
         withAccelerator(
           t('menu.file.preferences'),
           shortcutFor('CmdOrCtrl+,', 'app:preferences'),

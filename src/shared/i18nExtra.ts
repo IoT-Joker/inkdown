@@ -320,6 +320,15 @@ const reading: Record<LocaleCode, Dict> = {
   en: { 'reading.linkUnavailable': 'This document link could not be opened.', 'reading.back': 'Back', 'reading.copy': 'Copy selected text', 'reading.selectAll': 'Select all text', 'reading.notice': 'Reading mode protects the document. Switch to Source or Split preview to edit.' }
 }
 
+const printDict: Record<LocaleCode, Dict> = {
+  'zh-CN': {
+    'menu.file.print': '打印…'
+  },
+  en: {
+    'menu.file.print': 'Print…'
+  }
+}
+
 const EXTRA: Record<LocaleCode, Dict[]> = {
   'zh-CN': [
     reading['zh-CN'],
@@ -329,9 +338,9 @@ const EXTRA: Record<LocaleCode, Dict[]> = {
     drag['zh-CN'],
     palette['zh-CN'],
     contextMenu['zh-CN'],
-    orbDict['zh-CN'], fileSafety['zh-CN']
+    orbDict['zh-CN'], fileSafety['zh-CN'], printDict['zh-CN']
   ],
-  en: [reading.en, inlineUpdate.en, folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en, fileSafety.en]
+  en: [reading.en, inlineUpdate.en, folderSearch.en, splitView.en, drag.en, palette.en, contextMenu.en, orbDict.en, fileSafety.en, printDict.en]
 }
 
 let merged = false

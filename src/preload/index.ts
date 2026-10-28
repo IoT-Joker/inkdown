@@ -62,6 +62,13 @@ const api = {
   exportPdf: (filePath: string, html: string, options?: ExportFileOptions): Promise<boolean> =>
     ipcRenderer.invoke('app:exportPdf', filePath, html, options),
 
+  /** 打印：弹系统打印对话框；用户取消时 printed=false、reason='cancelled'。 */
+  print: (
+    html: string,
+    options?: ExportFileOptions
+  ): Promise<{ printed: boolean; reason?: string }> =>
+    ipcRenderer.invoke('app:print', html, options),
+
   /** Export rendered HTML when supplied; Markdown is the legacy fallback. */
   exportDocx: (markdown: string, defaultName: string, title: string, html?: string, options?: ExportFileOptions): Promise<string | null> =>
     ipcRenderer.invoke('app:exportDocx', markdown, defaultName, title, html, options),

@@ -10,7 +10,11 @@ import { renderPdfToImages } from './renderPdf'
 import { captureEnglishScreenshot } from './screenshotEn'
 import { captureFindScreenshot } from './screenshotFind'
 import { makeIcons } from './makeIcons'
+import { runPerfInApp } from './perfCheck'
 import { loadLocale } from './locale'
+
+/** 进程启动时刻，用于 INKDOWN_PERF_PROBE 的冷启动计时。 */
+const startedAt = Date.now()
 import {
   acquireSingleInstanceLock,
   extractFileFromArgv,
@@ -62,7 +66,9 @@ const isTestRun = !!(
   process.env['INKDOWN_SHOT_FIND'] ||
   process.env['INKDOWN_MAKE_ICONS'] ||
   process.env['INKDOWN_RENDER_PDF'] ||
-  process.env['INKDOWN_OPEN_FILE_PROBE']
+  process.env['INKDOWN_OPEN_FILE_PROBE'] ||
+  process.env['INKDOWN_PERF_PROBE'] ||
+  process.env['INKDOWN_PERF_IN_APP']
 )
 
 if (!isTestRun && !acquireSingleInstanceLock()) {
@@ -1028,6 +1034,21 @@ app.whenReady().then(async () => {
   registerIpc()
   buildAppMenu()
   const win = createWindow()
+
+  // INKDOWN_PERF_PROBE=1：打印「进程启动 → 页面加载完成」耗时，供性能基准对比。
+  // 这是冷启动的主要开销（Chromium 初始化 + 加载 renderer bundle）。
+  if (process.env['INKDOWN_PERF_PROBE']) {
+    win.webContents.once('did-finish-load', () => {
+      console.log(`[perf] editor-ready ${Date.now() - startedAt}ms`)
+    })
+  }
+
+  // INKDOWN_PERF_IN_APP=1：跑应用内性能基准（大文档、输入、主题、搜索、内存）
+  if (process.env['INKDOWN_PERF_IN_APP']) {
+    await runPerfInApp(win)
+    app.exit(0)
+    return
+  }
 
   if (process.env['INKDOWN_RECOVERY_TEST']) {
     const ok = await runRecoveryTest(win, process.env['INKDOWN_RECOVERY_TEST'], process.env['INKDOWN_RECOVERY_PHASE'] ?? 'restore')

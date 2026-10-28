@@ -570,7 +570,7 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const ids = c.ids()
       const required = [
         'file:new','file:open','file:openFolder','file:save','file:saveAs',
-        'file:exportHtml','file:exportPdf',
+        'file:exportHtml','file:exportPdf','file:print',
         'edit:undo','edit:redo','edit:find','edit:replace',
         'paragraph:h1','paragraph:h6','paragraph:p','paragraph:ul','paragraph:ol',
         'paragraph:task','paragraph:quote','paragraph:code','paragraph:math','paragraph:table',
@@ -1349,6 +1349,147 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
   console.log(`[selfcheck] 字数统计 OK: ${countCheck.shown} 字`)
+
+  // 5b-2. 字数/大纲防抖：输入后延迟更新但不能不更新，且切标签不得串数据
+  const debounceCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+
+      // 新建一个干净文档，记录初始字数
+      window.__inkdownLoad('# 防抖测试\\n\\n第一段。\\n')
+      await wait(500)
+      const before = app.wordCount ? app.wordCount() : -1
+
+      // 连续改动内容。
+      // 注意不能用合成的 beforeinput：它不会真正改变文档，JSON 树不变，
+      // json-change 也就不触发，测出来永远是「没更新」的假象。
+      // execCommand('insertText') 走浏览器真实编辑路径。
+      const muya = window.__inkdownMuya
+      muya.focus()
+      muya.setCursorByOffset({ anchor: { line: 2, ch: 0 }, focus: { line: 2, ch: 0 } })
+      await wait(250)
+      for (let i = 0; i < 5; i++) {
+        document.execCommand('insertText', false, '新增文字')
+        await wait(30)
+      }
+
+      // 立刻读：防抖期间应该还没更新（或者已经更新，都合法）
+      const immediate = app.wordCount ? app.wordCount() : -1
+      // 等过防抖窗口后必须已更新
+      await wait(600)
+      const afterDebounce = app.wordCount ? app.wordCount() : -1
+
+      return { before, immediate, afterDebounce }
+    })()
+  `)
+  if (debounceCheck.afterDebounce <= debounceCheck.before) {
+    console.error(
+      '[selfcheck] FAIL: 字数统计在防抖窗口后仍未更新:',
+      JSON.stringify(debounceCheck)
+    )
+    return false
+  }
+  console.log(
+    `[selfcheck] 统计防抖 OK: 输入前 ${debounceCheck.before} → 立即 ${debounceCheck.immediate} → 200ms 后 ${debounceCheck.afterDebounce}`
+  )
+
+  // 5b-3. 防抖窗口内切标签，字数不得串到新标签
+  const debounceTabCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+
+      // 标签 A：写入较多内容
+      window.__inkdownLoad('# 标签甲\\n\\n' + '甲内容。\\n\\n'.repeat(20))
+      await wait(500)
+      const tabA = app.activeTab().id
+
+      const muya = window.__inkdownMuya
+      muya.focus()
+      muya.setCursorByOffset({ anchor: { line: 2, ch: 0 }, focus: { line: 2, ch: 0 } })
+      await wait(200)
+      // 触发一次真实改动，让防抖进入等待
+      document.execCommand('insertText', false, '甲乙丙丁戊己庚辛')
+
+      // 不等防抖到期就新建标签并切过去（B 内容很短）
+      await c.execute('file:new')
+      await wait(600)
+      const tabB = app.activeTab().id
+      const countOnB = app.wordCount ? app.wordCount() : -1
+
+      // B 的字数应该很小（新文档可能为空或很短）。
+      // 若防抖把 A 的数据写过来，这里会是 A 的大字数。
+      return { tabA, tabB, countOnB, sameTab: tabA === tabB }
+    })()
+  `)
+  if (debounceTabCheck.sameTab) {
+    console.error('[selfcheck] FAIL: 未能切换到新标签:', JSON.stringify(debounceTabCheck))
+    return false
+  }
+  // A 的内容约 80+ 字；新标签若被串数据会超过这个数量级
+  if (debounceTabCheck.countOnB > 40) {
+    console.error(
+      '[selfcheck] FAIL: 防抖数据串到新标签:',
+      JSON.stringify(debounceTabCheck)
+    )
+    return false
+  }
+  console.log(
+    `[selfcheck] 防抖不串标签 OK: 切到新标签后字数为 ${debounceTabCheck.countOnB}（未继承上一标签）`
+  )
+
+  // 5b-4. 打印链路：命令已注册、IPC 已暴露、导出 HTML 可构建
+  // 真实打印会弹系统对话框，自动化无法点确定，因此只校验链路完整性。
+  const printCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const c = window.__inkdownCommands
+      const hasCommand = c.has('file:print')
+      const hasIpc = typeof window.inkdown.print === 'function'
+
+      // 构建与打印同源的 HTML，确认内容正常
+      window.__inkdownLoad('# 打印测试\\n\\n这是要打印的正文。\\n')
+      await wait(600)
+      const html = await window.__inkdownExport.buildHtmlForCheck()
+      return {
+        hasCommand,
+        hasIpc,
+        htmlLen: html.length,
+        hasTitle: /打印测试/.test(html),
+        hasBody: /这是要打印的正文/.test(html)
+      }
+    })()
+  `)
+  if (!printCheck.hasCommand || !printCheck.hasIpc) {
+    console.error('[selfcheck] FAIL: 打印链路未接通:', JSON.stringify(printCheck))
+    return false
+  }
+  if (!printCheck.hasTitle || !printCheck.hasBody) {
+    console.error('[selfcheck] FAIL: 打印用 HTML 内容不完整:', JSON.stringify(printCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 打印链路 OK: 命令+IPC 已接通，HTML ${printCheck.htmlLen} 字符且含标题与正文`
+  )
+
+  // 恢复被上面两个用例改动的状态：切回原标签。
+  // 不主动关闭新建的标签——file:closeTab 总作用于「当前活动标签」，
+  // 在恢复脚本里调用容易关错对象并触发保存确认，反而卡住自检。
+  await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const target = ${JSON.stringify(debounceTabCheck.tabA)}
+      if (app.tabs().some((t) => t.id === target)) {
+        app.setActive(target)
+        await wait(400)
+      }
+      return true
+    })()
+  `)
 
   // 5c. 验证中英文切换：界面文案应随语言改变并正确还原
   const i18nCheck = await win.webContents.executeJavaScript(`

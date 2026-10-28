@@ -160,3 +160,47 @@ export async function writeHtmlPdf(filePath: string, html: string, input?: boole
   const { pdf } = await renderHtmlPdf(html, options, options?.allowResourceFailures === true)
   await writeFile(filePath, pdf)
 }
+
+/**
+ * 用系统打印对话框打印文档。
+ *
+ * 复用 withExportWindow：与 PDF 导出共用同一套 HTML 预处理、页面尺寸与
+ * 资源等待逻辑，保证「打印出来的样子」和「导出的 PDF」一致。
+ *
+ * 与 printToPDF 的差别：print() 会弹系统打印对话框，由用户选打印机，
+ * 所以这里不写文件、也不预设页边距之外的分页参数。
+ *
+ * 用户取消不算失败：Electron 会回调 success=false 且 reason='cancelled'，
+ * 这里如实返回，由上层决定是否提示。
+ */
+export async function printHtml(
+  html: string,
+  input?: unknown
+): Promise<{ printed: boolean; reason?: string }> {
+  const options = normalizeExportOptions(input)
+  return withExportWindow(
+    html,
+    async (win) =>
+      new Promise<{ printed: boolean; reason?: string }>((resolve) => {
+        win.webContents.print(
+          {
+            silent: false,
+            printBackground: true,
+            landscape: options.orientation === 'landscape',
+            pageSize: options.pageSize,
+            margins: {
+              top: options.marginMm.top / 25.4,
+              bottom: options.marginMm.bottom / 25.4,
+              left: options.marginMm.left / 25.4,
+              right: options.marginMm.right / 25.4
+            }
+          },
+          (success, failureReason) => {
+            resolve({ printed: success, reason: failureReason })
+          }
+        )
+      }),
+    // 打印场景下资源加载失败不应阻塞：宁可少一张图，也要让用户能打出来
+    { options, allowResourceFailures: true }
+  )
+}

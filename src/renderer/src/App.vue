@@ -131,6 +131,8 @@ onMounted(async () => {
     findVisible: () => state.findVisible,
     /** 当前视图模式（供测试判断三态切换结果）。 */
     viewMode: () => state.viewMode,
+    /** 当前字数（供测试验证防抖更新是否生效）。 */
+    wordCount: () => state.wordCount,
     /** 当前是否处于只读阅读态（与 viewMode 独立）。 */
     readingMode: () => state.readingMode,
     persistSession,

@@ -383,3 +383,19 @@ export async function saveExportPreview(): Promise<void> {
 export async function exportHtml(): Promise<boolean> { return openExportPreview('html') }
 export async function exportDocxFile(): Promise<boolean> { return openExportPreview('docx') }
 export async function exportPdf(): Promise<boolean> { return openExportPreview('pdf') }
+
+/**
+ * 打印当前文档。
+ *
+ * 与导出走同一个 buildHtml：同一套图表渲染与 CSS，保证「打印所见」与「导出所得」一致。
+ * 不经过导出预览对话框——打印由系统对话框负责页面设置，多一层预览反而绕。
+ * 用户取消打印返回 false，调用方不应把它当错误提示。
+ */
+export async function printDocument(): Promise<boolean> {
+  const tab = getActiveTab()
+  if (!tab) return false
+  const issues: ExportIssue[] = []
+  const html = await buildHtml(issues, tab)
+  const result = await window.inkdown.print(html)
+  return result.printed
+}

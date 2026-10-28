@@ -3,7 +3,7 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } 
 import { Muya, registerMuyaPlugins, buildMuyaOptions, setDocPathForImages } from '../editor/muyaSetup'
 import { generateGithubSlug, type IPublicCursorInput } from '@muyajs/core'
 import { registerCommands, registerGlobalCommands, executeCommand, hasCommand, listCommandIds, dispatchReadingShortcut } from '../composables/useCommands'
-import { exportHtml, exportPdf, exportDocxFile, buildHtmlForCheck, renderPreviewHtml } from '../composables/useExport'
+import { exportHtml, exportPdf, exportDocxFile, buildHtmlForCheck, renderPreviewHtml, printDocument } from '../composables/useExport'
 import { useI18n } from '../composables/useI18n'
 import BlockOrb from './BlockOrb.vue'
 import { TextHistory, editSource, replaceRange, textMatches, replaceTextMatch, lineOffsets, offsetIndex, type TextSnapshot } from '../editor/sourceEditing'
@@ -75,6 +75,17 @@ interface EditorSession {
 const editorSessions = new Map<string, EditorSession>()
 let currentSession: EditorSession | null = null
 let cursorTimer: number | null = null
+/**
+ * 字数统计与大纲刷新的防抖计时器。
+ *
+ * 每次击键（json-change）都会触发全量统计与大纲重建，
+ * 长文档下是纯浪费——打字过程中没人需要实时看大纲。
+ * 只对「输入触发的更新」防抖；切标签、载入、命令执行等
+ * 低频路径仍走立即更新（见 flushCountsAndOutline）。
+ */
+let countsTimer: number | null = null
+/** 待刷新的 markdown 快照，防抖到期时使用。 */
+let pendingCountsMarkdown = ''
 let settingsGeneration = 0
 const sessionSettings = new WeakMap<Muya, number>()
 const columnsPage = ref(1)
@@ -590,6 +601,31 @@ function refreshOutline(): void {
   currentSession?.reading?.invalidate()
 }
 
+/** 输入触发的字数/大纲更新：防抖合并，避免每次击键都全量重算。 */
+function scheduleCountsAndOutline(markdown: string): void {
+  pendingCountsMarkdown = markdown
+  if (countsTimer != null) window.clearTimeout(countsTimer)
+  countsTimer = window.setTimeout(() => {
+    countsTimer = null
+    updateCounts(pendingCountsMarkdown)
+    // 分栏/源码模式下大纲不随输入更新（与原先的调用条件保持一致）
+    if (!isSource.value && !isSplit.value) refreshOutline()
+  }, 200)
+}
+
+/**
+ * 立即执行待处理的字数/大纲更新。
+ * 切标签、关闭标签、卸载等场景必须调用：否则界面会停留在上一份文档的
+ * 字数与大纲上（防抖还没到期）。
+ */
+function flushCountsAndOutline(): void {
+  if (countsTimer == null) return
+  window.clearTimeout(countsTimer)
+  countsTimer = null
+  updateCounts(pendingCountsMarkdown)
+  if (!isSource.value && !isSplit.value) refreshOutline()
+}
+
 /** 定位编辑器滚动容器。
  *  注意：muya 在 init() 时会替换掉传入的容器元素，因此不能依赖 containerRef，
  *  改为优先用 muya 自己的 domNode 向上查找，再退回文档查询。 */
@@ -675,8 +711,8 @@ function createEditorSession(tab: Tab | undefined): EditorSession | null {
     session.content = markdown
     owner.content = markdown
     if (currentSession === session && !isSource.value && !isSplit.value) {
-      updateCounts(markdown)
-      refreshOutline()
+      // 击键是高频路径：字数与大纲防抖合并，长文档下不再每次全量重算
+      scheduleCountsAndOutline(markdown)
       scheduleColumnLayout()
     }
   })
@@ -740,6 +776,9 @@ function activateEditor(tab: Tab): void {
   }
   let next = editorSessions.get(tab.id)
   if (next !== currentSession) {
+    // 切走之前把待处理的字数/大纲刷新落定。
+    // 否则防抖回调会在切换之后触发，用上一份文档的数据覆盖新标签的统计。
+    flushCountsAndOutline()
     if (currentSession) {
       currentSession.instance.hideAllFloatTools()
       sessionEvents(currentSession, false)
@@ -1437,6 +1476,10 @@ function registerEditorCommands(): void {
     'file:exportHtml': () => void exportHtml(),
     'file:exportPdf': () => void exportPdf(),
     'file:exportDocx': () => void exportDocxFile(),
+    // 打印：走系统打印对话框；用户取消不提示
+    'file:print': () => {
+      void printDocument()
+    },
     // 段落操作
     'edit:duplicate': () => muya?.duplicate(),
     'edit:insertParagraph': () => muya?.insertParagraph('after'),
@@ -2073,6 +2116,12 @@ onBeforeUnmount(() => {
   sourceResizeObserver?.disconnect()
   sourceResizeObserver = null
   if (cursorTimer != null) window.clearTimeout(cursorTimer)
+  // 卸载前落定待处理的统计，避免定时器在组件销毁后触发
+  flushCountsAndOutline()
+  if (countsTimer != null) {
+    window.clearTimeout(countsTimer)
+    countsTimer = null
+  }
   if (columnsFrame != null) cancelAnimationFrame(columnsFrame)
   editorScrollRef.value?.removeEventListener('wheel', onColumnsWheel)
   columnsObserver?.disconnect()

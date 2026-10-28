@@ -26,6 +26,7 @@
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web && pnpm run typecheck:muya",
     "check": "pnpm run typecheck && pnpm run verify",
     "verify:package": "node scripts/verify-package.js && node scripts/verify-packaged.js",
+    "perf": "node scripts/perf-bench.js && node scripts/perf-in-app.js",
     "icons": "node scripts/make-icons.js",
     "version:bump": "node scripts/version.js",
     "package": "node scripts/package.js",

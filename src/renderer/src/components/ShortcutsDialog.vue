@@ -34,6 +34,7 @@ const groups = computed<Group[]>(() => [
       { id: 'file:save', labelKey: 'menu.file.save' },
       { id: 'file:saveAs', labelKey: 'menu.file.saveAs' },
       { id: 'file:closeTab', labelKey: 'menu.file.closeTab' },
+      { id: 'file:print', labelKey: 'menu.file.print' },
       { id: 'app:preferences', labelKey: 'menu.file.preferences' }
     ]
   },
