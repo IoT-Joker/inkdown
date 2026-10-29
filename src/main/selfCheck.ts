@@ -113,6 +113,20 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     return false
   }
 
+  // 自检里有大量用例需要在编辑态下改文档。
+  // 「打开文档默认阅读模式」会把打开过的文件锁成只读，导致 edit/paragraph
+  // 类命令被 readingCommandAllowed 拦截（表现为「命令静默不生效」）。
+  // 这里先关掉该设置，最后由「默认阅读模式」用例单独验证它本身。
+  await win.webContents.executeJavaScript(`
+    (() => {
+      try {
+        const s = window.__inkdownApp?.settings?.()
+        if (s) s.openInReadingMode = false
+        return true
+      } catch { return false }
+    })()
+  `)
+
   // 2b. 导出运行时真实可用的 Muya 方法，用于核对内核 API 适配情况
   const apiList = await win.webContents.executeJavaScript(`
     (() => {
@@ -1527,6 +1541,161 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
     `[selfcheck] 分批渲染 OK: 首屏 ${batchRenderCheck.firstPaint} ms / 全部 ${batchRenderCheck.fullDone} ms，大纲 ${batchRenderCheck.outline} 条（完整）`
   )
 
+  // 5b-6. 大纲跟随当前位置：滚动后高亮项要跟着变
+  const outlineFollowCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const parts = ['# 根标题\\n\\n']
+      for (let i = 0; i < 40; i++) {
+        parts.push('## 第 ' + (i + 1) + ' 节\\n\\n' + '这一段正文用来撑开高度。\\n\\n'.repeat(6))
+      }
+      window.__inkdownLoad(parts.join(''))
+      await wait(1200)
+
+      const scroller = document.querySelector('.editor-scroll')
+      if (!scroller) return { error: '未找到滚动容器' }
+      const read = () => app.outlineActiveIndex()
+
+      scroller.scrollTop = 0
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      await wait(400)
+      const atTop = read()
+
+      scroller.scrollTop = Math.round(scroller.scrollHeight / 2)
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      await wait(400)
+      const atMid = read()
+
+      scroller.scrollTop = scroller.scrollHeight
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      await wait(500)
+      const atBottom = read()
+
+      return { atTop, atMid, atBottom, total: app.outline().length }
+    })()
+  `)
+  if (outlineFollowCheck.error) {
+    console.error('[selfcheck] FAIL: 大纲跟随:', outlineFollowCheck.error)
+    return false
+  }
+  if (
+    outlineFollowCheck.atTop !== 0 ||
+    outlineFollowCheck.atMid <= outlineFollowCheck.atTop ||
+    outlineFollowCheck.atBottom <= outlineFollowCheck.atMid
+  ) {
+    console.error('[selfcheck] FAIL: 大纲高亮未跟随滚动:', JSON.stringify(outlineFollowCheck))
+    return false
+  }
+  console.log(
+    `[selfcheck] 大纲跟随位置 OK: 顶部 ${outlineFollowCheck.atTop} → 中部 ${outlineFollowCheck.atMid} → 底部 ${outlineFollowCheck.atBottom}（共 ${outlineFollowCheck.total} 条）`
+  )
+
+  // 5b-7. 阅读模式「复制选中文字」：点击菜单项会清掉选区，
+  // 必须靠菜单弹出时缓存的内容，不能实时读选区
+  const copyCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+      const menu = window.__inkdownCtxMenu
+      if (!menu) return { error: '右键菜单钩子未暴露' }
+
+      window.__inkdownLoad('# 复制测试\\n\\n这是一段要被复制的文字。\\n')
+      await wait(800)
+      // 显式置位而不是走 view:toggleReading：
+      // 该命令在非 wysiwyg 视图下会先切视图再强制设为 true，行为不可控
+      app.setReadingMode(true)
+      await wait(500)
+
+      const p = [...document.querySelectorAll('.muya-container p, .muya-container .mu-paragraph')]
+        .find((e) => (e.textContent || '').includes('要被复制'))
+      if (!p) return { error: '未找到正文段落' }
+      const range = document.createRange()
+      range.selectNodeContents(p)
+      const sel = window.getSelection()
+      sel.removeAllRanges()
+      sel.addRange(range)
+      await wait(200)
+      const liveSelection = sel.toString()
+
+      // 模拟「菜单弹出」：缓存当时的选区文字
+      menu.state.selectedText = liveSelection
+      menu.state.visible = true
+
+      // 模拟「点击菜单项」：先清空选区（真实点击就会这样），再执行
+      sel.removeAllRanges()
+      await wait(100)
+      await window.inkdown.writeClipboardText('__SENTINEL__')
+      menu.run('edit:copy')
+      await wait(400)
+      const clip = await window.inkdown.readClipboardText()
+
+      menu.state.visible = false
+      menu.state.selectedText = ''
+      app.setReadingMode(false)
+      await wait(300)
+
+      return { liveSelection, clip, restored: !app.readingMode() }
+    })()
+  `)
+  if (copyCheck.error) {
+    console.error('[selfcheck] FAIL: 复制选中文字:', copyCheck.error)
+    return false
+  }
+  if (!copyCheck.clip.includes('要被复制')) {
+    console.error(
+      '[selfcheck] FAIL: 复制选中文字未写入剪贴板（选区清空后没走缓存）:',
+      JSON.stringify(copyCheck)
+    )
+    return false
+  }
+  console.log(`[selfcheck] 复制选中文字 OK: 剪贴板得到「${copyCheck.clip.trim().slice(0, 20)}」`)
+
+  // 5b-8. 默认阅读模式：开启后「打开文件」进阅读态，「新建空文档」保持编辑态
+  const defaultReadingCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const c = window.__inkdownCommands
+      const s = app.settings()
+      // 自检开头为了不干扰编辑用例把这项关了，这里临时打开验证
+      const original = s.openInReadingMode
+      s.openInReadingMode = true
+
+      // 新建空文档：应保持编辑态（否则用户没法直接写）
+      await c.execute('file:new')
+      await wait(600)
+      const afterNew = app.readingMode()
+
+      // 打开真实文件：应进入阅读态
+      await app.openPath(${JSON.stringify(join(process.cwd(), '.tmp-selfcheck-tree', 'a.md'))})
+      await wait(900)
+      const afterOpen = app.readingMode()
+
+      // 恢复：退出阅读态并还原设置
+      app.setReadingMode(false)
+      await wait(300)
+      s.openInReadingMode = original
+      return { afterNew, afterOpen, restored: s.openInReadingMode }
+    })()
+  `)
+  if (defaultReadingCheck.afterNew) {
+    console.error(
+      '[selfcheck] FAIL: 新建空文档不应进入阅读模式:',
+      JSON.stringify(defaultReadingCheck)
+    )
+    return false
+  }
+  if (!defaultReadingCheck.afterOpen) {
+    console.error(
+      '[selfcheck] FAIL: 打开文件未进入阅读模式（默认阅读模式未生效）:',
+      JSON.stringify(defaultReadingCheck)
+    )
+    return false
+  }
+  console.log('[selfcheck] 默认阅读模式 OK: 打开文件进阅读态，新建空文档保持编辑态')
+
   // 恢复被上面两个用例改动的状态：切回原标签。
   // 不主动关闭新建的标签——file:closeTab 总作用于「当前活动标签」，
   // 在恢复脚本里调用容易关错对象并触发保存确认，反而卡住自检。
@@ -2292,7 +2461,19 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       }
       const menuClosed = !document.querySelector('.editor-ctx')
 
-      return { items, seps, codeInserted, menuClosed, cursorBlock, docAfter: docAfter.slice(0, 80) }
+      return {
+        items,
+        seps,
+        codeInserted,
+        menuClosed,
+        cursorBlock,
+        docAfter: docAfter.slice(0, 80),
+        // 诊断：命令被拦截时 readingMode 会是 true，notice 里也会写明原因。
+        // 只取字符串字段——直接返回 notice 对象会让 executeJavaScript 的
+        // 结构化克隆失败（An object could not be cloned）。
+        reading: window.__inkdownApp?.readingMode?.() ?? null,
+        notice: window.__inkdownApp?.notice?.text ?? ''
+      }
     })()
   `)
   if (ctxCheck.error) {

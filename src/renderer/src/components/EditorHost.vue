@@ -591,14 +591,133 @@ function refreshOutline(): void {
   if (!muya) return
   // muya 的 getTOC 返回 { content, contentHtml, lvl, slug, githubSlug }，
   // 这里统一映射成界面使用的字段名
-  state.outline = muya.getTOC().map((item) => ({
+  const toc = muya.getTOC()
+  const lines = headingLineNumbers(activeTab.value?.content ?? '')
+  // 只有数量一致时才能一一对应；否则宁可不给行号，也不要让高亮错位
+  const useLines = lines.length === toc.length
+  state.outline = toc.map((item, i) => ({
     level: item.lvl,
     text: item.content,
     html: item.contentHtml,
     slug: item.slug,
-    githubSlug: item.githubSlug
+    githubSlug: item.githubSlug,
+    line: useLines ? lines[i] : undefined
   }))
   currentSession?.reading?.invalidate()
+  // 大纲变了（换文档/改标题），重新定位当前章节
+  updateOutlineActive()
+}
+
+/**
+ * 从 Markdown 源码解析各级标题所在的行号（0 起）。
+ *
+ * 需要跳过代码围栏里的 `#`（那是注释不是标题）和开头的 frontmatter，
+ * 否则解析出的标题数会多于 getTOC，导致行号与大纲项错位。
+ */
+function headingLineNumbers(markdown: string): number[] {
+  const lines = markdown.split(/\r?\n/)
+  const out: number[] = []
+  let inFence = false
+  let start = 0
+  // 跳过 frontmatter（--- 包裹的头部）
+  if (lines[0]?.trim() === '---') {
+    for (let j = 1; j < lines.length; j++) {
+      if (lines[j].trim() === '---') {
+        start = j + 1
+        break
+      }
+    }
+  }
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    if (/^#{1,6}\s+\S/.test(line)) out.push(i)
+  }
+  return out
+}
+
+/**
+ * 根据当前滚动位置更新「大纲高亮项」。
+ *
+ * 三种视图模式来源不同：
+ * - 所见即所得 / 分栏：直接量标题 DOM 的位置，最准
+ * - 源码模式：用 textarea 的滚动比例估算顶部行，再按行号找最近的标题
+ *
+ * 找不到可靠依据时置 -1（不高亮），而不是猜一个，避免误导。
+ */
+function updateOutlineActive(): void {
+  const list = state.outline
+  if (!list.length) {
+    state.outlineActiveIndex = -1
+    return
+  }
+
+  if (isSource.value) {
+    const ta = sourceRef.value
+    if (!ta) return
+    const lines = list.map((it) => it.line)
+    if (lines.some((l) => l == null)) {
+      state.outlineActiveIndex = -1
+      return
+    }
+    const total = (ta.value || '').split(/\r?\n/).length
+    const maxScroll = ta.scrollHeight - ta.clientHeight
+    const ratio = maxScroll <= 0 ? 0 : ta.scrollTop / maxScroll
+    const currentLine = Math.round(ratio * Math.max(0, total - 1))
+    let idx = 0
+    for (let i = 0; i < lines.length; i++) {
+      if ((lines[i] as number) <= currentLine) idx = i
+      else break
+    }
+    state.outlineActiveIndex = idx
+    return
+  }
+
+  const scroller = getScroller()
+  if (!scroller) return
+  const scrollerTop = scroller.getBoundingClientRect().top
+  const headings = [...scroller.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+  if (!headings.length) {
+    state.outlineActiveIndex = -1
+    return
+  }
+  // DOM 里的标题顺序与大纲一致（都是文档序）。
+  // 取「已经滚过视口顶部」的最后一个标题作为当前章节。
+  let idx = 0
+  for (let i = 0; i < headings.length; i++) {
+    if (headings[i].getBoundingClientRect().top <= scrollerTop + 8) idx = i
+    else break
+  }
+  state.outlineActiveIndex = Math.min(idx, list.length - 1)
+}
+
+/** 滚动事件的 rAF 节流句柄。 */
+let outlineActiveFrame: number | null = null
+
+/** 合并高频滚动事件，每帧最多算一次当前章节。 */
+function scheduleOutlineActive(): void {
+  if (outlineActiveFrame != null) return
+  outlineActiveFrame = requestAnimationFrame(() => {
+    outlineActiveFrame = null
+    updateOutlineActive()
+  })
+}
+
+/**
+ * 任何滚动都可能是编辑器在滚。这里只认两种容器：
+ * 编辑区（.editor-scroll）与源码 textarea（.source-editor）。
+ * 用捕获阶段是因为这些节点会被内核/标签切换整体替换。
+ */
+function onAnyScroll(e: Event): void {
+  const el = e.target as HTMLElement | null
+  if (!el || !el.classList) return
+  if (el.classList.contains('editor-scroll') || el.classList.contains('source-editor')) {
+    scheduleOutlineActive()
+  }
 }
 
 /** 输入触发的字数/大纲更新：防抖合并，避免每次击键都全量重算。 */
@@ -972,7 +1091,15 @@ function focus(): void {
 const editorMenu = reactive({
   visible: false,
   x: 0,
-  y: 0
+  y: 0,
+  /**
+   * 菜单弹出瞬间的选中文字。
+   *
+   * 必须在弹出时就抓住：点击菜单项会让 document 的选区被清除，
+   * 等 click 执行到「复制选中文字」时 selectedText() 已经是空的，
+   * 表现为「点了复制没反应」。
+   */
+  selectedText: ''
 })
 
 /**
@@ -1024,6 +1151,8 @@ function onEditorContextMenu(e: MouseEvent): void {
   editorMenu.visible = true
   editorMenu.x = e.clientX
   editorMenu.y = e.clientY
+  // 弹出瞬间抓住选区文字：稍后点击菜单项会清掉选区
+  editorMenu.selectedText = currentSession?.reading?.selectedText() ?? ''
 
   const close = (): void => {
     editorMenu.visible = false
@@ -1046,6 +1175,15 @@ function onEditorContextMenu(e: MouseEvent): void {
 /** 执行右键菜单里的命令。 */
 function runEditorMenuCommand(command: string): void {
   editorMenu.visible = false
+  // 「复制选中文字」直接用菜单弹出时缓存的内容。
+  // 点击菜单项会让 document 选区被清除，此时再走 edit:copy
+  // 去读 selectedText() 只会拿到空字符串，表现为「点了没反应」。
+  if (command === 'edit:copy' && editorMenu.selectedText) {
+    const text = editorMenu.selectedText
+    editorMenu.selectedText = ''
+    void window.inkdown.writeClipboardText(text)
+    return
+  }
   void executeCommand(command)
 }
 
@@ -2080,6 +2218,12 @@ onMounted(() => {
     openFiles: openDroppedFiles,
     setPathHook: setPathForFileHook
   }
+  // 供端到端自检驱动正文右键菜单（验证「复制选中文字」用缓存而不是实时选区）
+  ;(window as unknown as Record<string, unknown>).__inkdownCtxMenu = {
+    state: editorMenu,
+    run: runEditorMenuCommand,
+    items: () => editorMenuItems.value.map((it) => ('separator' in it ? '---' : it.label))
+  }
   // 供端到端自检驱动分栏光标联动（程序化 setSelectionRange 不触发真实按键事件）
   ;(window as unknown as Record<string, unknown>).__inkdownSplitSync = {
     sync: syncPreviewToCursor,
@@ -2107,10 +2251,20 @@ onMounted(() => {
   nextTick(resizeSourceEditor)
   columnsObserver = new ResizeObserver(scheduleColumnLayout)
   if (editorScrollRef.value) columnsObserver.observe(editorScrollRef.value)
+
+  // 大纲跟随滚动位置：捕获阶段监听，覆盖编辑区与源码 textarea
+  // （两者都在会随标签切换而替换的容器里，直接绑元素会绑到已废弃的节点）
+  document.addEventListener('scroll', onAnyScroll, true)
+  nextTick(() => updateOutlineActive())
 })
 
 onBeforeUnmount(() => {
   document.body.classList.remove('is-reading-mode')
+  document.removeEventListener('scroll', onAnyScroll, true)
+  if (outlineActiveFrame != null) {
+    cancelAnimationFrame(outlineActiveFrame)
+    outlineActiveFrame = null
+  }
   window.removeEventListener('inkdown:reading-heading', onReadingHeading)
   previewDiagrams.dispose()
   cancelPreviewRefresh()
@@ -2254,7 +2408,14 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => isReading.value ? active
     >
       <template v-for="(item, i) in editorMenuItems" :key="i">
         <div v-if="'separator' in item" class="ctx-sep" />
-        <button v-else class="ctx-item" @click="runEditorMenuCommand(item.command)">
+        <!-- mousedown.prevent：阻止点击按钮时浏览器清除文档选区，
+             否则「复制选中文字」执行时选区已经没了 -->
+        <button
+          v-else
+          class="ctx-item"
+          @mousedown.prevent
+          @click="runEditorMenuCommand(item.command)"
+        >
           {{ item.label }}
         </button>
       </template>

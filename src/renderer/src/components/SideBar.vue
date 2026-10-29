@@ -43,6 +43,18 @@ function outlineIndent(level: number): string {
   return `${8 + (level - 1) * 14}px`
 }
 
+/**
+ * 大纲某一项是否为「当前所在章节」。
+ *
+ * 阅读模式下用阅读分页给出的 heading 索引（更准），
+ * 其它模式（所见即所得 / 分栏 / 源码）用滚动位置算出的索引。
+ * 两者分开是因为阅读模式的分页逻辑与普通滚动不是一回事。
+ */
+function isOutlineActive(index: number): boolean {
+  if (state.readingMode) return state.readingHeadingIndex === index
+  return state.outlineActiveIndex === index
+}
+
 /* ------------------------------ 大纲折叠 ------------------------------ */
 
 /**
@@ -203,9 +215,9 @@ function expandAll(): void {
           class="outline-row"
           :class="[
             `lvl-${state.outline[index].level}`,
-            { active: state.viewMode === 'wysiwyg' && state.readingHeadingIndex === index }
+            { active: isOutlineActive(index) }
           ]"
-          :aria-current="state.viewMode === 'wysiwyg' && state.readingHeadingIndex === index ? 'location' : undefined"
+          :aria-current="isOutlineActive(index) ? 'location' : undefined"
           :style="{ paddingLeft: outlineIndent(state.outline[index].level) }"
           :title="state.outline[index].text"
           @click="onOutlineClick(index)"

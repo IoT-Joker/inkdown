@@ -14,6 +14,12 @@ export async function runFileTest(win: BrowserWindow, workDir: string): Promise<
     if (tag === 'error' || tag === 'warning') console.log(`[renderer:${tag}] ${message}`)
   })
 
+  // 关闭「打开文档默认阅读模式」：本测试要直接编辑并保存，
+  // 阅读态会把编辑命令拦掉（表现为「设置了 CRLF 但磁盘没变」这类假失败）。
+  await win.webContents
+    .executeJavaScript(`(() => { try { const s = window.__inkdownApp?.settings?.(); if (s) s.openInReadingMode = false; return true } catch { return false } })()`)
+    .catch(() => {})
+
   await fsp.mkdir(workDir, { recursive: true })
   const source = join(workDir, 'input.md')
   const saved = join(workDir, 'saved.md')

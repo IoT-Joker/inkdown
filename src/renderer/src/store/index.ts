@@ -67,6 +67,12 @@ export interface OutlineItem {
   slug: string
   /** GitHub 风格锚点，与 HTML 导出一致 */
   githubSlug: string
+  /**
+   * 该标题在 Markdown 源码中的行号（0 起）。
+   * 用于按滚动位置算「当前所在章节」，三种视图模式共用。
+   * 解析失败时缺省，此时该标题不参与当前位置计算。
+   */
+  line?: number
 }
 
 /** 全局响应式状态：标签页、侧边栏、视图选项、设置。 */
@@ -76,6 +82,12 @@ export const state = reactive({
   sidebarVisible: true,
   sidebarTab: 'files' as 'files' | 'outline',
   outline: [] as OutlineItem[],
+  /**
+   * 大纲中「当前所在章节」的下标；-1 表示未定位。
+   * 与 readingHeadingIndex 分开：那个只在阅读态更新，
+   * 这个由滚动位置驱动，三种视图模式都可用。
+   */
+  outlineActiveIndex: -1,
   readingHeadingIndex: -1,
   readingCanGoBack: false,
   workspace: null as { path: string; name: string; children: any[] } | null,
@@ -207,6 +219,11 @@ export const settings = reactive({
   autoSave: true,
   /** 自动保存防抖延迟（毫秒） */
   autoSaveDelay: 1500,
+  /**
+   * 打开已有文档时默认进入阅读模式。
+   * 只影响「打开文件」，新建的空文档仍保持编辑态（否则没法直接写）。
+   */
+  openInReadingMode: true,
   orbMenuOpacity: 0.96,
   orbFontSize: 12,
   orbAnimations: true,

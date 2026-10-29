@@ -135,8 +135,18 @@ onMounted(async () => {
     wordCount: () => state.wordCount,
     /** 当前大纲条目（供测试验证分批渲染后大纲是否完整）。 */
     outline: () => state.outline,
+    /** 大纲中高亮的「当前章节」下标（供测试验证跟随滚动）。 */
+    outlineActiveIndex: () => state.outlineActiveIndex,
     /** 当前是否处于只读阅读态（与 viewMode 独立）。 */
     readingMode: () => state.readingMode,
+    /**
+     * 显式设置阅读态（供测试收尾用）。
+     * 不要用 view:toggleReading 来「退出」——该命令在非 wysiwyg 模式下
+     * 会先切到 wysiwyg 再强制设为 true，反而进不去退不出来。
+     */
+    setReadingMode: (v: boolean) => {
+      state.readingMode = v
+    },
     persistSession,
     persistRecovery,
     loadSession,

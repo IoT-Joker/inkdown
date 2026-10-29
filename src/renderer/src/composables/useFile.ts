@@ -53,7 +53,15 @@ export function useFile() {
       const { content, mtimeMs } = file
       const tab = createTabFromFile(filePath, content, mtimeMs)
       state.tabs.push(tab)
-      if (activate) state.activeId = tab.id
+      if (activate) {
+        state.activeId = tab.id
+        // 打开已有文档默认进入阅读模式（设置里可关）。
+        // 只在所见即所得视图下生效：源码/分栏本身就是编辑视图，
+        // 阅读态在那种视图下没有意义（会被视图切换逻辑清掉）。
+        if (settings.openInReadingMode && state.viewMode === 'wysiwyg') {
+          state.readingMode = true
+        }
+      }
       void window.inkdown.watch(filePath)
       pushRecent(filePath)
     })()

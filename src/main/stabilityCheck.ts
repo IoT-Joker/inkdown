@@ -9,6 +9,11 @@ export async function runStabilityCheck(win: BrowserWindow): Promise<boolean> {
     if (await win.webContents.executeJavaScript('!!window.__inkdownCommands && !!window.__inkdownApp?.activeTab()').catch(() => false)) break
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
+  // 关闭「打开文档默认阅读模式」：本测试大量用例要直接编辑文档，
+  // 阅读态会把 edit/paragraph 类命令拦掉（表现为命令静默不生效）。
+  await win.webContents
+    .executeJavaScript(`(() => { try { const s = window.__inkdownApp?.settings?.(); if (s) s.openInReadingMode = false; return true } catch { return false } })()`)
+    .catch(() => {})
   const diagramServer = createServer((request, response) => {
     if (request.url?.startsWith('/fail')) {
       response.writeHead(503).end('unavailable')

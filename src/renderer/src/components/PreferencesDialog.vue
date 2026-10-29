@@ -178,6 +178,11 @@ onMounted(async () => {
             <span class="value">{{ draft.autoSaveDelay }} ms</span>
           </div>
           <div class="row">
+            <label>{{ t('pref.openInReadingMode') }}</label>
+            <input v-model="draft.openInReadingMode" type="checkbox" />
+            <span class="hint">{{ t('pref.openInReadingModeHint') }}</span>
+          </div>
+          <div class="row">
             <label>{{ t('pref.bulletMarker') }}</label>
             <select v-model="draft.bulletListMarker" class="sel">
               <option value="-">{{ t('pref.bulletDash') }}</option>
