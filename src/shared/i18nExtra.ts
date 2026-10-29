@@ -322,10 +322,22 @@ const reading: Record<LocaleCode, Dict> = {
 
 const printDict: Record<LocaleCode, Dict> = {
   'zh-CN': {
-    'menu.file.print': '打印…'
+    'menu.file.print': '打印…',
+    'file.largeTitle': '文件较大',
+    'file.largeDetail': '该文件 {size} MB，超过 {limit} MB。打开后可能需要较长时间渲染，界面会暂时无响应。是否继续？',
+    'file.largeContinue': '仍然打开',
+    'file.largeCancel': '取消',
+    'session.skipped': '已恢复 {limit} 个标签；另有 {count} 个未自动打开，可在最近文件中手动打开。'
   },
   en: {
-    'menu.file.print': 'Print…'
+    'menu.file.print': 'Print…',
+    'file.largeTitle': 'Large file',
+    'file.largeDetail':
+      'This file is {size} MB, over the {limit} MB limit. It may take a long time to render and the window may stop responding. Continue?',
+    'file.largeContinue': 'Open anyway',
+    'file.largeCancel': 'Cancel',
+    'session.skipped':
+      'Restored {limit} tabs; {count} more were not opened automatically — you can open them from Recent.'
   }
 }
 

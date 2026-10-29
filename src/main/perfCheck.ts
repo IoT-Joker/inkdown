@@ -42,9 +42,9 @@ export async function runPerfInApp(win: BrowserWindow): Promise<void> {
   `)
 
   // ---------- 1. 大文档载入 ----------
-  // 200 / 800 / 2000 三档足够看出增长曲线；4000 档要 12 秒，会拖慢每次基准，
-  // 需要时单独临时加。实测（打包版）：93ms / 555ms / 2998ms，
-  // 明显超线性——这是当前最值得优化的性能问题，且瓶颈在内核渲染管线。
+  // 分批渲染后要区分两个指标：
+  //   firstPaint = 首批块渲染完（用户能看到内容、可开始阅读）
+  //   fullDone   = 全部块渲染完（大纲/搜索才完整）
   for (const n of [200, 800, 2000]) {
     const doc = buildDoc(n)
     const r = await wc.executeJavaScript(`
@@ -52,21 +52,24 @@ export async function runPerfInApp(win: BrowserWindow): Promise<void> {
         const wait = (ms) => new Promise((r) => setTimeout(r, ms))
         const t0 = performance.now()
         window.__inkdownLoad(${JSON.stringify(doc)})
-        // 等到段落数真的达到目标（渲染完成）
-        for (let i = 0; i < 1500; i++) {
-          if (document.querySelectorAll('.muya-container .mu-paragraph').length >= ${n}) break
-          await wait(20)
+        // 首屏可读 = 至少 30 个正文段落出现（约一到两屏，用户已经能开始读）
+        let firstPaint = 0
+        for (let i = 0; i < 3000; i++) {
+          const c = document.querySelectorAll('.muya-container .mu-paragraph').length
+          if (!firstPaint && c >= Math.min(30, ${n})) firstPaint = performance.now() - t0
+          if (c >= ${n}) break
+          await wait(10)
         }
-        const ms = performance.now() - t0
+        const fullDone = performance.now() - t0
         return {
-          ms: Math.round(ms),
-          paragraphs: document.querySelectorAll('.muya-container .mu-paragraph').length,
-          blocks: document.querySelectorAll('.muya-container > *').length
+          firstPaint: Math.round(firstPaint),
+          fullDone: Math.round(fullDone),
+          paragraphs: document.querySelectorAll('.muya-container .mu-paragraph').length
         }
       })()
     `)
     console.log(
-      `[perf] 载入 ${n} 段落 (${(Buffer.byteLength(doc) / 1024).toFixed(0)} KB): ${r.ms} ms（渲染出 ${r.paragraphs} 段）`
+      `[perf] 载入 ${n} 段落 (${(Buffer.byteLength(doc) / 1024).toFixed(0)} KB): 首屏 ${r.firstPaint} ms，全部渲染 ${r.fullDone} ms（${r.paragraphs} 段）`
     )
   }
 

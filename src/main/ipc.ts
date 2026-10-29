@@ -28,6 +28,11 @@ import { searchInFolder, type SearchOptions } from './folderSearch'
 import { randomUUID } from 'node:crypto'
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
+/**
+ * 超大文件阈值：超过这个大小，打开前先询问用户。
+ * 20 MB 的 Markdown 大约相当于 20 万行，全量渲染会长时间卡住界面。
+ */
+const LARGE_FILE_BYTES = 20 * 1024 * 1024
 const watchers = new Map<string, FSWatcher>()
 
 /**
@@ -121,9 +126,37 @@ export function registerIpc(): void {
     return out
   })
 
+  /**
+   * 读取文档。
+   *
+   * 超大文件先询问用户：一次性读入会把整个文件塞进内存，
+   * 再交给编辑器全量渲染，可能让界面长时间无响应甚至崩溃。
+   * 用户取消时返回 null，由调用方按「未打开」处理。
+   */
   ipcMain.handle('fs:readFile', async (_e, filePath: string) => {
-    const content = await fsp.readFile(filePath, 'utf8')
     const stat = await fsp.stat(filePath)
+    if (stat.size > LARGE_FILE_BYTES) {
+      const win = getMainWindow()
+      const mb = Math.round((stat.size / 1024 / 1024) * 10) / 10
+      const { response } = await dialog.showMessageBox(win!, {
+        type: 'warning',
+        buttons: [
+          translate(getLocale(), 'file.largeContinue'),
+          translate(getLocale(), 'file.largeCancel')
+        ],
+        // 默认落在「取消」上：大文件是危险操作，不该默认确认
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        message: translate(getLocale(), 'file.largeTitle'),
+        detail: translate(getLocale(), 'file.largeDetail', {
+          size: mb,
+          limit: Math.round(LARGE_FILE_BYTES / 1024 / 1024)
+        })
+      })
+      if (response !== 0) return null
+    }
+    const content = await fsp.readFile(filePath, 'utf8')
     return { filePath, content, mtimeMs: stat.mtimeMs }
   })
 

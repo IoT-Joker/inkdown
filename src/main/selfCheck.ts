@@ -1363,16 +1363,16 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       const before = app.wordCount ? app.wordCount() : -1
 
       // 连续改动内容。
-      // 注意不能用合成的 beforeinput：它不会真正改变文档，JSON 树不变，
-      // json-change 也就不触发，测出来永远是「没更新」的假象。
-      // execCommand('insertText') 走浏览器真实编辑路径。
+      // 不用合成 beforeinput（不会真正改文档），也不用 execCommand
+      // （打包版里偶尔不生效）——直接用命令中心的段落复制，
+      // 它必然改变文档并触发 json-change。
       const muya = window.__inkdownMuya
       muya.focus()
       muya.setCursorByOffset({ anchor: { line: 2, ch: 0 }, focus: { line: 2, ch: 0 } })
-      await wait(250)
-      for (let i = 0; i < 5; i++) {
-        document.execCommand('insertText', false, '新增文字')
-        await wait(30)
+      await wait(300)
+      for (let i = 0; i < 3; i++) {
+        await c.execute('edit:duplicate')
+        await wait(60)
       }
 
       // 立刻读：防抖期间应该还没更新（或者已经更新，都合法）
@@ -1411,8 +1411,8 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       muya.focus()
       muya.setCursorByOffset({ anchor: { line: 2, ch: 0 }, focus: { line: 2, ch: 0 } })
       await wait(200)
-      // 触发一次真实改动，让防抖进入等待
-      document.execCommand('insertText', false, '甲乙丙丁戊己庚辛')
+      // 触发一次真实改动，让防抖进入等待（用命令而非 execCommand，理由同上）
+      await c.execute('edit:duplicate')
 
       // 不等防抖到期就新建标签并切过去（B 内容很短）
       await c.execute('file:new')
@@ -1473,6 +1473,58 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
   }
   console.log(
     `[selfcheck] 打印链路 OK: 命令+IPC 已接通，HTML ${printCheck.htmlLen} 字符且含标题与正文`
+  )
+
+  // 5b-5. 大文档分批渲染：首屏要快，且渲染完成后大纲必须完整
+  // 这是分批渲染最容易埋雷的地方——载入时那次 refreshOutline 只看到首批块，
+  // 若不靠 muya-update-state-done 补刷，大纲会缺后半部分。
+  const batchRenderCheck = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+      const app = window.__inkdownApp
+      const n = 1600
+      const parts = ['# 大文档\\n']
+      for (let i = 0; i < n; i++) {
+        parts.push('## 第 ' + (i + 1) + ' 节\\n\\n这是第 ' + (i + 1) + ' 段的正文。\\n\\n')
+      }
+      const doc = parts.join('')
+
+      const t0 = performance.now()
+      window.__inkdownLoad(doc)
+      // 首屏：出现 30 个正文段落即可读
+      let firstPaint = 0
+      for (let i = 0; i < 3000; i++) {
+        const c = document.querySelectorAll('.muya-container .mu-paragraph').length
+        if (!firstPaint && c >= 30) firstPaint = Math.round(performance.now() - t0)
+        if (c >= n) break
+        await wait(10)
+      }
+      const fullDone = Math.round(performance.now() - t0)
+      const paragraphs = document.querySelectorAll('.muya-container .mu-paragraph').length
+
+      // 等应用层在 muya-update-state-done 里补刷大纲
+      await wait(600)
+      const outline = app.outline ? app.outline().length : -1
+      return { firstPaint, fullDone, paragraphs, outline, expectedOutline: n + 1 }
+    })()
+  `)
+  if (batchRenderCheck.paragraphs < 1600) {
+    console.error('[selfcheck] FAIL: 分批渲染未完成:', JSON.stringify(batchRenderCheck))
+    return false
+  }
+  if (batchRenderCheck.firstPaint <= 0 || batchRenderCheck.firstPaint >= batchRenderCheck.fullDone) {
+    console.error('[selfcheck] FAIL: 首屏时间异常:', JSON.stringify(batchRenderCheck))
+    return false
+  }
+  if (batchRenderCheck.outline < batchRenderCheck.expectedOutline - 2) {
+    console.error(
+      '[selfcheck] FAIL: 分批渲染后大纲不完整（说明没在渲染完成时补刷）:',
+      JSON.stringify(batchRenderCheck)
+    )
+    return false
+  }
+  console.log(
+    `[selfcheck] 分批渲染 OK: 首屏 ${batchRenderCheck.firstPaint} ms / 全部 ${batchRenderCheck.fullDone} ms，大纲 ${batchRenderCheck.outline} 条（完整）`
   )
 
   // 恢复被上面两个用例改动的状态：切回原标签。

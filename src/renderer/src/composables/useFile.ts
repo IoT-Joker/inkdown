@@ -12,6 +12,13 @@ const pendingSaves = new Map<Tab, Promise<boolean>>()
 const pendingMoves = new Map<Tab, Promise<void>>()
 const openingFiles = new Map<string, Promise<void>>()
 
+/**
+ * 启动时最多自动恢复多少个标签。
+ * 会话可能记录了几十个标签，全部打开会同时读入大量文件、拖慢启动；
+ * 超出部分保留在记录里，用户可手动打开。
+ */
+const MAX_RESTORE_TABS = 20
+
 function pathKey(path: string): string {
   const normalized = path.replace(/\\/g, '/').replace(/\/$/, '')
   return /^[a-z]:/i.test(normalized) ? normalized.toLowerCase() : normalized
@@ -39,7 +46,11 @@ export function useFile() {
       return
     }
     const opening = (async () => {
-      const { content, mtimeMs } = await window.inkdown.readFile(filePath)
+      const file = await window.inkdown.readFile(filePath)
+      // 超大文件由主进程先询问；用户选择不打开时返回 null，
+      // 这里直接放弃，不创建标签、不记入最近打开。
+      if (!file) return
+      const { content, mtimeMs } = file
       const tab = createTabFromFile(filePath, content, mtimeMs)
       state.tabs.push(tab)
       if (activate) state.activeId = tab.id
@@ -50,11 +61,19 @@ export function useFile() {
     try { await opening } finally { openingFiles.delete(key) }
   }
 
-  /** Restore tab data first; build only the editor that will actually be shown. */
+  /**
+   * Restore tab data first; build only the editor that will actually be shown.
+   *
+   * 恢复数量有上限：会话记录里可能有几十个标签，一次性全开会把启动拖慢。
+   * 超出部分仍保留在记录里（下次手动打开即可），但不自动打开，
+   * 并给用户一条提示说明还有多少没恢复。
+   */
   async function restoreSessionFiles(session: { files: string[]; activeFile?: string | null }): Promise<void> {
     const activeBefore = state.activeId
     let lastOpened: Tab | undefined
-    for (const filePath of session.files) {
+    const files = session.files.slice(0, MAX_RESTORE_TABS)
+    const skipped = session.files.length - files.length
+    for (const filePath of files) {
       try {
         if (!(await window.inkdown.exists(filePath))) continue
         await openPath(filePath, { activate: false })
@@ -66,6 +85,10 @@ export function useFile() {
     const target = requested ?? (lastOpened && state.tabs.includes(lastOpened) ? lastOpened : state.tabs.at(-1))
     // Do not steal focus if the user has already selected another tab while I/O ran.
     if (target && state.activeId === activeBefore) state.activeId = target.id
+    // 告诉用户还有多少标签没自动恢复，避免让人以为会话丢失
+    if (skipped > 0) {
+      state.notice = { text: t('session.skipped', { count: skipped, limit: MAX_RESTORE_TABS }) }
+    }
   }
 
   async function openDialog(): Promise<void> {

@@ -133,6 +133,8 @@ onMounted(async () => {
     viewMode: () => state.viewMode,
     /** 当前字数（供测试验证防抖更新是否生效）。 */
     wordCount: () => state.wordCount,
+    /** 当前大纲条目（供测试验证分批渲染后大纲是否完整）。 */
+    outline: () => state.outline,
     /** 当前是否处于只读阅读态（与 viewMode 独立）。 */
     readingMode: () => state.readingMode,
     persistSession,

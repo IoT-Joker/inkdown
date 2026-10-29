@@ -732,6 +732,13 @@ function createEditorSession(tab: Tab | undefined): EditorSession | null {
     if (columnsActive.value) { columnRevealPending = true; queueColumnFrame() }
   })
   instance.on('search-refreshed', () => { if (currentSession === session) restoreSearchIfNeeded() })
+  // 大文档分批渲染完成：此时树结构才完整，补一次大纲刷新。
+  // 载入时那次 refreshOutline 只看到首批渲染出的块，大纲会缺后半部分。
+  instance.on('muya-update-state-done', () => {
+    if (currentSession !== session) return
+    refreshOutline()
+    if (state.findVisible && state.findKeyword) restoreSearchIfNeeded()
+  })
   if (session.id) editorSessions.set(session.id, session)
   return session
 }
@@ -761,6 +768,9 @@ function mountEditor(): void {
     tab.content = markdown
     updateCounts(markdown)
     if (!isSource.value && !isSplit.value) refreshOutline()
+    // 分栏模式下主动刷预览：只靠 watch(content) 在打包版偶发不触发，
+    // 表现为「换了文档，右侧预览还是旧内容」。
+    if (isSplit.value) nextTick(() => refreshPreview())
     scheduleColumnLayout()
     return true
   }
