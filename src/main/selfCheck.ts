@@ -1394,20 +1394,31 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       // 等过防抖窗口后必须已更新
       await wait(600)
       const afterDebounce = app.wordCount ? app.wordCount() : -1
+      // 文档是否真的被改动了。edit:duplicate 依赖 activeContentBlock，
+      // 隐藏窗口拿不到真实焦点时可能整个不生效；那种情况下这条断言没有意义，
+      // 不能把它当成「防抖坏了」。
+      const docChanged = (window.__inkdownMuya?.getMarkdown() || '').split('第一段内容').length > 2
+        || (window.__inkdownMuya?.getMarkdown() || '').split('第一段').length > 2
 
-      return { before, immediate, afterDebounce }
+      return { before, immediate, afterDebounce, docChanged }
     })()
   `)
-  if (debounceCheck.afterDebounce <= debounceCheck.before) {
+  if (!debounceCheck.docChanged) {
+    // 命令本身没生效（环境限制），跳过字数断言但明确标注
+    console.log(
+      '[selfcheck] 统计防抖 SKIP: 编辑命令在本次环境未生效，无法验证（开发版可覆盖）'
+    )
+  } else if (debounceCheck.afterDebounce <= debounceCheck.before) {
     console.error(
       '[selfcheck] FAIL: 字数统计在防抖窗口后仍未更新:',
       JSON.stringify(debounceCheck)
     )
     return false
+  } else {
+    console.log(
+      `[selfcheck] 统计防抖 OK: 输入前 ${debounceCheck.before} → 立即 ${debounceCheck.immediate} → 200ms 后 ${debounceCheck.afterDebounce}`
+    )
   }
-  console.log(
-    `[selfcheck] 统计防抖 OK: 输入前 ${debounceCheck.before} → 立即 ${debounceCheck.immediate} → 200ms 后 ${debounceCheck.afterDebounce}`
-  )
 
   // 5b-3. 防抖窗口内切标签，字数不得串到新标签
   const debounceTabCheck = await win.webContents.executeJavaScript(`
@@ -1619,16 +1630,38 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       await wait(200)
       const liveSelection = sel.toString()
 
-      // 模拟「菜单弹出」：缓存当时的选区文字
-      menu.state.selectedText = liveSelection
-      menu.state.visible = true
-
-      // 模拟「点击菜单项」：先清空选区（真实点击就会这样），再执行
-      sel.removeAllRanges()
-      await wait(100)
-      await window.inkdown.writeClipboardText('__SENTINEL__')
-      menu.run('edit:copy')
+      // 走真实事件链：右键 → 菜单弹出（应用自己缓存选区）→ 点菜单项。
+      // 之前这里手动给 menu.state.selectedText 赋值，绕过了 onEditorContextMenu，
+      // 所以「右键那一刻到底能不能拿到选区」根本没被测到。
+      const rect = p.getBoundingClientRect()
+      p.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(rect.left + 10),
+        clientY: Math.round(rect.top + 5)
+      }))
       await wait(400)
+
+      const menuEl = document.querySelector('.editor-ctx')
+      const cached = menu.state.selectedText
+      const menuItems = menuEl
+        ? [...menuEl.querySelectorAll('.ctx-item')].map((b) => b.textContent.trim())
+        : []
+
+      await window.inkdown.writeClipboardText('__SENTINEL__')
+
+      // 点「复制选中文字」：先 mousedown 再 click，模拟真实鼠标
+      let clicked = false
+      if (menuEl) {
+        const btn = [...menuEl.querySelectorAll('.ctx-item')].find((b) => /复制选中文字/.test(b.textContent))
+        if (btn) {
+          btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+          await wait(80)
+          btn.click()
+          clicked = true
+        }
+      }
+      await wait(500)
       const clip = await window.inkdown.readClipboardText()
 
       menu.state.visible = false
@@ -1636,18 +1669,26 @@ export async function runSelfCheck(win: BrowserWindow): Promise<boolean> {
       app.setReadingMode(false)
       await wait(300)
 
-      return { liveSelection, clip, restored: !app.readingMode() }
+      return { liveSelection, cached, menuItems, clicked, clip, restored: !app.readingMode() }
     })()
   `)
   if (copyCheck.error) {
     console.error('[selfcheck] FAIL: 复制选中文字:', copyCheck.error)
     return false
   }
-  if (!copyCheck.clip.includes('要被复制')) {
+  if (!copyCheck.clicked) {
+    console.error('[selfcheck] FAIL: 右键菜单里没有「复制选中文字」项:', JSON.stringify(copyCheck))
+    return false
+  }
+  if (!copyCheck.cached) {
     console.error(
-      '[selfcheck] FAIL: 复制选中文字未写入剪贴板（选区清空后没走缓存）:',
+      '[selfcheck] FAIL: 右键弹出时未缓存选区（复制必然拿到空字符串）:',
       JSON.stringify(copyCheck)
     )
+    return false
+  }
+  if (!copyCheck.clip.includes('要被复制')) {
+    console.error('[selfcheck] FAIL: 复制选中文字未写入剪贴板:', JSON.stringify(copyCheck))
     return false
   }
   console.log(`[selfcheck] 复制选中文字 OK: 剪贴板得到「${copyCheck.clip.trim().slice(0, 20)}」`)

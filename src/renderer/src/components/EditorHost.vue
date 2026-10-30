@@ -1102,6 +1102,9 @@ const editorMenu = reactive({
   selectedText: ''
 })
 
+/** 右键菜单的 DOM 引用：用于判断点击是否落在菜单内部。 */
+const menuRef = ref<HTMLElement | null>(null)
+
 /**
  * 正文右键菜单条目。
  *
@@ -1131,6 +1134,24 @@ const editorMenuItems = computed<Array<{ label: string; command: string } | { se
 )
 
 /** 打开正文右键菜单。 */
+/**
+ * 关闭右键菜单时挂上的 window 监听清理函数。
+ *
+ * 必须成对管理：只在 onEditorContextMenu 内部注册、却不在「点击菜单项」
+ * 这条路径上清理，监听就会残留，导致下一次右键菜单刚出现就被自己关掉
+ * （表现为「右键没反应」）。
+ */
+let menuCloseCleanup: (() => void) | null = null
+
+/** 统一的关闭入口：隐藏菜单 + 移除临时监听。 */
+function closeEditorMenu(): void {
+  editorMenu.visible = false
+  if (menuCloseCleanup) {
+    menuCloseCleanup()
+    menuCloseCleanup = null
+  }
+}
+
 function onEditorContextMenu(e: MouseEvent): void {
   // 源码/分栏模式用浏览器原生菜单即可（textarea 的复制粘贴足够）
   if (isSource.value || isSplit.value) return
@@ -1148,33 +1169,44 @@ function onEditorContextMenu(e: MouseEvent): void {
   // 阻止冒泡：否则本次事件会继续传到 window，
   // 立刻触发下面注册的 close，菜单刚显示就被关掉。
   e.stopPropagation()
+  // 先清掉上一轮可能残留的监听，避免叠加
+  closeEditorMenu()
   editorMenu.visible = true
   editorMenu.x = e.clientX
   editorMenu.y = e.clientY
   // 弹出瞬间抓住选区文字：稍后点击菜单项会清掉选区
   editorMenu.selectedText = currentSession?.reading?.selectedText() ?? ''
 
-  const close = (): void => {
-    editorMenu.visible = false
-    window.removeEventListener('pointerdown', close, true)
-    window.removeEventListener('contextmenu', close, true)
-    window.removeEventListener('keydown', onEsc)
+  /** 点击菜单外部 / 按 Esc 时关闭。点在菜单内部不关，否则 click 到不了菜单项。 */
+  const onOutside = (ev: Event): void => {
+    const node = ev.target as Node | null
+    if (node && menuRef.value?.contains(node)) return
+    closeEditorMenu()
   }
   const onEsc = (ev: KeyboardEvent): void => {
-    if (ev.key === 'Escape') close()
+    if (ev.key === 'Escape') closeEditorMenu()
   }
   // 用 setTimeout 而不是 nextTick：要等当前事件完全走完再挂监听，
   // 否则仍可能被同一个事件立刻关掉。
   setTimeout(() => {
-    window.addEventListener('pointerdown', close, true)
-    window.addEventListener('contextmenu', close, true)
+    // 期间可能已被关闭，别把监听挂到一个不存在的菜单上
+    if (!editorMenu.visible) return
+    menuCloseCleanup = () => {
+      window.removeEventListener('pointerdown', onOutside, true)
+      window.removeEventListener('contextmenu', onOutside, true)
+      window.removeEventListener('keydown', onEsc)
+    }
+    window.addEventListener('pointerdown', onOutside, true)
+    window.addEventListener('contextmenu', onOutside, true)
     window.addEventListener('keydown', onEsc)
   }, 0)
 }
 
 /** 执行右键菜单里的命令。 */
 function runEditorMenuCommand(command: string): void {
-  editorMenu.visible = false
+  // 走统一关闭：只设 visible=false 会留下 window 监听，
+  // 下次右键菜单弹出后会被残留监听立刻关掉
+  closeEditorMenu()
   // 「复制选中文字」直接用菜单弹出时缓存的内容。
   // 点击菜单项会让 document 选区被清除，此时再走 edit:copy
   // 去读 selectedText() 只会拿到空字符串，表现为「点了没反应」。
@@ -2222,6 +2254,7 @@ onMounted(() => {
   ;(window as unknown as Record<string, unknown>).__inkdownCtxMenu = {
     state: editorMenu,
     run: runEditorMenuCommand,
+    close: closeEditorMenu,
     items: () => editorMenuItems.value.map((it) => ('separator' in it ? '---' : it.label))
   }
   // 供端到端自检驱动分栏光标联动（程序化 setSelectionRange 不触发真实按键事件）
@@ -2261,6 +2294,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.body.classList.remove('is-reading-mode')
   document.removeEventListener('scroll', onAnyScroll, true)
+  // 卸载时务必摘掉右键菜单的 window 监听，否则它们会挂到文档生命周期之外
+  closeEditorMenu()
   if (outlineActiveFrame != null) {
     cancelAnimationFrame(outlineActiveFrame)
     outlineActiveFrame = null
@@ -2403,6 +2438,7 @@ defineExpose({ focus, reloadFromTab, getMarkdown: () => isReading.value ? active
     <!-- 正文右键菜单 -->
     <div
       v-if="editorMenu.visible"
+      ref="menuRef"
       class="editor-ctx"
       :style="{ left: `${editorMenu.x}px`, top: `${editorMenu.y}px` }"
     >
